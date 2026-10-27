@@ -1,0 +1,1087 @@
+#include "MetroidPrime/Weapons/CGunWeapon.hpp"
+
+#include "MetroidPrime/CAnimData.hpp"
+#include "MetroidPrime/CAnimPlaybackParms.hpp"
+#include "MetroidPrime/CAnimRes.hpp"
+#include "MetroidPrime/CDamageInfo.hpp"
+#include "MetroidPrime/CRainSplashGenerator.hpp"
+#include "MetroidPrime/CStateManager.hpp"
+#include "MetroidPrime/Cameras/CCameraManager.hpp"
+#include "MetroidPrime/Cameras/CCameraShakeData.hpp"
+#include "MetroidPrime/Tweaks/CTweakGunRes.hpp"
+#include "MetroidPrime/Tweaks/CTweakPlayerGun.hpp"
+#include "MetroidPrime/Weapons/CEnergyProjectile.hpp"
+#include "MetroidPrime/Weapons/GunController/CGunController.hpp"
+
+#include "MetroidPrime/SFX/Weapons.h"
+
+#include "Weapons/CWeaponDescription.hpp"
+
+#include "Kyoto/Animation/CCharLayoutInfo.hpp"
+#include "Kyoto/Animation/CSkinnedModel.hpp"
+#include "Kyoto/Animation/CVertexMorphEffect.hpp"
+#include "Kyoto/Audio/CSfxManager.hpp"
+#include "Kyoto/CDependencyGroup.hpp"
+#include "Kyoto/Graphics/CGraphics.hpp"
+#include "Kyoto/Graphics/CCubeModel.hpp"
+#include "Kyoto/Graphics/CModel.hpp"
+#include "Kyoto/Graphics/CModelFlags.hpp"
+#include "Kyoto/Math/CRelAngle.hpp"
+#include "Kyoto/Math/CloseEnough.hpp"
+#include "Kyoto/Particles/CElementGen.hpp"
+#include "Kyoto/Particles/CGenDescription.hpp"
+#include "MetaRender/CCubeRenderer.hpp"
+
+#ifdef TARGET_PC
+#include <dolphin/gx/GXExtra.h>
+
+#include "port_dread_samus_mod.h"
+#endif
+
+const char* const CGunWeapon::skMuzzleNames[10] = {
+    "PowerMuzzle", "PowerCharge",  "IceMuzzle",    "IceCharge",    "PowerMuzzle",
+    "WaveCharge",  "PlasmaMuzzle", "PlasmaCharge", "PhazonMuzzle", "EmptyMuzzle",
+};
+
+const char* const CGunWeapon::skFrozenNames[10] = {
+    "powerFrozen", "Ice2nd_2",     "iceFrozen", "Ice2nd_2",  "waveFrozen",
+    "Ice2nd_2",    "plasmaFrozen", "Ice2nd_2",  "iceFrozen", "Ice2nd_2",
+};
+
+const char* const CGunWeapon::skBeamXferNames[5] = {
+    "PowerXfer", "IceXfer", "WaveXfer", "PlasmaXfer", "PhazonXfer",
+};
+
+const char* const CGunWeapon::skAnimDependencyNames[5] = {
+    "Power_Anim_DGRP", "Ice_Anim_DGRP", "Wave_Anim_DGRP", "Plasma_Anim_DGRP", "Phazon_Anim_DGRP",
+};
+
+const char* const CGunWeapon::skDependencyNames[5] = {
+    "Power_DGRP", "Ice_DGRP", "Wave_DGRP", "Plasma_DGRP", "Phazon_DGRP",
+};
+
+const char* const CGunWeapon::skSuitArmNames[8] = {
+    "PowerArm",  "GravityArm", "VariaArm",   "PhazonArm",
+    "FusionArm", "FusionArmG", "FusionArmV", "FusionArmP",
+};
+
+const int CGunWeapon::skAnimTypeList[11] = {
+    0, 4, 1, 2, 3, 5, 6, 7, 8, 9, 10,
+};
+
+const char* const CGunWeapon::skMuzzleLocator = "LBEAM";
+const char* const CGunWeapon::skElbowLocator = "elbow";
+
+CPlayerState::EBeamId GetWeaponIndex(EWeaponType type) {
+  switch (type) {
+  case kWT_Power:
+    return CPlayerState::kBI_Power;
+  case kWT_Ice:
+    return CPlayerState::kBI_Ice;
+  case kWT_Wave:
+    return CPlayerState::kBI_Wave;
+  case kWT_Plasma:
+    return CPlayerState::kBI_Plasma;
+  case kWT_Phazon:
+    return CPlayerState::kBI_Phazon;
+  default:
+    return CPlayerState::kBI_Power;
+  }
+}
+
+CGunWeapon::CGunWeapon(CAssetId ancsId, EWeaponType type, TUniqueId playerId,
+                       EMaterialTypes playerMaterial, const CVector3f& scale)
+: x4_scale(scale)
+, x104_gunCharacter(gpSimplePool->GetObj(SObjectTag('ANCS', ancsId)))
+, x13c_armCharacter(gpSimplePool->GetObj(skSuitArmNames[0]))
+, x160_xferEffect(gpSimplePool->GetObj(skBeamXferNames[GetWeaponIndex(type)]))
+, x1bc_rainSplashGenerator(nullptr)
+, x1c0_weaponType(type)
+, x1c4_playerId(playerId)
+, x1c8_playerMaterial(playerMaterial)
+, x1cc_enabledSecondaryEffect(kSFT_None)
+, x200_beamId(GetWeaponIndex(type))
+, x204_frozenEffect(kFFT_None)
+, x208_muzzleEffectIdx(0)
+, x20c_shaderIdx(u32(x200_beamId))
+, x210_loadFlags(0)
+, x214_ancsId(ancsId)
+, x218_24(false)
+, x218_25_enableCharge(false)
+, x218_26_loaded(false)
+, x218_27_subtypeBasePose(false)
+, x218_28_suitArmLocked(false)
+, x218_29_drawHologram(false) {
+  AllocResPools(x200_beamId);
+  BuildDependencyList(x200_beamId);
+}
+
+CVelocityInfo::~CVelocityInfo() {}
+
+CGunWeapon::~CGunWeapon() {
+#ifdef TARGET_PC
+  PortUnlockStackTokens();
+#endif
+}
+
+const SWeaponInfo& CGunWeapon::GetWeaponInfo() const {
+  return gpTweakPlayerGun->GetBeamInfo(x200_beamId);
+}
+
+void CGunWeapon::LoadMuzzleFx(float dt) {
+
+  for (int i = 0; i < x16c_muzzleEffects.capacity(); ++i) {
+    CElementGen* newElement = rs_new CElementGen(x16c_muzzleEffects[i]);
+    newElement->SetParticleEmission(false);
+    newElement->Update(dt);
+    x1a4_muzzleGenerators.push_back(newElement);
+  }
+}
+
+void CGunWeapon::LoadGunModels(CStateManager& mgr) {
+  int defaultAnim = 9;
+  if (x218_27_subtypeBasePose) {
+    defaultAnim = 0;
+  }
+  x10_solidModelData = CAnimRes(x214_ancsId, 0, x4_scale, defaultAnim, false);
+  x60_holoModelData = CAnimRes(x214_ancsId, 1, x4_scale, defaultAnim, false);
+  CAnimPlaybackParms parms(defaultAnim, -1, 1.f, true);
+  x10_solidModelData->AnimationData()->SetAnimation(parms, true);
+  LoadSuitArm(mgr);
+  x10_solidModelData->SetSortThermal(true);
+  x60_holoModelData->SetSortThermal(true);
+  x100_gunController = rs_new CGunController(*x10_solidModelData);
+}
+
+void CGunWeapon::LoadProjectileData(CStateManager& mgr) {
+  CRandom16 random(mgr.GetUpdateFrameIndex());
+  CGlobalRandom grand(random);
+
+  for (int i = 0; i < x144_weapons.capacity(); ++i) {
+    CWeaponDescription& weapon = *x144_weapons[i].GetObject();
+
+    CVector3f weaponVel = CVector3f::Zero();
+    if (const CVectorElement* ivec = weapon.x4_IVEC) {
+      ivec->GetValue(0, weaponVel);
+    }
+    x1d0_velInfo.AddVelocity(weaponVel);
+
+    float tratVal = 0.f;
+    if (const CRealElement* trat = weapon.x30_TRAT) {
+      trat->GetValue(0, tratVal);
+    }
+    x1d0_velInfo.AddTrat(tratVal);
+
+    x1d0_velInfo.AddTargetHoming(weapon.x29_HOMG);
+
+    if (weaponVel.GetY() > 0.f) {
+      x1d0_velInfo.Velocity(i) *= 60.f;
+    } else {
+      x1d0_velInfo.Velocity(i) = CVector3f::Forward();
+    }
+  }
+}
+
+bool CGunWeapon::PlayPasAnim(SamusGun::EAnimationState state, CStateManager& mgr, float angle) {
+  switch (state) {
+  case SamusGun::kAS_ComboFire:
+    x100_gunController->EnterComboFire(mgr, x200_beamId);
+    break;
+  default:
+    return false;
+  case SamusGun::kAS_Wander:
+    break;
+  }
+  return true;
+}
+
+bool CGunWeapon::IsChargeAnimOver() const {
+  if (x218_25_enableCharge) {
+    if (x10_solidModelData->GetAnimationData()->IsAnimTimeRemaining(0.001f,
+                                                                    rstl::string_l("Whole Body"))) {
+      return false;
+    }
+  }
+  return true;
+}
+
+void CGunWeapon::PlayAnim(NWeaponTypes::EGunAnimType type, bool loop) {
+  if (!x218_26_loaded || type < NWeaponTypes::kGAT_BasePosition ||
+      type > NWeaponTypes::kGAT_ToBeam) {
+    return;
+  }
+  CAnimData& animData = *x10_solidModelData->AnimationData();
+  animData.EnableLooping(loop);
+
+  const CAnimPlaybackParms parms(skAnimTypeList[type], -1, 1.f, true);
+  animData.SetAnimation(parms, false);
+}
+
+void CGunWeapon::Reset(CStateManager& mgr) {
+  if (!x218_26_loaded)
+    return;
+
+  x10_solidModelData->AnimationData()->EnableLooping(false);
+  if (IsCharged())
+    EnableCharge(false);
+  else
+    x100_gunController->Reset();
+}
+
+void CGunWeapon::Update(float dt, CStateManager& mgr) {
+  if (x218_26_loaded) {
+    x10_solidModelData->AdvanceAnimation(dt, mgr, kInvalidAreaId, true);
+    x100_gunController->Update(dt, mgr);
+    if (x218_28_suitArmLocked) {
+      LoadSuitArm(mgr);
+    }
+#ifdef TARGET_PC
+    // The Dread cannon switched on or off (setting, mods reload): load the arm again.
+    else if (xb0_suitArmModelData &&
+             mPortDreadCannon !=
+                 PortDreadSamus::ReplacesFirstPersonCannon(NWeaponTypes::get_current_suit(mgr))) {
+      AsyncLoadSuitArm(mgr);
+    }
+#endif
+  } else {
+    if (x104_gunCharacter.IsLocked()) {
+      if (x104_gunCharacter.IsLoaded()) {
+        if ((x210_loadFlags & 0x1) != 0x1) {
+          LoadGunModels(mgr);
+          LoadAnimations();
+          x210_loadFlags |= 0x1;
+        }
+        if ((x210_loadFlags & 0x8) != 0x8) {
+          if (IsAnimsLoaded())
+            x210_loadFlags |= 0x8;
+        }
+      }
+
+      LoadFxIdle(dt, mgr);
+      if ((x210_loadFlags & 0x1f) == 0x1f) {
+        CSkinnedModel& model = x10_solidModelData->PickAnimatedModel(CModelData::kWM_Normal);
+        bool flag1 = model.GetModel()->IsLoaded(x20c_shaderIdx);
+#ifdef TARGET_PC
+        bool flag2 = xb0_suitArmModelData->IsLoaded(mPortDreadCannon ? x20c_shaderIdx : 0);
+#else
+        bool flag2 = xb0_suitArmModelData->IsLoaded(0);
+#endif
+        if (flag1 && flag2) {
+          x218_26_loaded = true;
+        }
+      }
+    }
+  }
+}
+
+void CGunWeapon::PostRenderGunFx(const CStateManager& mgr, const CTransform4f& xf) {
+  if (x218_26_loaded && x1b8_frozenGenerator.get() && x204_frozenEffect != kFFT_None)
+    x1b8_frozenGenerator->Render();
+}
+
+void CGunWeapon::UpdateGunFx(const bool shotSmoke, const float dt, const CStateManager& mgr,
+                             const CTransform4f& xf) {
+  if (x218_26_loaded && x204_frozenEffect != kFFT_None) {
+    if (x204_frozenEffect == kFFT_Thawed) {
+      if (x1b8_frozenGenerator->IsSystemDeletable()) {
+        x204_frozenEffect = kFFT_None;
+        x1b8_frozenGenerator = nullptr;
+      } else {
+        x1b8_frozenGenerator->SetTranslation(xf.GetTranslation());
+        x1b8_frozenGenerator->SetOrientation(xf.GetRotation());
+      }
+    } else {
+      x1b8_frozenGenerator->SetGlobalOrientAndTrans(xf);
+    }
+    if (x1b8_frozenGenerator.get())
+      x1b8_frozenGenerator->Update(dt);
+  }
+}
+
+void CGunWeapon::UpdateMuzzleFx(const float dt, const CVector3f& scale, const CVector3f& pos,
+                                const bool emitting) {
+  x1a4_muzzleGenerators[x208_muzzleEffectIdx]->SetGlobalTranslation(pos);
+  x1a4_muzzleGenerators[x208_muzzleEffectIdx]->SetGlobalScale(scale);
+  x1a4_muzzleGenerators[x208_muzzleEffectIdx]->SetParticleEmission(emitting);
+  x1a4_muzzleGenerators[x208_muzzleEffectIdx]->Update(dt);
+}
+
+#ifdef TARGET_PC
+void CGunWeapon::UpdateMuzzleFx(const float dt, const CVector3f& scale,
+                                const CTransform4f& locator, const bool emitting) {
+  if (x208_muzzleEffectIdx == 0 && PortRemasteredMuzzle()) {
+    // Muzzle generator 0 is replaced by mPortMuzzleFlash (PortUpdateMuzzleFlash).
+    return;
+  }
+  CElementGen& generator = *x1a4_muzzleGenerators[x208_muzzleEffectIdx];
+  NPortChargeFxDetail::SetLocalLocator(generator, locator);
+  generator.SetGlobalScale(scale);
+  generator.SetParticleEmission(emitting);
+  generator.Update(dt);
+}
+
+bool CGunWeapon::PortRemasteredMuzzle() const {
+  return x1a4_muzzleGenerators.size() > 0 && !x1a4_muzzleGenerators[0].null() &&
+         x1a4_muzzleGenerators[0]->PortIsRemastered();
+}
+
+void CGunWeapon::PortStartMuzzleFlash() {
+  // CGunWeaponMP1::Fire 0xca2d3c: Phazon keeps no fading flash, the others keep two.
+  mPortMuzzleFlash.Start(x16c_muzzleEffects[0], x200_beamId == CPlayerState::kBI_Phazon ? 1 : 3);
+}
+
+void CGunWeapon::PortUpdateMuzzleFlash(float dt, const CVector3f& scale, const CTransform4f& xf) {
+  mPortMuzzleFlash.Update(dt, xf, scale);
+}
+#endif
+
+CElementGen* CGunWeapon::GetChargeMuzzleFx() const {
+  CElementGen* result = x1a4_muzzleGenerators[1].get();
+  if (result) {
+    return result;
+  }
+  return nullptr;
+}
+
+void CGunWeapon::DrawMuzzleFx(const CStateManager& mgr) const {
+#ifdef TARGET_PC
+  if (PortRemasteredMuzzle()) {
+    // CGunWeaponMP1::DrawMuzzleFx 0xca1fd0: the normal-shot module, or the charge
+    // generator; no X-ray subtract blend.
+    if (x208_muzzleEffectIdx == 0) {
+      mPortMuzzleFlash.Render();
+    } else if (!x1a4_muzzleGenerators[1].null()) {
+      x1a4_muzzleGenerators[1]->Render();
+    }
+    return;
+  }
+#endif
+  if (!x1a4_muzzleGenerators[x208_muzzleEffectIdx].null()) {
+    if (x200_beamId != CPlayerState::kBI_Ice &&
+        mgr.GetPlayerState()->GetActiveVisor(mgr) == CPlayerState::kPV_XRay) {
+      CElementGen::SetSubtractBlend(true);
+      x1a4_muzzleGenerators[x208_muzzleEffectIdx]->Render();
+      CElementGen::SetSubtractBlend(false);
+    } else {
+      x1a4_muzzleGenerators[x208_muzzleEffectIdx]->Render();
+    }
+  }
+}
+
+void CGunWeapon::ActivateCharge(bool enable, bool resetEffect) {
+#ifdef TARGET_PC
+  if (PortRemasteredMuzzle()) {
+    // CGunWeaponMP1::ActivateCharge 0xca1498: only the charge generator is stopped and
+    // rebuilt, and only on enable; resetEffect is unused (the normal flash is a module).
+    if (x208_muzzleEffectIdx != 0) {
+      x1a4_muzzleGenerators[1]->SetParticleEmission(false);
+    }
+    x208_muzzleEffectIdx = !!enable;
+    if (enable) {
+      x1a4_muzzleGenerators[1] = rs_new CElementGen(x16c_muzzleEffects[1]);
+    }
+    return;
+  }
+#endif
+  x1a4_muzzleGenerators[x208_muzzleEffectIdx]->SetParticleEmission(false);
+  x208_muzzleEffectIdx = !!enable;
+  if (enable || resetEffect) {
+    x1a4_muzzleGenerators[x208_muzzleEffectIdx] =
+        rs_new CElementGen(x16c_muzzleEffects[x208_muzzleEffectIdx]);
+  }
+}
+
+void CGunWeapon::Draw(const bool drawSuitArm, const CStateManager& mgr, const CTransform4f& xf,
+                      const CModelFlags& flags, const CActorLights* lights) const {
+  if (!x218_26_loaded)
+    return;
+
+  CTransform4f armXf =
+      xf * x10_solidModelData->GetScaledLocatorTransform(rstl::string_l(skElbowLocator));
+#ifdef TARGET_PC
+  const CTransform4f cannonXf = mPortDreadCannon ? PortDreadCannonXf(xf) : xf;
+#endif
+
+  if (x1bc_rainSplashGenerator && x1bc_rainSplashGenerator->IsRaining()) {
+    CSkinnedModel::SetPointGeneratorFunc(x1bc_rainSplashGenerator, &CGunWeapon::PointGenerator);
+  }
+
+  if (mgr.GetThermalDrawFlag() == kTD_Hot && x200_beamId != CPlayerState::kBI_Ice) {
+    /* Hot Draw */
+    float a = flags.GetColorRef().GetAlpha();
+    const CColor mulColor(a, a, a, a);
+    CColor addColor(static_cast< uchar >(0x40), 0x40, 0x40, 0x40);
+#ifdef TARGET_PC
+    // Remastered's hot gun takes the thermal override with a = 1, b = 0.
+    CCubeModel::PortSetThermalOverride(1.f, 0.f);
+#endif
+    if (x218_29_drawHologram) {
+      DrawHologram(mgr, xf, flags);
+    }
+#ifdef TARGET_PC
+    else if (mPortDreadCannon) {
+      CModelFlags useFlags(CModelFlags::kT_Opaque, 1.0f);
+      xb0_suitArmModelData->RenderThermal(cannonXf, mulColor, addColor, useFlags);
+    }
+#endif
+    else {
+      CModelFlags useFlags(CModelFlags::kT_Opaque, 1.0f);
+      x10_solidModelData->RenderThermal(xf, mulColor, addColor, useFlags);
+    }
+
+#ifdef TARGET_PC
+    if (drawSuitArm && xb0_suitArmModelData && !mPortDreadCannon) {
+#else
+    if (drawSuitArm && xb0_suitArmModelData) {
+#endif
+      CModelFlags useFlags(CModelFlags::kT_Opaque, 1.0f);
+      xb0_suitArmModelData->RenderThermal(xf, mulColor, addColor, useFlags);
+    }
+#ifdef TARGET_PC
+    CCubeModel::PortClearThermalOverride();
+#endif
+  } else {
+    /* Cold Draw */
+    if (mgr.GetPlayerState()->GetCurrentVisor() != CPlayerState::kPV_XRay &&
+        !x218_29_drawHologram) {
+#ifdef TARGET_PC
+      if (mPortDreadCannon) {
+        // The cannon is drawn whether or not the suit arm is: it is the gun model too.
+        xb0_suitArmModelData->Render(mgr, cannonXf, lights, flags.UseShaderSet(x20c_shaderIdx));
+      } else
+#endif
+      x10_solidModelData->Render(mgr, xf, lights, flags.UseShaderSet(x20c_shaderIdx));
+    } else {
+      DrawHologram(mgr, xf, flags);
+    }
+
+#ifdef TARGET_PC
+    if (drawSuitArm && xb0_suitArmModelData && !mPortDreadCannon) {
+#else
+    if (drawSuitArm && xb0_suitArmModelData) {
+#endif
+      xb0_suitArmModelData->Render(mgr, armXf, lights, flags);
+    }
+  }
+
+  if (x1bc_rainSplashGenerator && x1bc_rainSplashGenerator->IsRaining()) {
+    CSkinnedModel::ClearPointGeneratorFunc();
+    x1bc_rainSplashGenerator->Draw(xf);
+  }
+}
+
+#ifdef TARGET_PC
+void CGunWeapon::PortDrawDepth(const bool drawSuitArm, const CStateManager& mgr,
+                               const CTransform4f& xf) const {
+  // Draw's cold path without the rain splashes, which a second skinning would emit again.
+  if (!x218_26_loaded || x218_29_drawHologram)
+    return;
+  const CModelFlags flags = CModelFlags::Normal().UseShaderSet(x20c_shaderIdx);
+  if (mPortDreadCannon) {
+    xb0_suitArmModelData->Render(mgr, PortDreadCannonXf(xf), nullptr, flags);
+    return;
+  }
+  x10_solidModelData->Render(mgr, xf, nullptr, flags);
+  if (drawSuitArm && xb0_suitArmModelData) {
+    xb0_suitArmModelData->Render(
+        mgr, xf * x10_solidModelData->GetScaledLocatorTransform(rstl::string_l(skElbowLocator)),
+        nullptr, CModelFlags::Normal());
+  }
+}
+#endif
+
+void CGunWeapon::DrawHologram(const CStateManager& mgr, const CTransform4f& xf,
+                              const CModelFlags& flags) const {
+  if (!x218_26_loaded)
+    return;
+
+#ifdef TARGET_PC
+  // The hologram (a beam change, the X-ray visor) is the retail gun's own model: the Dread cannon
+  // stands in for it, unlit like the hologram.
+  if (mPortDreadCannon) {
+    xb0_suitArmModelData->Render(mgr, PortDreadCannonXf(xf), nullptr,
+                                 flags.UseShaderSet(x20c_shaderIdx));
+    return;
+  }
+#endif
+  if (x218_29_drawHologram) {
+    x60_holoModelData->FlatDraw(CModelData::kWM_Normal, xf, false, flags);
+  } else {
+    const CVector3f& scale = CVector3f(x10_solidModelData->GetScale());
+    CTransform4f modelMatrix(xf);
+    modelMatrix *= CTransform4f::Scale(scale.GetX(), scale.GetY(), scale.GetZ());
+    gpRender->SetModelMatrix(modelMatrix);
+
+    CGraphics::DisableAllLights();
+    gpRender->SetAmbientColor(CColor::White());
+    x10_solidModelData->GetAnimationData()->Render(
+        **x60_holoModelData->GetAnimationData()->GetModelData(), flags,
+        rstl::optional_object_null(), nullptr);
+    gpRender->SetAmbientColor(CColor::White());
+    CGraphics::DisableAllLights();
+  }
+}
+
+#ifdef TARGET_PC
+// The Dread cannon's model has its muzzle at the origin and its barrel up +Y, the gun's axes. It
+// sits on the gun's live LBEAM locator, less PortDreadMuzzleShift, so it follows the recoil too.
+// Seen from behind, its wide back end hides the beam lights on its sides, so it is rolled 30
+// degrees about the barrel to turn its left light toward the camera.
+CTransform4f CGunWeapon::PortDreadCannonXf(const CTransform4f& xf) const {
+  const CVector3f muzzle =
+      x10_solidModelData->GetScaledLocatorTransform(rstl::string_l(skMuzzleLocator))
+          .GetTranslation();
+  return xf * CTransform4f::Translate(muzzle + PortDreadMuzzleShift()) *
+         CTransform4f::RotateY(CRelAngle::FromDegrees(30.f));
+}
+
+// The Plasma Beam's animations push LBEAM out along the barrel (+Y) past its bind pose, 0.204
+// model units at rest, for its longer gun; the Dread cannon has no such barrel. The shift takes
+// out what lies beyond the bind pose, so the cannon stays where the other beams hold it and keeps
+// only the recoil behind it. CPlayerGun moves its muzzle (shots, muzzle effects) by the same amount.
+CVector3f CGunWeapon::PortDreadMuzzleShift() const {
+  if (!mPortDreadCannon || !x10_solidModelData || !x10_solidModelData->HasAnimation())
+    return CVector3f::Zero();
+  const CAnimData& anim = *x10_solidModelData->GetAnimationData();
+  const CCharLayoutInfo& layout = *anim.GetCharLayoutInfo();
+  const CSegId lbeam = layout.GetSegIdFromString(rstl::string_l(skMuzzleLocator));
+  const float scaleY = x10_solidModelData->GetScale().GetY();
+  const float live = anim.GetLocatorTransform(lbeam, nullptr).GetTranslation().GetY();
+  const float bind = layout.GetReferenceStanceOffset(lbeam).GetY();
+  return live > bind ? CVector3f(0.f, (bind - live) * scaleY, 0.f) : CVector3f::Zero();
+}
+
+// Keeps points with dot(normal, p) >= d (world space) on every draw until turned off. The
+// plane goes to the shaders in GX view space, against the current view matrix.
+static void PortSetWorldClipPlane(const CVector3f& normal, const float d) {
+  const CTransform4f& view = CGraphics::GetViewMatrix();
+  const float cx = CVector3f::Dot(view.GetColumn(kDX), normal);
+  const float cy = CVector3f::Dot(view.GetColumn(kDY), normal);
+  const float cz = CVector3f::Dot(view.GetColumn(kDZ), normal);
+  const f32 plane[4] = {cx, cz, -cy, CVector3f::Dot(normal, view.GetTranslation()) - d};
+  GXSetClipPlane(GX_TRUE, plane);
+}
+
+// Remastered CGunWeaponMP1::DrawHologramTransition 0xca2b40 + DrawUpperArmForTransition
+// 0xca2a3c: the solid gun below the plane through `point`, the hologram above it, a hard cut,
+// then the upper arm at the elbow locator (not gated on the suit arm being drawn).
+void CGunWeapon::PortDrawHologramTransition(const CStateManager& mgr, const CTransform4f& xf,
+                                            const CVector3f& normal, const CVector3f& point,
+                                            const CModelFlags& flags,
+                                            const CActorLights* lights) const {
+  if (!x218_26_loaded)
+    return;
+
+  const float d = CVector3f::Dot(point, normal);
+  PortSetWorldClipPlane(-normal, -d);
+  Draw(false, mgr, xf, flags, lights);
+  PortSetWorldClipPlane(normal, d);
+  DrawHologram(mgr, xf, CModelFlags::Normal());
+  GXSetClipPlane(GX_FALSE, NULL);
+
+  // The Dread cannon (mPortDreadCannon) went with the solid gun, below the plane.
+  if (!xb0_suitArmModelData || mPortDreadCannon)
+    return;
+  const CTransform4f armXf =
+      xf * x10_solidModelData->GetScaledLocatorTransform(rstl::string_l(skElbowLocator));
+  if (mgr.GetThermalDrawFlag() == kTD_Hot && x200_beamId != CPlayerState::kBI_Ice) {
+    const float a = flags.GetColorRef().GetAlpha();
+    CModelFlags useFlags(CModelFlags::kT_Opaque, 1.0f);
+#ifdef TARGET_PC
+    CCubeModel::PortSetThermalOverride(1.f, 0.f);
+#endif
+    xb0_suitArmModelData->RenderThermal(xf, CColor(a, a, a, a),
+                                        CColor(static_cast< uchar >(0x40), 0x40, 0x40, 0x40),
+                                        useFlags);
+#ifdef TARGET_PC
+    CCubeModel::PortClearThermalOverride();
+#endif
+  } else {
+    xb0_suitArmModelData->Render(mgr, armXf, lights, flags);
+  }
+}
+#endif
+
+const int CGunWeapon::skShootAnim[2] = {4, 3};
+
+void CGunWeapon::SpawnProjectile(const TToken< CWeaponDescription >& weapon, const bool underwater,
+                                 const float dt, const CPlayerState::EChargeStage chargeState,
+                                 const CTransform4f& xf, CStateManager& mgr,
+                                 const TUniqueId homingTarget, const float chargeFactor1,
+                                 const float chargeFactor2) {
+  CDamageInfo dInfo(GetDamageInfo(mgr, chargeState, chargeFactor1));
+
+  CVector3f scale =
+      (chargeState == CPlayerState::kCS_Normal ? 1.f : chargeFactor2) * CVector3f(1.f, 1.f, 1.f);
+  bool partialCharge =
+      chargeState == CPlayerState::kCS_Normal ? false : !close_enough(chargeFactor1, 1.f);
+
+  uint particleChargeAttribs = 0;
+  if (partialCharge)
+    particleChargeAttribs = CWeapon::kPA_ParticleOPTS;
+
+  const uint attribs = chargeState != CPlayerState::kCS_Normal
+                           ? CWeapon::kPA_ArmCannon | CWeapon::kPA_Charged
+                           : CWeapon::kPA_ArmCannon;
+
+  const uint projectileAttribs = attribs | particleChargeAttribs;
+#ifdef TARGET_PC
+  // Remastered sizes a charged shot's effects from a per-beam floor up to 1.85 at full charge
+  // (Phazon always 1; CalculateWeaponFXScale, kb func/CGunWeaponMP1-fire-charged), when the
+  // projectile's particles are Remastered's. Damage keeps retail's factor.
+  if (chargeState != CPlayerState::kCS_Normal && weapon.IsLoaded()) {
+    const CWeaponDescription* desc = const_cast< TToken< CWeaponDescription >& >(weapon).GetT();
+    if (desc->x34_APSM && (*desc->x34_APSM)->xPortIrnd) {
+      static const float kChargedFxFloor[4] = {0.2f, 0.75f, 0.2f, 0.2f};
+      const float factor = x1c0_weaponType <= kWT_Plasma
+                               ? kChargedFxFloor[x1c0_weaponType] +
+                                     chargeFactor2 * (1.85f - kChargedFxFloor[x1c0_weaponType])
+                               : 1.f;
+      scale = factor * CVector3f(1.f, 1.f, 1.f);
+    }
+  }
+#endif
+  CEnergyProjectile* proj = rs_new CEnergyProjectile(
+      true, weapon, x1c0_weaponType, xf, x1c8_playerMaterial, dInfo, mgr.AllocateUniqueId(),
+      kInvalidAreaId, GetPlayerId(), homingTarget, projectileAttribs, underwater, scale,
+      rstl::optional_object_null(), CSfxManager::kInternalInvalidSfxId, false);
+  if (proj) {
+#ifdef TARGET_PC
+    // CGunWeaponMP1::Fire (0xca2d3c) applies GetProjectileRicochetCountOverride; only
+    // CPlasmaBeamMP1 (0xd6a3c0) has one, 1.
+    if (x1c0_weaponType == kWT_Plasma) {
+      proj->PortSetRemainingRicochetCount(1);
+    }
+#endif
+    mgr.AddObject(proj);
+    proj->Think(dt, mgr);
+  }
+}
+
+#ifdef TARGET_PC
+const TToken< CWeaponDescription >* CGunWeapon::PortStackedWeapon(int chargeState) {
+  if (!PortStackTokensLocked() || !mPortStackWeapons[chargeState].TryCache()) {
+    return nullptr;
+  }
+  return &mPortStackWeapons[chargeState];
+}
+
+void CGunWeapon::PortLockStackTokens() {
+  if (PortStackTokensLocked()) {
+    return;
+  }
+  for (int i = 0; i < x144_weapons.capacity(); ++i) {
+    mPortStackWeapons.push_back(TCachedToken< CWeaponDescription >(x144_weapons[i].GetToken()));
+    mPortStackWeapons[i].Lock();
+  }
+}
+
+void CGunWeapon::PortUnlockStackTokens() {
+  if (!PortStackTokensLocked()) {
+    return;
+  }
+  for (int i = 0; i < mPortStackWeapons.size(); ++i) {
+    mPortStackWeapons[i].Unlock();
+  }
+  mPortStackWeapons = rstl::reserved_vector< TCachedToken< CWeaponDescription >, 2 >();
+}
+
+void CGunWeapon::PortFireStackedProjectile(const bool underwater, const float dt,
+                                           const CPlayerState::EChargeStage chargeState,
+                                           const CTransform4f& xf, CStateManager& mgr,
+                                           const TUniqueId homingTarget, const float chargeFactor1,
+                                           const float chargeFactor2) {
+  if (const TToken< CWeaponDescription >* weapon = PortStackedWeapon(chargeState)) {
+    SpawnProjectile(*weapon, underwater, dt, chargeState, xf, mgr, homingTarget, chargeFactor1,
+                        chargeFactor2);
+  }
+}
+
+#endif
+
+void CGunWeapon::Fire(const bool underwater, const float dt,
+                      const CPlayerState::EChargeStage chargeState, const CTransform4f& xf,
+                      CStateManager& mgr, const TUniqueId homingTarget, const float chargeFactor1,
+                      const float chargeFactor2) {
+  SpawnProjectile(x144_weapons[chargeState], underwater, dt, chargeState, xf, mgr, homingTarget,
+                  chargeFactor1, chargeFactor2);
+
+  if (chargeState != CPlayerState::kCS_Normal) {
+    x218_25_enableCharge = true;
+    mgr.CameraManager()->AddCameraShaker(CCameraShakeData::skSoftRecoil, false);
+  }
+#ifdef TARGET_PC
+  else if (PortRemasteredMuzzle()) {
+    PortStartMuzzleFlash();
+  }
+#endif
+
+  CAnimData& animData = *x10_solidModelData->AnimationData();
+  animData.EnableLooping(false);
+  CAnimPlaybackParms parms(skShootAnim[chargeState], -1, 1.f, true);
+  animData.SetAnimation(parms, false);
+}
+
+void CGunWeapon::ReturnToDefault(CStateManager& mgr) {
+  x100_gunController->ReturnToDefault(mgr, 0.f, false);
+}
+
+bool CGunWeapon::ComboFireOver() const { return x100_gunController->IsComboOver(); }
+
+void CGunWeapon::EnterFidget(CStateManager& mgr, SamusGun::EFidgetType type, int parm2) {
+  x100_gunController->EnterFidget(mgr, s32(type), s32(x200_beamId), parm2);
+}
+
+CDamageInfo CGunWeapon::GetDamageInfo(CStateManager& mgr, CPlayerState::EChargeStage chargeState,
+                                      float chargeFactor) {
+  const SWeaponInfo& wInfo = GetWeaponInfo();
+  if (chargeState == CPlayerState::kCS_Normal) {
+    return NWeaponTypes::get_shot_damage(wInfo.x4_normal, mgr);
+  }
+  CDamageInfo param(wInfo.x20_charged.GetWeaponMode(), wInfo.x20_charged.GetDamage() * chargeFactor,
+                    wInfo.x20_charged.GetRadius() * chargeFactor,
+                    wInfo.x20_charged.GetKnockBackPower() * chargeFactor);
+  param.SetRadiusDamage(wInfo.x20_charged.GetRadiusDamage() * chargeFactor);
+  return NWeaponTypes::get_shot_damage(param, mgr);
+}
+
+CAABox CGunWeapon::GetBounds() const {
+  if (x10_solidModelData)
+    return x10_solidModelData->GetBounds();
+  return CAABox::Identity();
+}
+
+CAABox CGunWeapon::GetBounds(const CTransform4f& xf) const {
+  if (x10_solidModelData)
+    return x10_solidModelData->GetBounds(xf);
+  return CAABox::Identity();
+}
+
+void CGunWeapon::Touch(const CStateManager& mgr) {
+  if (x10_solidModelData) {
+    x10_solidModelData->Touch(mgr, x20c_shaderIdx);
+    if (xb0_suitArmModelData)
+#ifdef TARGET_PC
+      xb0_suitArmModelData->Touch(mgr, mPortDreadCannon ? x20c_shaderIdx : 0);
+#else
+      xb0_suitArmModelData->Touch(mgr, 0);
+#endif
+  }
+}
+
+void CGunWeapon::TouchHolo(const CStateManager& mgr) {
+  if (x60_holoModelData)
+    x60_holoModelData->Touch(mgr, 0);
+}
+
+void CGunWeapon::Load(CStateManager& mgr, const bool subtypeBasePose) {
+  LockTokens(mgr);
+  x218_27_subtypeBasePose = subtypeBasePose;
+  x204_frozenEffect = kFFT_None;
+  x1b8_frozenGenerator = nullptr;
+  x104_gunCharacter.Lock();
+  x160_xferEffect.Lock();
+
+  for (int i = 0; i < x16c_muzzleEffects.capacity(); ++i) {
+    x16c_muzzleEffects[i].Lock();
+    x144_weapons[i].Lock();
+  }
+
+  for (int i = 0; i < x188_frozenEffects.capacity(); ++i) {
+    x188_frozenEffects[i].Lock();
+  }
+}
+
+void CGunWeapon::Unload(CStateManager& mgr) {
+  UnlockTokens();
+  x210_loadFlags = 0;
+  x204_frozenEffect = kFFT_None;
+  x10_solidModelData = rstl::optional_object_null();
+  x60_holoModelData = rstl::optional_object_null();
+  xb0_suitArmModelData = rstl::optional_object_null();
+#ifdef TARGET_PC
+  mPortDreadCannon = false;
+#endif
+  x100_gunController = nullptr;
+  x1bc_rainSplashGenerator = nullptr;
+  x1b8_frozenGenerator = nullptr;
+  FreeResPools();
+  x104_gunCharacter.Unlock();
+  x218_26_loaded = false;
+}
+
+bool CGunWeapon::IsLoaded() const { return x218_26_loaded; }
+
+void CGunWeapon::AllocResPools(CPlayerState::EBeamId beam) {
+  const CTweakGunRes::ResIdVec& wPair = gpTweakGunRes->GetBeamResIdVec(beam);
+
+  for (int i = 0; i < x16c_muzzleEffects.capacity(); ++i) {
+    const char* const* muzzleNames = &skMuzzleNames[size_t(beam) * 2];
+    x16c_muzzleEffects.push_back(gpSimplePool->GetObj(muzzleNames[i]));
+    x144_weapons.push_back(gpSimplePool->GetObj(SObjectTag('WPSC', wPair[i])));
+  }
+
+  const char* const* frozenNames = &skFrozenNames[size_t(beam) * 2];
+  for (int i = 0; i < x16c_muzzleEffects.capacity(); ++i) {
+    x188_frozenEffects.push_back(gpSimplePool->GetObj(frozenNames[i]));
+  }
+}
+
+void CVelocityInfo::Clear() {
+  x0_vel = rstl::reserved_vector< CVector3f, 2 >();
+  x1c_targetHoming = rstl::reserved_vector< bool, 2 >();
+  x24_trat = rstl::reserved_vector< float, 2 >();
+}
+
+void CGunWeapon::FreeResPools() {
+  x160_xferEffect.Unlock();
+
+  for (int i = 0; i < x16c_muzzleEffects.capacity(); ++i) {
+    x16c_muzzleEffects[i].Unlock();
+    x144_weapons[i].Unlock();
+  }
+  for (int i = 0; i < x188_frozenEffects.capacity(); ++i) {
+    x188_frozenEffects[i].Unlock();
+  }
+
+  x10c_anims = rstl::vector< CToken >();
+  x1a4_muzzleGenerators = rstl::reserved_vector< rstl::auto_ptr< CElementGen >, 2 >();
+#ifdef TARGET_PC
+  mPortMuzzleFlash.Clear();
+#endif
+  x1d0_velInfo.Clear();
+}
+
+void CGunWeapon::LoadFxIdle(float dt, CStateManager& mgr) {
+  if (!NWeaponTypes::are_tokens_ready(x12c_deps)) {
+    return;
+  }
+
+  if ((x210_loadFlags & 0x2) != 0 && (x210_loadFlags & 0x4) != 0 && (x210_loadFlags & 0x10) != 0) {
+    return;
+  }
+
+  bool loaded = true;
+  for (int i = 0; i < x16c_muzzleEffects.capacity(); ++i) {
+    if (!x16c_muzzleEffects[i].TryCache()) {
+      loaded = false;
+      break;
+    }
+    if (!x144_weapons[i].TryCache()) {
+      loaded = false;
+      break;
+    }
+  }
+  for (int i = 0; i < x188_frozenEffects.capacity(); ++i) {
+    if (!x188_frozenEffects[i].TryCache()) {
+      loaded = false;
+      break;
+    }
+  }
+  if (!x160_xferEffect.TryCache()) {
+    loaded = false;
+  }
+  if (loaded) {
+    if ((x210_loadFlags & 0x2) != 0x2) {
+      LoadMuzzleFx(dt);
+      x210_loadFlags |= 0x2;
+    }
+    x210_loadFlags |= 0x10;
+    if ((x210_loadFlags & 0x4) != 0x4) {
+      LoadProjectileData(mgr);
+      x210_loadFlags |= 0x4;
+    }
+  }
+}
+
+void CGunWeapon::LoadAnimations() {
+  NWeaponTypes::get_token_vector(*x10_solidModelData->GetAnimationData(), 0, 15, x10c_anims, true);
+}
+
+bool CGunWeapon::IsAnimsLoaded() const {
+  for (rstl::vector< CToken >::const_iterator it = x10c_anims.begin(); it != x10c_anims.end();
+       ++it) {
+    if (!it->IsLoaded()) {
+      return false;
+    }
+  }
+  return true;
+}
+
+void CGunWeapon::LockTokens(CStateManager& mgr) {
+  AsyncLoadSuitArm(mgr);
+  NWeaponTypes::lock_tokens(x12c_deps);
+}
+
+void CGunWeapon::UnlockTokens() {
+  x13c_armCharacter.Unlock();
+  NWeaponTypes::unlock_tokens(x12c_deps);
+}
+
+void CGunWeapon::FillTokenVector(const rstl::vector< SObjectTag >& tags,
+                                 rstl::vector< CToken >& out, bool includeTxtr) {
+  rstl::vector< SObjectTag >::const_iterator it;
+  for (it = tags.begin(); it != tags.end(); ++it) {
+    CToken token = gpSimplePool->GetObj(*it);
+    if (!includeTxtr && token.GetReferenceType() == 'TXTR') {
+      continue;
+    }
+    out.push_back(token);
+  }
+}
+
+void CGunWeapon::BuildDependencyList(CPlayerState::EBeamId beam) {
+  TLockedToken< CDependencyGroup > deps = gpSimplePool->GetObj(skDependencyNames[beam]);
+  TLockedToken< CDependencyGroup > animDeps = gpSimplePool->GetObj(skAnimDependencyNames[beam]);
+  CDependencyGroup* depsObj = *deps;
+  CDependencyGroup* animDepsObj = *animDeps;
+  x12c_deps.reserve(depsObj->GetObjectTagVector().size() +
+                    animDepsObj->GetObjectTagVector().size());
+  FillTokenVector(depsObj->GetObjectTagVector(), x12c_deps, true);
+  FillTokenVector(animDepsObj->GetObjectTagVector(), x12c_deps, false);
+}
+
+void CGunWeapon::AsyncLoadFidget(CStateManager& mgr, SamusGun::EFidgetType type, int animSet) {
+  x100_gunController->LoadFidgetAnimAsync(mgr, type, x200_beamId, animSet);
+}
+
+void CGunWeapon::UnLoadFidget() { x100_gunController->UnLoadFidget(); }
+
+bool CGunWeapon::IsFidgetLoaded() { return x100_gunController->IsFidgetLoaded(); }
+
+void CGunWeapon::AsyncLoadSuitArm(CStateManager& mgr) {
+  int suit = NWeaponTypes::get_current_suit(mgr);
+  xb0_suitArmModelData = rstl::optional_object_null();
+#ifdef TARGET_PC
+  mPortDreadCannon = false;  // the retail gun until LoadSuitArm has the new arm
+#endif
+  x13c_armCharacter = gpSimplePool->GetObj(skSuitArmNames[suit]);
+  x13c_armCharacter.Lock();
+  x218_28_suitArmLocked = true;
+}
+
+void CGunWeapon::LoadSuitArm(CStateManager& mgr) {
+  if (!x13c_armCharacter.IsLoaded()) {
+    return;
+  }
+  int suit = NWeaponTypes::get_current_suit(mgr);
+  const CAssetId armId = NWeaponTypes::get_asset_id_from_name(skSuitArmNames[suit]);
+#ifdef TARGET_PC
+  mPortDreadCannon = PortDreadSamus::ReplacesFirstPersonCannon(suit);
+  xb0_suitArmModelData =
+      CStaticRes(mPortDreadCannon ? CAssetId(PortDreadSamus::FirstPersonCannon(suit)) : armId,
+                 x4_scale);
+#else
+  xb0_suitArmModelData = CStaticRes(armId, x4_scale);
+#endif
+  xb0_suitArmModelData->SetSortThermal(true);
+  x218_28_suitArmLocked = false;
+  x13c_armCharacter.Unlock();
+}
+
+void CGunWeapon::PointGenerator(void* ptr, const CVector3f* vertices, const CVector3f* normals,
+                                int count) {
+
+  static_cast< CRainSplashGenerator* >(ptr)->GeneratePoints(vertices, normals, count);
+}
+
+void CGunWeapon::EnableFrozenEffect(EFrozenFxType type) {
+  switch (type) {
+  case kFFT_Thawed:
+    if (x204_frozenEffect == kFFT_Thawed)
+      break;
+    x1b8_frozenGenerator = rs_new CElementGen(x188_frozenEffects[1]);
+    x1b8_frozenGenerator->SetGlobalScale(x4_scale);
+    break;
+  case kFFT_Frozen:
+    if (x204_frozenEffect == kFFT_Frozen)
+      break;
+    x1b8_frozenGenerator = rs_new CElementGen(x188_frozenEffects[0]);
+    x1b8_frozenGenerator->SetGlobalScale(x4_scale);
+    break;
+  default:
+    break;
+  }
+  x204_frozenEffect = type;
+}
+
+void DrawClipCube(const CAABox& aabb) {
+  // Render AABB as completely transparent object, only modifying Z-buffer
+  const CColor color(1.f, 1.f, 1.f, 0.f);
+  gpRender->SetBlendMode_AlphaBlended();
+  CGraphics::SetCullMode(kCM_None);
+
+  gpRender->BeginTriangleStrip(4);
+  gpRender->PrimColor(color);
+  gpRender->PrimVertex(
+      CVector3f(aabb.GetMaxPoint().GetX(), aabb.GetMaxPoint().GetY(), aabb.GetMinPoint().GetZ()));
+  gpRender->PrimVertex(
+      CVector3f(aabb.GetMaxPoint().GetX(), aabb.GetMinPoint().GetY(), aabb.GetMinPoint().GetZ()));
+  gpRender->PrimVertex(
+      CVector3f(aabb.GetMaxPoint().GetX(), aabb.GetMaxPoint().GetY(), aabb.GetMaxPoint().GetZ()));
+  gpRender->PrimVertex(
+      CVector3f(aabb.GetMaxPoint().GetX(), aabb.GetMinPoint().GetY(), aabb.GetMaxPoint().GetZ()));
+  gpRender->EndPrimitive();
+
+  gpRender->BeginTriangleStrip(4);
+  gpRender->PrimColor(color);
+  gpRender->PrimVertex(
+      CVector3f(aabb.GetMinPoint().GetX(), aabb.GetMaxPoint().GetY(), aabb.GetMinPoint().GetZ()));
+  gpRender->PrimVertex(
+      CVector3f(aabb.GetMaxPoint().GetX(), aabb.GetMaxPoint().GetY(), aabb.GetMinPoint().GetZ()));
+  gpRender->PrimVertex(
+      CVector3f(aabb.GetMinPoint().GetX(), aabb.GetMaxPoint().GetY(), aabb.GetMaxPoint().GetZ()));
+  gpRender->PrimVertex(
+      CVector3f(aabb.GetMaxPoint().GetX(), aabb.GetMaxPoint().GetY(), aabb.GetMaxPoint().GetZ()));
+  gpRender->EndPrimitive();
+
+  gpRender->BeginTriangleStrip(4);
+  gpRender->PrimColor(color);
+  gpRender->PrimVertex(
+      CVector3f(aabb.GetMinPoint().GetX(), aabb.GetMaxPoint().GetY(), aabb.GetMinPoint().GetZ()));
+  gpRender->PrimVertex(
+      CVector3f(aabb.GetMinPoint().GetX(), aabb.GetMinPoint().GetY(), aabb.GetMinPoint().GetZ()));
+  gpRender->PrimVertex(
+      CVector3f(aabb.GetMinPoint().GetX(), aabb.GetMaxPoint().GetY(), aabb.GetMaxPoint().GetZ()));
+  gpRender->PrimVertex(
+      CVector3f(aabb.GetMinPoint().GetX(), aabb.GetMinPoint().GetY(), aabb.GetMaxPoint().GetZ()));
+  gpRender->EndPrimitive();
+
+  gpRender->BeginTriangleStrip(4);
+  gpRender->PrimColor(color);
+  gpRender->PrimVertex(
+      CVector3f(aabb.GetMinPoint().GetX(), aabb.GetMinPoint().GetY(), aabb.GetMinPoint().GetZ()));
+  gpRender->PrimVertex(
+      CVector3f(aabb.GetMaxPoint().GetX(), aabb.GetMinPoint().GetY(), aabb.GetMinPoint().GetZ()));
+  gpRender->PrimVertex(
+      CVector3f(aabb.GetMinPoint().GetX(), aabb.GetMinPoint().GetY(), aabb.GetMaxPoint().GetZ()));
+  gpRender->PrimVertex(
+      CVector3f(aabb.GetMaxPoint().GetX(), aabb.GetMinPoint().GetY(), aabb.GetMaxPoint().GetZ()));
+  gpRender->EndPrimitive();
+
+  gpRender->BeginTriangleStrip(4);
+  gpRender->PrimColor(color);
+  gpRender->PrimVertex(
+      CVector3f(aabb.GetMinPoint().GetX(), aabb.GetMinPoint().GetY(), aabb.GetMaxPoint().GetZ()));
+  gpRender->PrimVertex(
+      CVector3f(aabb.GetMaxPoint().GetX(), aabb.GetMinPoint().GetY(), aabb.GetMaxPoint().GetZ()));
+  gpRender->PrimVertex(
+      CVector3f(aabb.GetMinPoint().GetX(), aabb.GetMaxPoint().GetY(), aabb.GetMaxPoint().GetZ()));
+  gpRender->PrimVertex(
+      CVector3f(aabb.GetMaxPoint().GetX(), aabb.GetMaxPoint().GetY(), aabb.GetMaxPoint().GetZ()));
+  gpRender->EndPrimitive();
+
+  gpRender->BeginTriangleStrip(4);
+  gpRender->PrimColor(color);
+  gpRender->PrimVertex(
+      CVector3f(aabb.GetMinPoint().GetX(), aabb.GetMinPoint().GetY(), aabb.GetMinPoint().GetZ()));
+  gpRender->PrimVertex(
+      CVector3f(aabb.GetMaxPoint().GetX(), aabb.GetMinPoint().GetY(), aabb.GetMinPoint().GetZ()));
+  gpRender->PrimVertex(
+      CVector3f(aabb.GetMinPoint().GetX(), aabb.GetMaxPoint().GetY(), aabb.GetMinPoint().GetZ()));
+  gpRender->PrimVertex(
+      CVector3f(aabb.GetMaxPoint().GetX(), aabb.GetMaxPoint().GetY(), aabb.GetMinPoint().GetZ()));
+  gpRender->EndPrimitive();
+
+  CGraphics::SetCullMode(kCM_Front);
+}

@@ -1,0 +1,749 @@
+#include "Kyoto/CCrc32.hpp"
+#include "Kyoto/CMemoryCardSys.hpp"
+#include "Kyoto/Graphics/CGraphicsPalette.hpp"
+#include "Kyoto/Graphics/CTexture.hpp"
+#include "dolphin/os/OSCache.h"
+
+#include <SDL3/SDL_filesystem.h>
+#include <SDL3/SDL_messagebox.h>
+#include <SDL3/SDL_stdinc.h>
+#include <SDL3/SDL_video.h>
+#if defined(__ANDROID__)
+#include <SDL3/SDL_system.h>
+#endif
+
+#include "Kyoto/MemoryCopy.hpp"
+#include "Kyoto/Basics/CBasics.hpp"
+#include "MetroidPrime/PortSaveFormat.hpp"
+#include "port_env.h"
+#include "port_gci.h"
+#include "port_log.h"
+#include "port_paths.h"
+
+#include <aurora/card.h>
+#include <cstdlib>
+#include <filesystem>
+#include <string>
+#include <vector>
+
+bool CMemoryCardSys::mIsInitialized;
+bool CMemoryCardSys::mIsCardSysExists;
+rstl::vector< char, rstl::aligned_allocator > CMemoryCardSys::mWorkAreaA;
+rstl::vector< char, rstl::aligned_allocator > CMemoryCardSys::mWorkAreaB;
+
+namespace {
+// Port: the card chosen at init, and the one in use (an Archipelago game's own
+// card, or that one).
+std::string sDefaultCardBase;
+std::string sCardBase;
+// Port: the game id and maker the card's files are created with, as CARDInit
+// was given them ("GM8E01"), for the map side files' key.
+std::string sCardIdMaker;
+// Port: the channel the port's save driver uses: CSaveGameScreen builds its
+// CMemoryCardDriver with kCS_SlotA, and nothing here mounts a second card.
+constexpr int kCardChannel = CMemoryCardSys::kCS_SlotA;
+constexpr const char* kCardMaker = "01";
+
+// Port: move a pre-native PAL save ("MetroidPrime A/B") into the PAL disc's own
+// format once the card folder is known.
+void MigrateLegacyPalSave() {
+  const PortGci::Report migrated = PortGci::MigrateMountedLegacyPal();
+  if (migrated.copied > 0 || !migrated.errors.empty()) {
+    PortLog::Write("memory card: %s\n", migrated.Summary("Migrated").c_str());
+  }
+}
+
+// Port: each release keeps its own saves, so after switching discs (USA to
+// PAL, GameCube to Trilogy) the card looks empty. Offer, once, to copy the
+// newest other release's save over, converted. The overlay's Memory card
+// section has the same choice for later (and for the older releases). Asked
+// for the default card at boot and for each seed's card as it mounts; seeds
+// are version-neutral, so their saves convert like any other.
+void OfferRestoreFromOtherRelease() {
+  if (port::EnvFlag("MP_NO_DISC_DIALOG") || std::getenv("MP_CONSOLE") != nullptr) {
+    return; // scripted runs: nobody to answer
+  }
+  const std::vector<PortGci::OtherRelease> others = PortGci::RestoreToOffer();
+  if (others.empty()) {
+    return;
+  }
+  int windowCount = 0;
+  SDL_Window** windows = SDL_GetWindows(&windowCount);
+  SDL_Window* window = windows != nullptr && windowCount > 0 ? windows[0] : nullptr;
+  SDL_free(windows);
+  if (window == nullptr) {
+    return;
+  }
+  const PortGci::OtherRelease& newest = others.front();
+  const std::string message = "This card has no saves for this disc yet, but there are\nsaves from " + newest.label +
+                              ".\n\nCopy them over? They are converted for this disc;\nthe originals stay "
+                              "where they are.\n\nYou can also do it later: overlay, System tab,\nMemory card.";
+  enum { kSkip, kCopy };
+  const SDL_MessageBoxButtonData buttons[] = {
+      {SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT, kCopy, "Copy saves"},
+      {SDL_MESSAGEBOX_BUTTON_ESCAPEKEY_DEFAULT, kSkip, "Start fresh"},
+  };
+  SDL_MessageBoxData data{};
+  data.flags = SDL_MESSAGEBOX_INFORMATION;
+  data.window = window;
+  data.title = "Metroid Prime: saves from another version";
+  data.message = message.c_str();
+  data.numbuttons = 2;
+  data.buttons = buttons;
+  int answer = -1;
+  if (!SDL_ShowMessageBox(&data, &answer)) {
+    PortLog::Write("memory card: could not offer the other release's saves: %s\n", SDL_GetError());
+    return;
+  }
+  PortGci::MarkRestoreOffered();
+  if (answer != kCopy) {
+    return;
+  }
+  const PortGci::Report report = PortGci::RestoreFrom(newest);
+  PortLog::Write("memory card: from %s: %s\n", newest.label.c_str(), report.Summary("Restored").c_str());
+  if (report.copied == 0) {
+    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_WARNING, "Metroid Prime: saves not copied",
+                             report.Summary("Restored").c_str(), window);
+  }
+}
+} // namespace
+
+namespace {
+// PAL: a sector's CRC covers everything after its own 4-byte CRC field.
+bool PalSectorValid(const uchar* sector) {
+  uint stored;
+  memcpy(&stored, sector, sizeof(stored));
+  return CBasics::SwapBytes(stored) ==
+         CCRC32::Calculate(sector + 4, PortSaveFormat::kPalSectorSize - 4);
+}
+uint PalSectorSeq(const uchar* sector) {
+  uint seq;
+  memcpy(&seq, sector + 4, sizeof(seq));
+  return CBasics::SwapBytes(seq);
+}
+} // namespace
+
+ECardResult SMemoryCardFileInfo::FileRead() {
+  rstl::vector< uchar >& saveData = x34_saveData;
+  saveData = rstl::vector< uchar >();
+  const uint size = x24_saveFileData.size();
+  const void* data = x24_saveFileData.data();
+  if (PortSaveFormat::IsPal()) {
+    // Sector 0 is the header; sectors 1 and 2 are two copies of the save. Pick one
+    // like the PAL game: a single valid copy wins; if both are valid and have the
+    // same sequence number copy 0 wins, otherwise copy 1.
+    ECardResult result = kCR_READY;
+    if (size != static_cast< uint >(PortSaveFormat::kPalFileSize)) {
+      result = kCR_BROKEN;
+    } else {
+      const uchar* base = static_cast< const uchar* >(data) + PortSaveFormat::kPalSectorSize;
+      const uchar* copy0 = base;
+      const uchar* copy1 = base + PortSaveFormat::kPalSectorSize;
+      const bool ok0 = PalSectorValid(copy0);
+      const bool ok1 = PalSectorValid(copy1);
+      const uchar* chosen = nullptr;
+      if (ok0 && ok1) {
+        chosen = PalSectorSeq(copy0) == PalSectorSeq(copy1) ? copy0 : copy1;
+      } else if (ok0) {
+        chosen = copy0;
+      } else if (ok1) {
+        chosen = copy1;
+      }
+      if (chosen == nullptr) {
+        result = kCR_CRC_MISMATCH;
+      } else {
+        const uint payload = PortSaveFormat::kPalSectorSize - PortSaveFormat::kPalPayloadOffset;
+        saveData.assign(payload);
+        (memcpy)(saveData.data(), chosen + PortSaveFormat::kPalPayloadOffset, payload);
+      }
+    }
+    x24_saveFileData = rstl::vector< uchar, rstl::aligned_allocator >();
+    return result;
+  }
+  if (size < 4) {
+    return kCR_BROKEN;
+  }
+  uint storedCrc;
+  memcpy(&storedCrc, data, sizeof(storedCrc));
+  const uint crc = CCRC32::Calculate(static_cast< const uchar* >(data) + 4, size - 4);
+  // Accept saves from the early little-endian port as well as retail saves.
+  // Every subsequent write uses the retail big-endian representation.
+  if (CBasics::SwapBytes(storedCrc) == crc || storedCrc == crc) {
+    uint offset;
+    ECardResult result = GetSaveDataOffset(offset);
+    if (result != kCR_READY) {
+      x24_saveFileData = rstl::vector< uchar, rstl::aligned_allocator >();
+      return result;
+    }
+    // A file with a valid CRC can still be too short for the body
+    // CMemoryCardDriver::ReadFinished reads (a hand-made or truncated GCI).
+    if (offset > size || size - offset < static_cast< uint >(PortSaveFormat::BodyBytes())) {
+      x24_saveFileData = rstl::vector< uchar, rstl::aligned_allocator >();
+      return kCR_BROKEN;
+    }
+    const uint saveSize = size - offset;
+    saveData.assign(saveSize);
+    (memcpy)(saveData.data(), static_cast< const uchar* >(data) + offset, saveSize);
+    x24_saveFileData = rstl::vector< uchar, rstl::aligned_allocator >();
+    return kCR_READY;
+  } else {
+    x24_saveFileData = rstl::vector< uchar, rstl::aligned_allocator >();
+    return kCR_CRC_MISMATCH;
+  }
+}
+
+CMemoryCardSys::CCardFileInfo::Icon::Icon(CAssetId id, int speed, CSimplePool& pool)
+: x0_id(id)
+, x4_speed(speed)
+, x8_tex(pool.GetObj(SObjectTag('TXTR', id))) {}
+
+CMemoryCardSys::EMemoryCardPort SMemoryCardFileInfo::GetFileCardPort() {
+  return static_cast< CMemoryCardSys::EMemoryCardPort >(x0_fileInfo.chan);
+}
+
+int SMemoryCardFileInfo::GetFileNo() const { return x0_fileInfo.fileNo; }
+
+CMemoryCardSys::EMemoryCardPort CMemoryCardSys::CCardFileInfo::GetCardPort() {
+  return static_cast< EMemoryCardPort >(x4_fileInfo.chan);
+}
+
+int CMemoryCardSys::CCardFileInfo::GetFileNo() { return x4_fileInfo.fileNo; }
+
+ECardResult SMemoryCardFileInfo::GetSaveDataOffset(uint& offOut) {
+  CardStat stat;
+  ECardResult result = CMemoryCardSys::GetStatus(GetFileCardPort(), GetFileNo(), stat);
+  if (result != kCR_READY) {
+    offOut = -1;
+    return result;
+  }
+  offOut = 4;
+  offOut += 64;
+  const int bannerFormat = stat.GetBannerFormat();
+  if (bannerFormat == CARD_STAT_BANNER_C8) {
+    offOut += 3584;
+  } else if (bannerFormat == CARD_STAT_BANNER_RGB5A3) {
+    offOut += 6144;
+  }
+
+  bool palette = false;
+  int idx = 0;
+  int format = stat.GetIconFormat(idx);
+  while (idx < 8 && format != CARD_STAT_ICON_NONE) {
+    if (format == CARD_STAT_ICON_C8) {
+      palette = true;
+      offOut += 1024;
+    } else {
+      offOut += 2048;
+    }
+    ++idx;
+    if (idx < 8) {
+      format = stat.GetIconFormat(idx);
+    }
+  }
+  if (palette) {
+    offOut += 512;
+  }
+  return kCR_READY;
+}
+
+void CMemoryCardSys::CCardFileInfo::WriteBannerData(COutputStream& out) {
+  if (x3c_bannerTex != kInvalidAssetId) {
+    const CTexture& texture = ***x40_bannerTok;
+    const ETexelFormat format = texture.GetTexelFormat();
+    const void* data = texture.GetConstBitMapData(0);
+    const uint size = format == kTF_RGB5A3 ? 6144 : 3072;
+    out.Put(data, size);
+    if (format == kTF_C8) {
+      out.Put(texture.GetPalette()->GetPaletteData(), 512);
+    }
+  }
+}
+
+void CMemoryCardSys::CCardFileInfo::WriteIconData(COutputStream& out) {
+  const void* palette = nullptr;
+  for (int i = 0; i < x50_iconToks.size(); ++i) {
+    const CTexture& texture = **x50_iconToks[i].x8_tex;
+    const ETexelFormat format = texture.GetTexelFormat();
+    const void* data = texture.GetConstBitMapData(0);
+    const uint size = format == kTF_RGB5A3 ? 2048 : 1024;
+    out.Put(data, size);
+    if (format == kTF_C8) {
+      palette = texture.GetPalette()->GetPaletteData();
+    }
+  }
+  if (palette != nullptr) {
+    out.Put(palette, 512);
+  }
+}
+
+void CMemoryCardSys::CCardFileInfo::BuildCardBuffer() {
+  const uint bannerSize = CalculateBannerDataSize();
+  if (PortSaveFormat::IsPal()) {
+    // Sector 0: [crc][comment][banner][icons]. Sectors 1 and 2: [crc][seq][payload],
+    // two identical copies (seq 0) of the save body.
+    const uint sector = PortSaveFormat::kPalSectorSize;
+    const uint payloadMax = sector - PortSaveFormat::kPalPayloadOffset;
+    const uint bodySize = xf4_saveBuffer.size() < payloadMax ? xf4_saveBuffer.size() : payloadMax;
+    x104_cardBuffer.assign(PortSaveFormat::kPalFileSize);
+    uchar* data = x104_cardBuffer.data();
+    memset(data, 0, PortSaveFormat::kPalFileSize);
+    {
+      CMemoryStreamOut out(data, sector);
+      out.WriteInt32(0);
+      char comment[64];
+      strncpy(comment, x28_comment.data(), sizeof(comment));
+      out.Put(comment, sizeof(comment));
+      WriteBannerData(out);
+      WriteIconData(out);
+    }
+    for (int i = 1; i <= 2; ++i) {
+      (memcpy)(data + i * sector + PortSaveFormat::kPalPayloadOffset, xf4_saveBuffer.data(),
+               bodySize);
+    }
+    for (int i = 0; i < 3; ++i) {
+      uchar* sec = data + i * sector;
+      const uint crc = CBasics::SwapBytes(CCRC32::Calculate(sec + 4, sector - 4));
+      memcpy(sec, &crc, sizeof(crc));
+    }
+    xf4_saveBuffer = rstl::vector< uchar >();
+    return;
+  }
+  const uint totalSize = (bannerSize + xf4_saveBuffer.size() + 8191) & ~8191;
+  x104_cardBuffer.assign(totalSize);
+  void* data = x104_cardBuffer.data();
+  {
+    CMemoryStreamOut out(data, totalSize);
+    out.WriteInt32(0);
+    char comment[64];
+    strncpy(comment, x28_comment.data(), sizeof(comment));
+    out.Put(comment, sizeof(comment));
+    WriteBannerData(out);
+    WriteIconData(out);
+  }
+  (memcpy)(x104_cardBuffer.data() + bannerSize, xf4_saveBuffer.data(), xf4_saveBuffer.size());
+  const uint crc = CBasics::SwapBytes(
+      CCRC32::Calculate(static_cast< const uchar* >(data) + 4, totalSize - 4));
+  memcpy(data, &crc, sizeof(crc));
+  xf4_saveBuffer = rstl::vector< uchar >();
+}
+
+uint CMemoryCardSys::CCardFileInfo::CalculateTotalDataSize() {
+  if (PortSaveFormat::IsPal()) {
+    return PortSaveFormat::kPalFileSize;
+  }
+  const uint saveSize = xf4_saveBuffer.size();
+  uint totalSize = CalculateBannerDataSize();
+  totalSize += saveSize;
+  return (totalSize + 8191) & ~8191;
+}
+
+uint CMemoryCardSys::CCardFileInfo::CalculateBannerDataSize() {
+  uint size = 68;
+  if (x3c_bannerTex != kInvalidAssetId) {
+    if ((*x40_bannerTok)->GetTexelFormat() == kTF_RGB5A3) {
+      size = 6212;
+    } else {
+      size = 3652;
+    }
+  }
+  bool palette = false;
+  for (int i = 0; i < x50_iconToks.size(); ++i) {
+    if (x50_iconToks[i].x8_tex->GetTexelFormat() == kTF_RGB5A3) {
+      size += 2048;
+    } else {
+      size += 1024;
+      palette = true;
+    }
+  }
+  if (palette) {
+    size += 512;
+  }
+  return size;
+}
+
+int CardStat::GetFileLength() { return x0_stat.length; }
+
+int CardStat::GetTime() const { return x0_stat.time; }
+
+int CardStat::GetBannerFormat() { return CARDGetBannerFormat(&x0_stat); }
+
+int CardStat::GetIconFormat(int idx) { return CARDGetIconFormat(&x0_stat, idx); }
+
+int CardStat::GetCommentAddr() const { return x0_stat.commentAddr; }
+
+void CardStat::SetBannerFormat(int format) { CARDSetBannerFormat(&x0_stat, format); }
+
+void CardStat::SetIconFormat(int format, int idx) { CARDSetIconFormat(&x0_stat, idx, format); }
+
+void CardStat::SetIconSpeed(int speed, int idx) { CARDSetIconSpeed(&x0_stat, idx, speed); }
+
+void CardStat::SetIconAddr(int addr) { CARDSetIconAddress(&x0_stat, addr); }
+
+void CardStat::SetCommentAddr(int addr) { CARDSetCommentAddress(&x0_stat, addr); }
+
+void CMemoryCardSys::CCardFileInfo::SetComment(const rstl::string& comment) {
+  x28_comment = comment;
+}
+
+CMemoryCardSys::CMemoryCardSys() {
+  Initialize();
+  mIsCardSysExists = true;
+}
+
+void CMemoryCardSys::Initialize() {
+  if (!mIsInitialized) {
+    // Port: keep the memory card in user/ beside the executable so a copied
+    // build is self-contained. CARDSetBasePath must run before CARDInit.
+    //
+    // This has to end with a directory, not merely with a path. A slot's path
+    // is default-constructed, and CARDInit fills an empty one from aurora's
+    // user path - which is the MP_USER_PATH environment variable and is unset on
+    // Android - or, failing that, from the process's working directory, which on
+    // Android is not writable. A card under "/" is not a card: every write
+    // fails, the front end shows a card it cannot identify, and nothing anywhere
+    // says where the card was supposed to be.
+    //
+    // So the resolved directory is logged on every platform. A save that went
+    // somewhere unexpected is otherwise unanswerable from a black screen, and on
+    // Android this line is the one that says where.
+    const char* base = nullptr;
+#if defined(__ANDROID__)
+    // The executable lives inside the read-only APK, so the card goes in the
+    // data folder: app storage, or the shared folder the player moved it to
+    // (port_paths.h). When neither can be found, the internal storage root is
+    // app storage reached another way, and is much better than falling back to
+    // the working directory.
+    static const std::string sDataFolder = PortPaths::UserFolder();
+    base = sDataFolder.empty() ? nullptr : sDataFolder.c_str();
+    if (base == nullptr) {
+      base = SDL_GetAndroidInternalStoragePath();
+      if (base != nullptr) {
+        PortLog::Write("memory card: no data folder, using internal storage\n");
+      }
+    }
+#else
+    // user/ beside the executable, or the user folder when that one is read-only.
+    const std::string cardFolder = PortPaths::CardFolder();
+    base = cardFolder.empty() ? nullptr : cardFolder.c_str();
+#endif
+    if (base == nullptr) {
+      // Deliberately leaving mIsInitialized false so a later call retries rather
+      // than leaving the card permanently unavailable.
+      PortLog::Write("memory card: no writable directory for the card; the front end "
+                     "will report it as unidentified\n");
+      return;
+    }
+    CARDSetBasePath(base, 2);
+    sDefaultCardBase = base;
+    sCardBase = base;
+    PortLog::Write("memory card: storing under %s\n", base);
+    // Aurora's CARDInit takes the game id and maker code: the disc's (GM8P on
+    // PAL, whose card aurora keeps under EUR).
+    CARDInit(PortGci::GameCode(), kCardMaker);
+    sCardIdMaker = std::string(PortGci::GameCode()) + kCardMaker;
+    mIsInitialized = true;
+    MigrateLegacyPalSave();
+    // Sharing the emulator's card: quick resume and boot-to-game save there too.
+    const std::string shared = PortGci::CardTargetDirectory("");
+    if (!shared.empty()) {
+      PortSwitchCard(shared.c_str());
+    }
+    OfferRestoreFromOtherRelease();
+  }
+}
+
+const char* CMemoryCardSys::PortCardResolvedDirectory() {
+  if (!mIsInitialized) {
+    return "";
+  }
+  // The channel's active path when its card is mounted, else the one it would
+  // get under the current base (both are the identity to key on; a card switch
+  // changes it).
+  static std::string sResolved;
+  char buffer[1024];
+  const int channel = PortCardChannel();
+  const size_t size = aurora_card_get_path(PortGci::GameCode(), aurora_card_get_type(channel),
+                                           channel, buffer, sizeof(buffer));
+  sResolved = size != 0 && size <= sizeof(buffer) ? std::string(buffer) : std::string();
+  return sResolved.c_str();
+}
+
+const char* CMemoryCardSys::PortCardIdMaker() { return sCardIdMaker.c_str(); }
+
+int CMemoryCardSys::PortCardChannel() { return kCardChannel; }
+
+bool CMemoryCardSys::PortSwitchCard(const char* directory) {
+  if (!mIsInitialized || sDefaultCardBase.empty())
+    return false;
+  const std::string target =
+      directory != nullptr && directory[0] != '\0' ? std::string(directory) : sDefaultCardBase;
+  if (target == sCardBase)
+    return false;
+  std::error_code error;
+  std::filesystem::create_directories(target, error);
+  const bool mounted = aurora_card_set_base_path(target.c_str());
+  // Taken even when it did not mount, so a bad directory is not retried every
+  // frame; the front end then shows no card, which is the truth.
+  sCardBase = target;
+  PortLog::Write("memory card: switched to %s%s\n", target.c_str(),
+                 mounted ? "" : " (no card could be mounted there)");
+  if (mounted) {
+    MigrateLegacyPalSave();
+    // A randomizer or Archipelago seed's card has its own per-release saves.
+    OfferRestoreFromOtherRelease();
+  }
+  return true;
+}
+
+bool CMemoryCardSys::PortOnDefaultCard() {
+  return mIsInitialized && !sDefaultCardBase.empty() && sCardBase == sDefaultCardBase;
+}
+
+CMemoryCardSys::~CMemoryCardSys() {
+  mIsCardSysExists = false;
+  FreeCardWorkArea(kCS_SlotA);
+  FreeCardWorkArea(kCS_SlotB);
+}
+
+ProbeResults CMemoryCardSys::IsMemoryCardInserted(EMemoryCardPort port) {
+  ProbeResults result;
+  result.x0_error =
+      static_cast< ECardResult >(CARDProbeEx(port, &result.x4_cardSize, &result.x8_sectorSize));
+  return result;
+}
+
+ECardResult CMemoryCardSys::GetResultCode(int port) {
+  return static_cast< ECardResult >(CARDGetResultCode(port));
+}
+
+ECardResult CMemoryCardSys::MountCard(EMemoryCardPort port) {
+  return static_cast< ECardResult >(
+      CARDMountAsync(port, AllocCardWorkArea(port), nullptr, nullptr));
+}
+
+ECardResult CMemoryCardSys::UnmountCard(EMemoryCardPort port) {
+  ECardResult result = static_cast< ECardResult >(CARDUnmount(port));
+  FreeCardWorkArea(port);
+  return result;
+}
+
+ECardResult CMemoryCardSys::FormatCard(EMemoryCardPort port) {
+  return static_cast< ECardResult >(CARDFormatAsync(port, nullptr));
+}
+
+ECardResult CMemoryCardSys::GetNumFreeBytes(EMemoryCardPort port, uint& freeBytes,
+                                            uint& freeFiles) {
+  s32 bytes;
+  s32 files;
+  ECardResult result = static_cast< ECardResult >(CARDFreeBlocks(port, &bytes, &files));
+  freeBytes = bytes;
+  freeFiles = files;
+  return result;
+}
+
+SMemoryCardFileInfo::SMemoryCardFileInfo(int cardPort, const rstl::string& name) : x14_name(name) {
+  x0_fileInfo.chan = cardPort;
+  x0_fileInfo.fileNo = -1;
+}
+
+CMemoryCardSys::CCardFileInfo::CCardFileInfo(EMemoryCardPort port, const rstl::string& name)
+: x0_status(kS_Standby)
+, x18_fileName(name)
+, x38_(0)
+, x3c_bannerTex(kInvalidAssetId) {
+  x4_fileInfo.chan = port;
+  x4_fileInfo.fileNo = -1;
+}
+
+void CMemoryCardSys::CCardFileInfo::LockBannerToken(CAssetId bannerTxtr, CSimplePool& pool) {
+  x3c_bannerTex = bannerTxtr;
+  x40_bannerTok = TLockedToken< CTexture >(pool.GetObj(SObjectTag('TXTR', x3c_bannerTex)));
+}
+
+void CMemoryCardSys::CCardFileInfo::LockIconToken(CAssetId iconTxtr, int speed, CSimplePool& pool) {
+  x50_iconToks.push_back(Icon(iconTxtr, speed, pool));
+}
+
+ECardResult SMemoryCardFileInfo::Open() {
+  return static_cast< ECardResult >(CARDOpen(GetFileCardPort(), x14_name.data(), &x0_fileInfo));
+}
+
+ECardResult CMemoryCardSys::CCardFileInfo::CreateFile() {
+  const uint size = CalculateTotalDataSize();
+  return static_cast< ECardResult >(
+      CARDCreateAsync(GetCardPort(), x18_fileName.data(), size, &x4_fileInfo, nullptr));
+}
+
+ECardResult CMemoryCardSys::DeleteFile(EMemoryCardPort port, const rstl::string& name) {
+  return static_cast< ECardResult >(CARDDeleteAsync(port, name.data(), nullptr));
+}
+
+ECardResult CMemoryCardSys::FastDeleteFile(EMemoryCardPort port, int fileNo) {
+  return static_cast< ECardResult >(CARDFastDeleteAsync(port, fileNo, nullptr));
+}
+
+ECardResult SMemoryCardFileInfo::Close() {
+  const CMemoryCardSys::EMemoryCardPort port = GetFileCardPort();
+  ECardResult result = static_cast< ECardResult >(CARDClose(&x0_fileInfo));
+  x0_fileInfo.chan = port;
+  return result;
+}
+
+ECardResult CMemoryCardSys::CCardFileInfo::CloseFile() {
+  const EMemoryCardPort port = GetCardPort();
+  ECardResult result = static_cast< ECardResult >(CARDClose(&x4_fileInfo));
+  x4_fileInfo.chan = port;
+  return result;
+}
+
+ECardResult CMemoryCardSys::Rename(EMemoryCardPort port, const rstl::string& oldName,
+                                   const rstl::string& newName) {
+  return static_cast< ECardResult >(CARDRenameAsync(port, oldName.data(), newName.data(), nullptr));
+}
+
+ECardResult CMemoryCardSys::CheckCard(EMemoryCardPort port) {
+  return static_cast< ECardResult >(CARDCheckAsync(port, nullptr));
+}
+
+ECardResult CMemoryCardSys::CCardFileInfo::WriteFile() {
+  BuildCardBuffer();
+  void* data = x104_cardBuffer.data();
+  const int size = x104_cardBuffer.size();
+  DCStoreRange(data, size);
+  ECardResult result =
+      static_cast< ECardResult >(CARDWriteAsync(&x4_fileInfo, data, size, 0, nullptr));
+  x0_status = kS_Transferring;
+  return result;
+}
+
+ECardResult CMemoryCardSys::CCardFileInfo::PumpCardTransfer() {
+  if (x0_status == kS_Standby) {
+    return kCR_READY;
+  } else if (x0_status == kS_Transferring) {
+    ECardResult result = GetResultCode(GetCardPort());
+    if (result != kCR_BUSY) {
+      x104_cardBuffer = rstl::vector< uchar, rstl::aligned_allocator >();
+    }
+    if (result != kCR_READY) {
+      return result;
+    }
+    x0_status = kS_Done;
+    CardStat stat;
+    result = GetStatus(stat);
+    if (result != kCR_READY) {
+      return result;
+    }
+    result = SetStatus(GetCardPort(), GetFileNo(), stat);
+    if (result == kCR_READY) {
+      return kCR_BUSY;
+    }
+    return result;
+  } else {
+    ECardResult result = GetResultCode(GetCardPort());
+    if (result != kCR_READY) {
+      return result;
+    }
+    x0_status = kS_Standby;
+    return kCR_READY;
+  }
+}
+
+ECardResult CMemoryCardSys::CCardFileInfo::GetStatus(CardStat& stat) {
+  ECardResult result = CMemoryCardSys::GetStatus(GetCardPort(), GetFileNo(), stat);
+  if (result != kCR_READY) {
+    return result;
+  }
+  stat.SetCommentAddr(4);
+  stat.SetIconAddr(68);
+  int bannerFormat;
+  if (x3c_bannerTex == kInvalidAssetId) {
+    bannerFormat = CARD_STAT_BANNER_NONE;
+  } else if ((*x40_bannerTok)->GetTexelFormat() == kTF_RGB5A3) {
+    bannerFormat = CARD_STAT_BANNER_RGB5A3;
+  } else {
+    bannerFormat = CARD_STAT_BANNER_C8;
+  }
+  stat.SetBannerFormat(bannerFormat);
+  int i = 0;
+  for (; i < x50_iconToks.size(); ++i) {
+    int format = CARD_STAT_ICON_C8;
+    if (x50_iconToks[i].x8_tex->GetTexelFormat() == kTF_RGB5A3) {
+      format = CARD_STAT_ICON_RGB5A3;
+    }
+    stat.SetIconFormat(format, i);
+    stat.SetIconSpeed(x50_iconToks[i].x4_speed, i);
+  }
+  if (i < 8) {
+    stat.SetIconFormat(CARD_STAT_ICON_NONE, i);
+    stat.SetIconSpeed(CARD_STAT_SPEED_END, i);
+  }
+  return kCR_READY;
+}
+
+ECardResult SMemoryCardFileInfo::StartRead() {
+  CardStat stat;
+  ECardResult result = CMemoryCardSys::GetStatus(GetFileCardPort(), GetFileNo(), stat);
+  if (result != kCR_READY) {
+    return result;
+  }
+  const uint size = stat.GetFileLength();
+  x34_saveData = rstl::vector< uchar >();
+  x24_saveFileData.assign(size);
+  return static_cast< ECardResult >(
+      CARDReadAsync(&x0_fileInfo, x24_saveFileData.data(), size, 0, nullptr));
+}
+
+ECardResult SMemoryCardFileInfo::TryFileRead() {
+  ECardResult result = CMemoryCardSys::GetResultCode(GetFileCardPort());
+  if (result != kCR_READY) {
+    return result;
+  }
+  return FileRead();
+}
+
+ECardResult CMemoryCardSys::GetSerialNo(EMemoryCardPort port, long long& serialOut) {
+  return static_cast< ECardResult >(CARDGetSerialNo(port, reinterpret_cast< u64* >(&serialOut)));
+}
+
+ECardResult CMemoryCardSys::GetStatus(EMemoryCardPort port, int fileNo, CardStat& statOut) {
+  CARDStat stat;
+  ECardResult result = static_cast< ECardResult >(CARDGetStatus(port, fileNo, &stat));
+  memcpy(&statOut.x0_stat, &stat, sizeof(stat));
+  // Port: GCI-folder files carry no comment address (UINT32_MAX), but the game
+  // treats a -1 comment address as a corrupt file (CMemoryCardDriver::IndexFiles).
+  // The save comment always lives at offset 4 of the file.
+  if (statOut.GetCommentAddr() == -1) {
+    statOut.SetCommentAddr(4);
+  }
+  return result;
+}
+
+ECardResult CMemoryCardSys::SetStatus(EMemoryCardPort port, int fileNo, const CardStat& stat) {
+  return static_cast< ECardResult >(
+      CARDSetStatusAsync(port, fileNo, const_cast< CARDStat* >(&stat.x0_stat), nullptr));
+}
+
+rstl::vector< char, rstl::aligned_allocator >&
+CMemoryCardSys::WorkAreaVector(EMemoryCardPort port) {
+  switch (port) {
+  case kCS_SlotA:
+    return mWorkAreaA;
+  case kCS_SlotB:
+    return mWorkAreaB;
+  default:
+    return mWorkAreaA;
+  }
+}
+
+char* CMemoryCardSys::AllocCardWorkArea(EMemoryCardPort port) {
+  rstl::vector< char, rstl::aligned_allocator >& area = WorkAreaVector(port);
+  area.resize(0xa000);
+  char* data = area.data();
+  DCInvalidateRange(data, area.size());
+  return data;
+}
+
+void CMemoryCardSys::FreeCardWorkArea(EMemoryCardPort port) {
+  rstl::vector< char, rstl::aligned_allocator >& area = WorkAreaVector(port);
+  area = rstl::vector< char, rstl::aligned_allocator >();
+}

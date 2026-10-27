@@ -1,0 +1,9 @@
+# r1e: Chozo Ruins' Main Plaza (a big room), then the plain Prime-X folder for free play
+env MP_BOOT_WORLD=83F6FF6F:D5CDB809
+env PX_NEXT_XBE=F:\Applications\Prime-X\default.xbe
+900 SHOT
+1500 SHOT
+2100 SHOT
+2150 SU for 120
+2300 SHOT
+2500 NEXT

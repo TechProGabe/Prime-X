@@ -1,0 +1,20 @@
+# r1a: first boot (full disc check), title, START, file select, New Game, Frigate opening
+env PX_NEXT_XBE=F:\Applications\Prime-X-r1b\default.xbe
+300 SHOT
+600 SHOT
+700 START
+1000 SHOT
+1300 SHOT
+1350 A
+1450 SHOT
+1500 A
+1600 SHOT
+2200 SHOT
+2800 SHOT
+3400 SHOT
+4000 SHOT
+4100 SU for 120
+4240 SHOT
+4300 A
+4310 SHOT
+4800 NEXT

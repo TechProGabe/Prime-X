@@ -1,0 +1,260 @@
+#ifndef _CINTELEMENT
+#define _CINTELEMENT
+
+#include "types.h"
+
+#include "Kyoto/Particles/IElement.hpp"
+
+#include "rstl/vector.hpp"
+
+class CInputStream;
+
+class CIEConstant : public CIntElement {
+  int x4_val;
+
+public:
+  CIEConstant(int val);
+  ~CIEConstant() override;
+  bool GetValue(int frame, int& valOut) const override;
+};
+
+class CIEDeath : public CIntElement {
+  CIntElement* x4_a;
+  CIntElement* x8_b;
+
+public:
+  CIEDeath(CIntElement* a, CIntElement* b);
+  ~CIEDeath() override;
+  bool GetValue(int frame, int& valOut) const override;
+};
+
+class CIEAdd : public CIntElement {
+  CIntElement* x4_a;
+  CIntElement* x8_b;
+
+public:
+  CIEAdd(CIntElement* a, CIntElement* b);
+  ~CIEAdd() override;
+  bool GetValue(int frame, int& valOut) const override;
+};
+
+class CIEMultiply : public CIntElement {
+  CIntElement* x4_a;
+  CIntElement* x8_b;
+
+public:
+  CIEMultiply(CIntElement* a, CIntElement* b);
+  ~CIEMultiply() override;
+  bool GetValue(int frame, int& valOut) const override;
+};
+
+class CIEModulo : public CIntElement {
+  CIntElement* x4_a;
+  CIntElement* x8_b;
+
+public:
+  CIEModulo(CIntElement* a, CIntElement* b);
+  ~CIEModulo() override;
+  bool GetValue(int frame, int& valOut) const override;
+};
+
+class CIERandom : public CIntElement {
+  CIntElement* x4_a;
+  CIntElement* x8_b;
+
+public:
+  CIERandom(CIntElement* a, CIntElement* b);
+  ~CIERandom() override;
+  bool GetValue(int frame, int& valOut) const override;
+};
+
+class CIESampleAndHold : public CIntElement {
+  CIntElement* x4_sampleSource;
+  mutable int x8_nextSampleFrame;
+  CIntElement* xc_waitFramesMin;
+  CIntElement* x10_waitFramesMax;
+  mutable int x14_holdVal;
+
+public:
+  CIESampleAndHold(CIntElement* a, CIntElement* b, CIntElement* c);
+  ~CIESampleAndHold() override;
+  bool GetValue(int frame, int& valOut) const override;
+};
+
+class CIEImpulse : public CIntElement {
+  CIntElement* x4_a;
+
+public:
+  CIEImpulse(CIntElement* a);
+  ~CIEImpulse() override;
+  bool GetValue(int frame, int& valOut) const override;
+};
+
+class CIETimescale : public CIntElement {
+  CRealElement* x4_a;
+
+public:
+  CIETimescale(CRealElement* a);
+  ~CIETimescale();
+  bool GetValue(int frame, int& valOut) const override;
+};
+
+class CIEInitialRandom : public CIntElement {
+  CIntElement* x4_a;
+  CIntElement* x8_b;
+
+public:
+  CIEInitialRandom(CIntElement* a, CIntElement* b);
+  ~CIEInitialRandom() override;
+  bool GetValue(int frame, int& valOut) const override;
+};
+
+#ifdef TARGET_PC
+// port-only FIAT (Remastered's CIEFrameIndexFromAnimationTime, 0x2a9be8): start + frame * count / divisor,
+// clamped to count - 1, or wrapped modulo count when `loop`.
+class CIEFrameIndexFromAnimationTime : public CIntElement {
+  CIntElement* x4_start;
+  CIntElement* x8_count;
+  CIntElement* xc_divisor;
+  bool x10_loop;
+
+public:
+  CIEFrameIndexFromAnimationTime(CIntElement* start, CIntElement* count, CIntElement* divisor, bool loop);
+  ~CIEFrameIndexFromAnimationTime() override;
+  bool GetValue(int frame, int& valOut) const override;
+};
+
+// port-only PLPT (u32 offset, int percent): Remastered's ILPT (GetIntElement 0x26a910). CIERealToInt(CREMultiplyAdd(lifetime,
+// percent * 0.01f, 0.5f)): unfused fmul then fadd, truncated, and no clamp of a negative percent
+// (retail's ILPT divides by 100 and clamps it to 0).
+class CIEPortLifetimePercent : public CIntElement {
+  CIntElement* x4_percentVal;
+  int x8_offset; // added to the port's lifetime to give Remastered's (LTME is LTM2 - 1)
+
+public:
+  CIEPortLifetimePercent(int offset, CIntElement* a);
+  ~CIEPortLifetimePercent() override;
+  bool GetValue(int frame, int& valOut) const override;
+};
+
+// port-only: Remastered's PAP0..3, the per-particle int variables IAV0..3.
+class CIEPortParticleVar : public CIntElement {
+  int x4_slot;
+
+public:
+  explicit CIEPortParticleVar(int slot) : x4_slot(slot) {}
+  ~CIEPortParticleVar() override {}
+  bool GetValue(int frame, int& valOut) const override;
+};
+
+// port-only PRAN(min, max): Remastered's int RAND (CIERandom 0x2a88a8, CIERandomConstant
+// 0x2a895c) and constant IRND (CIEInitialRandomConstant 0x2a8c40): min + Next() % (max - min + 1),
+// unsigned (min + Next() when the range wraps to 0), whatever min's sign. Retail's RAND takes Next() for min <= 0.
+class CIEPortRandom : public CIntElement {
+  CIntElement* x4_min;
+  CIntElement* x8_max;
+
+public:
+  CIEPortRandom(CIntElement* min, CIntElement* max);
+  ~CIEPortRandom() override;
+  bool GetValue(int frame, int& valOut) const override;
+};
+#endif
+
+class CIETimeChain : public CIntElement {
+  CIntElement* x4_a;
+  CIntElement* x8_b;
+  CIntElement* xc_swFrame;
+
+public:
+  CIETimeChain(CIntElement* a, CIntElement* b, CIntElement* c);
+  ~CIETimeChain() override;
+  bool GetValue(int frame, int& valOut) const override;
+};
+
+class CIEClamp : public CIntElement {
+  CIntElement* x4_min;
+  CIntElement* x8_max;
+  CIntElement* xc_val;
+
+public:
+  CIEClamp(CIntElement* a, CIntElement* b, CIntElement* c);
+  ~CIEClamp() override;
+  bool GetValue(int frame, int& valOut) const override;
+};
+
+class CIEPulse : public CIntElement {
+  CIntElement* x4_aDuration;
+  CIntElement* x8_bDuration;
+  CIntElement* xc_aVal;
+  CIntElement* x10_bVal;
+
+public:
+  CIEPulse(CIntElement* a, CIntElement* b, CIntElement* c, CIntElement* d);
+  ~CIEPulse() override;
+  bool GetValue(int frame, int& valOut) const override;
+};
+
+class CIELifetimePercent : public CIntElement {
+  CIntElement* x4_percentVal;
+
+public:
+  CIELifetimePercent(CIntElement* a);
+  ~CIELifetimePercent() override;
+  bool GetValue(int frame, int& valOut) const override;
+};
+
+class CIEKeyframeEmitter : public CIntElement {
+  int x4_percent;
+  int x8_unk1;
+  bool xc_loop;
+  bool xd_unk2;
+  int x10_loopEnd;
+  int x14_loopStart;
+  rstl::vector< int > x18_keys;
+
+public:
+  CIEKeyframeEmitter(CInputStream& in);
+  ~CIEKeyframeEmitter() override;
+  bool GetValue(int frame, int& valOut) const override;
+};
+
+class CIESubtract : public CIntElement {
+  CIntElement* x4_a;
+  CIntElement* x8_b;
+
+public:
+  CIESubtract(CIntElement* a, CIntElement* b);
+  ~CIESubtract() override;
+  bool GetValue(int frame, int& valOut) const override;
+};
+
+class CIERealToInt : public CIntElement {
+  CRealElement* x4_a;
+  CRealElement* x8_b;
+
+public:
+  CIERealToInt(CRealElement* a, CRealElement* b);
+  ~CIERealToInt() override;
+  bool GetValue(int frame, int& valOut) const override;
+};
+
+class CIEGetCumulativeParticleCount : public CIntElement {
+public:
+  ~CIEGetCumulativeParticleCount() override {}
+  bool GetValue(int frame, int& valOut) const override;
+};
+
+class CIEGetActiveParticleCount : public CIntElement {
+public:
+  ~CIEGetActiveParticleCount() override {}
+  bool GetValue(int frame, int& valOut) const override;
+};
+
+class CIEGetEmitterTime : public CIntElement {
+public:
+  ~CIEGetEmitterTime() override;
+  bool GetValue(int frame, int& valOut) const override;
+};
+
+#endif // _CINTELEMENT

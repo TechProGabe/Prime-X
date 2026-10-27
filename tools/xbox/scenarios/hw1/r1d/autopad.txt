@@ -1,0 +1,9 @@
+# r1d: Magmoor Caverns' default room (heat haze, lava)
+env MP_BOOT_WORLD=3EF8237C
+env PX_NEXT_XBE=F:\Applications\Prime-X-r1e\default.xbe
+900 SHOT
+1500 SHOT
+2100 SHOT
+2150 SU for 120
+2300 SHOT
+2500 NEXT

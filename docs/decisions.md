@@ -25,14 +25,68 @@ over unless a line here says otherwise.
 
 ## Technical decisions
 
-Pending from phase 0 (`docs/plan.md`), each to be filled in with its evidence:
-
-- **C++ build model** (0.2): which triple compiles the game's C++, which
-  C++ runtime, what crosses to nxdk code.
-- **How `TARGET_PC` code is carried** (0.4): all blocks kept with Xbox
-  `Port*` implementations, or dropped features stripped at import.
-- **Memory model** (0.6): game `new` into `CGameAllocator` in a 24 MB MEM1, as
-  on the GameCube.
+- **C++ build model** (0.2, 2026-10-27): **one triple for everything,
+  nxdk's `i386-pc-win32` (MSVC C++ ABI) with nxdk's libc++.** Spike
+  (`spikes/cxx`, throwaway): all 633 game units compile on it (622 at once,
+  the rest PC-platform code); the spike XBE ran in xemu with static
+  constructors, virtual calls, `new`, `std::map`/`string`/`recursive_mutex`/
+  `chrono`, `CMemoryInStream` big-endian reads and `CTransform4f` maths all
+  correct. Melee-X's game triple (`i686-pc-windows-gnu`) fails outright for
+  C++: nxdk's libc++ has no thread API or object format there, and a libc++
+  would have to be built for it. MetroidPrimePort already builds with MSVC,
+  so the MSVC ABI is proven for this code; its `/vmg` becomes
+  `-Xclang -fms-memptr-rep=virtual` (CAi's member-function pointers).
+  Layout: `CHECK_SIZEOF` passes 540 of 598 on this triple; the 58 that
+  differ are MetroidPrimePort's own `TARGET_PC` members (CModelData +148,
+  CElementGen +712, ...) and the 16-byte general PTMF (CAiState +4), none a
+  correctness problem (MetroidPrimePort runs with 64-bit-sized structs), so
+  the asserts stay off and the spike's count is the record.
+  Exceptions: `-Xclang -fcxx-exceptions` without `-fexceptions`: `throw` and
+  `try` compile unchanged, no unwind tables, catch arms are dead, and
+  `_CxxThrowException` (`xbox/src/port/px_eh.cpp`) logs the type and
+  `what()` and stops with an error screen. Every MetroidPrimePort throw is a
+  broken-data condition. No RTTI (`-fno-rtti`; nxdk has no
+  `__RTDynamicCast`): the 5 `dynamic_cast`s are replaced (edits below).
+  The SDK and hardware layers are C on the same triple; `xgx.h`/`xhw.h`
+  stay the boundary as on Melee-X.
+- **How `TARGET_PC` code is carried** (0.4, 2026-10-27): **all blocks kept**,
+  `TARGET_PC` and `TARGET_XBOX` both defined. `tools/port_blocks.py`
+  (`docs/port-blocks.md`): 1718 blocks in 342 files, keep 1405, replace 125,
+  drop 160, extra 28. MetroidPrimePort's `platform/include` headers are
+  imported as they are into `xbox/src/port/include`; a header that can't
+  compile on nxdk gets a slim twin there (`port_map_side.h`,
+  `port_paths.h`). The hooks are, in order of preference: MetroidPrimePort's
+  own portable file (`disc.cpp`, the THP decoder), a hand-written Xbox
+  version (`port_debug.cpp`: every value is MetroidPrimePort's "Original
+  experience" value, i.e. retail; `port_gci.cpp`), or a generated "off"
+  definition (`tools/xbox/gen_port_stubs.py` from the link's undefined list
+  -> `port_stubs_gen.cpp`, ~320 hooks; each logs `[STUB] name` once when the
+  game reaches it). Regenerate after a sync; review any whose zero is not
+  "off".
+- **Test hooks are kept** (user, 2026-10-27: "make sure we can easily level
+  skip... any useful port debug should be added"): MetroidPrimePort's
+  `MP_BOOT_WORLD=<MLVL>[:<MREA>]`, `MP_FAST_BOOT`, `MP_SKIP_CUTSCENES`,
+  `MP_CUTSCENE_SPEED`, `MP_INVULNERABLE` and the teleport requests answer on
+  the Xbox, set by `env` lines in a test build's `autopad.txt` (xemu and
+  console alike). `docs/testing.md` "Jumping to a room".
+- **Saves never stall a frame** (user, 2026-10-27): Melee-X's background
+  card writer (`card.c`, its v63 START-hitch fix) is kept as is; check the
+  `[CARD] saved ... (N ms)` lines and `[PERFW]` around a save on hardware.
+- **Frames** (2026-10-27): MetroidPrimePort's `CGraphics::EndScene` closes
+  "the aurora frame" after `GXCopyDisp`; `aurora_end_frame` is the Xbox frame
+  boundary (`vi.c`: 60 Hz pacing, alarms, retrace callbacks), and
+  `GXEnableBreakPt` completes the GameCube's XFB swap handshake at once
+  (`prime_sdk.c`). `OSYieldThread` delivers pending DVD/ARAM/card
+  completions, as their interrupts did. Draw-sync tokens read back as soon
+  as they are set (the GX front end reads vertex data at draw time).
+- **Build layout**: the top-level `CMakeLists.txt` only includes
+  `xbox/CMakeLists.txt`, so object paths are short; each part is a static
+  library linked with `-wholearchive`, the game split in two (Windows'
+  32 KB command line).
+- **Memory model** (0.6): pending. Today game `new` is the host heap
+  (MetroidPrimePort's `rs_new`); at the title screen the heap holds 12.9 MB
+  and 13.6 MB is free. Routing it into `CGameAllocator` in MEM1 is the
+  phase 2 work item.
 
 Carried over from Melee-X as they are (see its `docs/decisions.md`):
 LLVM 21.1.8 and nxdk at its pinned commit; compiler builtins for `memcpy`
@@ -52,5 +106,21 @@ swaps it, as Melee-X's does.
 
 ## Edits to imported code
 
-One line per edit to `src/`, `include/` or `extern/musyx`: file, what,
-why. None yet.
+One line per edit to `src/`, `include/`, `extern/musyx` or
+`extern/aurora/include`: file, what, why. All under `TARGET_XBOX` with a
+`PORT_XBOX:` comment.
+
+| file | what | why |
+|---|---|---|
+| `src/MetroidPrime/CStateManager.cpp` | `dynamic_cast` to `CScriptStreamedMusic`/`CScriptMidi` -> vftable compare (`px_rtti.h`) | no RTTI; neither class has subclasses |
+| `src/MetroidPrime/CTargetReticles.cpp` | `dynamic_cast<const CAi*>` -> `TCastToConstPtr` of `CPatterned` or `CDestroyableRock` | no RTTI; CAi's only subclasses |
+| `src/Kyoto/Text/CStringTable.cpp` | `std::equal` over `data()` pointers | nxdk's libc++ has no `iterator_traits` for rstl iterators |
+| `src/Kyoto/Animation/DolphinCSkinnedModel.cpp` | skinning ring back to retail's 512 KB (from 32 MB) | memory; tokens free at once here |
+| `src/Kyoto/Input/CDolphinController.cpp` | input always focused | no window; SDL focus is always null |
+| `src/Kyoto/Graphics/CCubeMoviePlayer.cpp` | movies always take the deinterlaced (whole-frame) path | the field path draws every other line for an interlaced TV; Xbox frames are whole |
+| `extern/aurora/include/dolphin/ppc_math.h` | `_BitScanReverse64` only on x64 | nxdk's clang defines `_MSC_VER` on 32-bit |
+
+Imported unchanged but added to the game build (MetroidPrimePort compiles
+them as game code): `src/platform/port_raster_font.cpp`,
+`port_morph_ball.cpp`, `port_automapper.cpp`, `port_particle_vfx_read.cpp`,
+`port_element_gen.cpp`, and `src/MetroidPrime/CPortNestedLights.cpp`.

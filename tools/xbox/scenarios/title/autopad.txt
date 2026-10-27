@@ -1,0 +1,8 @@
+# title: Press START at the title, then the file select; shots along the way
+600 SHOT
+700 START
+900 SHOT
+1100 SHOT
+1300 A
+1500 SHOT
+1800 SHOT

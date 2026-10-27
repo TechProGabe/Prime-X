@@ -1,0 +1,233 @@
+#include "Kyoto/Particles/CParticleSwooshDataFactory.hpp"
+
+#include "Kyoto/CRandom16.hpp"
+#ifdef TARGET_PC
+#include "Kyoto/Particles/CPortParticleParseScope.hpp"
+#endif
+#include "Kyoto/Particles/CParticleDataFactory.hpp"
+#ifdef TARGET_PC
+#include "Kyoto/Particles/CGenDescription.hpp"
+#endif
+#include "Kyoto/Streams/CInputStream.hpp"
+
+const CFactoryFnReturn FParticleSwooshDataFactory(const SObjectTag& tag, CInputStream& in,
+                                            const CVParamTransfer& transfer) {
+  rstl::rc_ptr< IVParamObj > obj = transfer.x0_obj;
+  CSimplePool* pool = static_cast< TObjOwnerParam< CSimplePool* >* >(obj.GetPtr())->GetData();
+  return CParticleSwooshDataFactory::GetGeneratorDesc(in, pool);
+}
+
+CSwooshDescription* CParticleSwooshDataFactory::GetGeneratorDesc(CInputStream& in,
+                                                                 CSimplePool* pool) {
+  rstl::vector< CAssetId > ids;
+  return CreateGeneratorDescription(in, pool);
+}
+
+CSwooshDescription* CParticleSwooshDataFactory::CreateGeneratorDescription(CInputStream& in,
+                                                                           CSimplePool* pool) {
+  const FourCC classId = CParticleDataFactory::GetClassID(in);
+  if (classId != 'SWSH') {
+    return nullptr;
+  }
+  CSwooshDescription* desc = rs_new CSwooshDescription();
+
+#ifdef TARGET_PC
+  std::vector< const CREPortKeep* >* const outerKeeps = CPortKeepGlobals::sCollect;
+  CPortKeepGlobals::sCollect = &desc->xPortKeeps;
+#endif
+  CreateWPSM(desc, in, pool);
+#ifdef TARGET_PC
+  CPortKeepGlobals::sCollect = outerKeeps;
+#endif
+#ifdef TARGET_PC
+  if (desc->xPortVfx) {
+    for (CPortVfxMat::Tex& t : desc->xPortVfx->mat.tex) {
+      t.token.ForceCache();
+    }
+  }
+#endif
+
+  return desc;
+}
+
+// This is actually what it was named, must be a copy+paste job
+bool CParticleSwooshDataFactory::CreateWPSM(CSwooshDescription* swoosh, CInputStream& in,
+                                            CSimplePool* pool) {
+  bool done = false;
+#ifdef TARGET_PC
+  CPortParticleParseScope parseScope;
+#endif
+  CRandom16 random(99);
+  CGlobalRandom globalRandom(random);
+
+  while (!done) {
+    const FourCC classId = CParticleDataFactory::GetClassID(in);
+    switch (classId) {
+    case 'PSLT':
+      swoosh->x0_PSLT = CParticleDataFactory::GetIntElement(in);
+      break;
+    case 'TIME':
+      swoosh->x4_TIME = CParticleDataFactory::GetRealElement(in);
+      break;
+    case 'LRAD':
+      swoosh->x8_LRAD = CParticleDataFactory::GetRealElement(in);
+      break;
+    case 'RRAD':
+      swoosh->xc_RRAD = CParticleDataFactory::GetRealElement(in);
+      break;
+    case 'LLRD':
+      swoosh->x44_24_LLRD = CParticleDataFactory::GetBool(in);
+      break;
+    case 'LENG':
+      swoosh->x10_LENG = CParticleDataFactory::GetIntElement(in);
+      break;
+    case 'COLR':
+      swoosh->x14_COLR = CParticleDataFactory::GetColorElement(in);
+      break;
+    case 'SIDE':
+      swoosh->x18_SIDE = CParticleDataFactory::GetIntElement(in);
+      break;
+    case 'CROS':
+      swoosh->x44_25_CROS = CParticleDataFactory::GetBool(in);
+      break;
+    case 'SROT':
+      swoosh->x44_28_SROT = CParticleDataFactory::GetBool(in);
+      break;
+    case 'IROT':
+      swoosh->x1c_IROT = CParticleDataFactory::GetRealElement(in);
+      break;
+    case 'ROTM':
+      swoosh->x20_ROTM = CParticleDataFactory::GetRealElement(in);
+      break;
+    case 'POFS':
+      swoosh->x24_POFS = CParticleDataFactory::GetVectorElement(in);
+      break;
+    case 'IVEL':
+      swoosh->x28_IVEL = CParticleDataFactory::GetVectorElement(in);
+      break;
+    case 'NPOS':
+      swoosh->x2c_NPOS = CParticleDataFactory::GetVectorElement(in);
+      break;
+    case 'VELM':
+      swoosh->x30_VELM = CParticleDataFactory::GetModVectorElement(in);
+      break;
+    case 'VLS1':
+      swoosh->x44_26_VLS1 = CParticleDataFactory::GetBool(in);
+      break;
+    case 'VLM2':
+      swoosh->x34_VLM2 = CParticleDataFactory::GetModVectorElement(in);
+      break;
+    case 'VLS2':
+      swoosh->x44_27_VLS2 = CParticleDataFactory::GetBool(in);
+      break;
+    case 'SPLN':
+      swoosh->x38_SPLN = CParticleDataFactory::GetIntElement(in);
+      break;
+    case 'WIRE':
+      swoosh->x44_29_WIRE = CParticleDataFactory::GetBool(in);
+      break;
+    case 'TEXR':
+      swoosh->x3c_TEXR = CParticleDataFactory::GetTextureElement(in, pool);
+      break;
+    case 'TSPN':
+      swoosh->x40_TSPN = CParticleDataFactory::GetIntElement(in);
+      break;
+    case 'AALP':
+      swoosh->x44_31_AALP = CParticleDataFactory::GetBool(in);
+      break;
+    case 'ZBUF':
+      swoosh->x45_24_ZBUF = CParticleDataFactory::GetBool(in);
+      break;
+    case 'ORNT':
+      swoosh->x45_25_ORNT = CParticleDataFactory::GetBool(in);
+      break;
+    case 'TEXW':
+      swoosh->x44_30_TEXW = CParticleDataFactory::GetBool(in);
+      break;
+    case 'CRND':
+      swoosh->x45_26_CRND = CParticleDataFactory::GetBool(in);
+      break;
+#ifdef TARGET_PC
+    // Port-only: POFS turned by the swoosh's orientation (xPortRotateOffset).
+    case 'PSRO':
+      CParticleDataFactory::GetClassID(in);
+      swoosh->xPortRotateOffset = in.ReadLong() != 0;
+      break;
+    // Port-only: PROT of KPIN(RAZY(EMRV, ROTV(PRAZ, RLCL), PRAF ? RLCL : identity)).
+    case 'PRAZ':
+      swoosh->xPortRazyAxis.reset(CParticleDataFactory::GetVectorElement(in));
+      break;
+    case 'PRAF':
+      CParticleDataFactory::GetClassID(in);
+      swoosh->xPortRazyFallbackLocal = in.ReadLong() != 0;
+      break;
+    // Port-only: PROT of [KPIN]([RADD(EXTR, ]REUL(0, 0, z))), flags bit 0 kept from birth,
+    // bit 1 from the orientation.
+    case 'PROZ':
+      CParticleDataFactory::GetClassID(in);
+      {
+        const int flags = in.ReadLong();
+        swoosh->xPortRotKeep = (flags & 1) != 0;
+        swoosh->xPortRotOriented = (flags & 2) != 0;
+      }
+      swoosh->xPortRotZ.reset(CParticleDataFactory::GetRealElement(in));
+      break;
+    // Port-only: Remastered's ZTES 0 (xPortNoZTest).
+    case 'PZTS':
+      CParticleDataFactory::GetClassID(in);
+      swoosh->xPortNoZTest = in.ReadLong() == 0;
+      break;
+    // Port-only: Remastered's SHTM (xPortShutdownMode), written for 1 only.
+    case 'PSHM':
+      CParticleDataFactory::GetClassID(in);
+      swoosh->xPortShutdownMode = u8(in.ReadLong());
+      break;
+    // Port-only: Remastered's DFOG 1 (xPortUnfogged).
+    case 'PDFG':
+      CParticleDataFactory::GetClassID(in);
+      swoosh->xPortUnfogged = in.ReadLong() != 0;
+      break;
+    // Port-only: Remastered's DBIS (xPortDepthBias), a constant real.
+    case 'PDBS':
+      CParticleDataFactory::GetClassID(in);
+      swoosh->xPortDepthBias = in.ReadFloat();
+      break;
+    // Port-only Remastered transform mode; only 3 (xPortXfmdFollow) and 4 (xPortXfmdMover) are written.
+    case 'XFMD': {
+      CParticleDataFactory::GetClassID(in);
+      const int mode = in.ReadLong();
+      swoosh->xPortXfmdFollow = mode == 3;
+      swoosh->xPortXfmdMover = mode == 4;
+      break;
+    }
+    // Port-only Remastered particle variables (PVRT).
+    case 'PVRT':
+      CParticleDataFactory::GetClassID(in);
+      swoosh->xPortVars.reset(PortReadVarTable(in));
+      break;
+    // Port-only marker of a converted Remastered swoosh (xPortIrnd).
+    case 'PIRN':
+      CParticleDataFactory::GetClassID(in);
+      swoosh->xPortIrnd = in.ReadLong() != 0;
+      break;
+    // Port-only Remastered material, as a PART's.
+    case 'VMAT':
+    case 'VTMT':
+    case 'VPMT':
+    case 'VSMT':
+    case 'ITEN':
+      if (!CParticleDataFactory::PortReadVfxProperty(classId, swoosh->xPortVfx, in, pool)) {
+        return false;
+      }
+      break;
+#endif
+    case '_END':
+      done = true;
+      break;
+    default:
+      return false;
+    }
+  }
+
+  return true;
+}
