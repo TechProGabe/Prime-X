@@ -28,10 +28,13 @@
  *   xhw_splash_log(line)          a boot-log line (up to SPLASH_LOG_LINES)
  *   xhw_splash_stage(t, n1, n2)   the task line and two notes under the bar
  *   xhw_splash_detail(l1, l2)     the detail line and the hex line
- *   xhw_splash_progress(f)        the bar, 0..1
+ *   xhw_splash_progress(f)        the bar, 0..1; it fills towards f at least
+ *                                 BAR_FILL_MS for the whole width, so steps
+ *                                 read as a load, not a jump
  *   xhw_splash_skip_pressed()     B pressed (polled by the boot thread)
- *   xhw_splash_release()          the minimum hold (any button skips), then
- *                                 the thread stops: the mode is changing
+ *   xhw_splash_release()          the minimum hold (any button skips) and
+ *                                 the bar full for a beat, then the thread
+ *                                 stops: the mode is changing
  *   xhw_splash_card(t, lines)     an error card in the same dress (orange)
  *
  * Font: unscii-16 (public domain), the 8x16 face nxdk's debug console uses.
@@ -54,6 +57,8 @@
 #define SCR_W 640
 #define SCR_H 480
 #define FRAME_MS 40
+#define BAR_FILL_MS 1000   /* the slowest the bar fills, the whole width */
+#define BAR_HOLD_MS 300    /* full, before the mode change ends it */
 
 const unsigned char xhw_font16[256 * 16] = {   /* also the overlay's (xhw_overlay.c) */
 #include <hal/font_unscii_16.h>
@@ -105,6 +110,8 @@ static int s_nlog;
 static char s_task[32] = "SCANNING";
 static char s_note1[80], s_note2[80], s_det1[64], s_det2[64];
 static volatile float s_progress;
+static volatile float s_shown;   /* what the bar shows: follows s_progress (splash thread) */
+static volatile DWORD s_full_t;  /* when it reached 1, or 0 */
 static volatile int s_card;   /* an error card owns the screen */
 static unsigned s_frames, s_frame_us;   /* the cost, for [SPLASH] at release */
 
@@ -334,10 +341,21 @@ static void draw_frame(DWORD ms) {
         }
     }
 
-    /* what it is doing, its bar, the detail lines and the notes */
+    /* what it is doing, its bar, the detail lines and the notes. The bar
+     * eases towards the progress (a quarter of the gap a frame, never slower
+     * than BAR_FILL_MS for the width) and drops at once for a new stage. */
     f = s_progress;
     if (f < 0) f = 0;
     if (f > 1) f = 1;
+    {
+        float shown = s_shown, step = (f - shown) * 0.25f;
+        if (step < (float)FRAME_MS / BAR_FILL_MS) step = (float)FRAME_MS / BAR_FILL_MS;
+        shown = f <= shown ? f : shown + step > f ? f : shown + step;
+        s_shown = shown;
+        if (shown >= 1.0f && !s_full_t) s_full_t = ms ? ms : 1;
+        if (shown < 1.0f) s_full_t = 0;
+        f = shown;
+    }
     glow(fb, task, 1 << 30, BAR_X, TASK_Y, 2, COL_TEXT, 0x08282cu, 256);
     snprintf(pct, sizeof pct, "%d%%", (int)(f * 100.0f + 0.5f));
     text(fb, pct, 1 << 30, BAR_X + 400 - text_w(pct, 2), TASK_Y, 2, COL_CYAN, 256);
@@ -346,7 +364,7 @@ static void draw_frame(DWORD ms) {
     if (det1[0]) text(fb, det1, 1 << 30, BAR_X, BAR_Y + 14, 1, COL_PHOS, 256);
     if (det2[0]) text(fb, det2, 1 << 30, BAR_X, BAR_Y + 30, 1, COL_DIM, 256);
     if (note1[0]) centered(fb, note1, 362, 1, COL_TEXT, 256);
-    if (note2[0]) centered(fb, note2, 380, 1, COL_HINT, 256);
+    if (note2[0]) centered(fb, note2, 380, 1, COL_TEXT, 256);
     centered(fb, HINT_TEXT, SCR_H - 52, 1, COL_HINT, 256);
 
     /* the glitch: every few seconds a thin band torn sideways, brighter */
@@ -491,10 +509,14 @@ static void stop_thread(void) {
 void xhw_splash_release(void) {
 #ifndef XHW_NO_SPLASH
     if (s_ready && !s_card) {
+        DWORD t_end = GetTickCount() + 3000;   /* the bar's wait has a ceiling */
         while (GetTickCount() - s_t0 < XHW_SPLASH_MS) {
             if (any_button()) break;
             Sleep(16);
         }
+        /* the bar fills the rest of the way and stays full a moment */
+        if (s_run && s_progress >= 1.0f)
+            while ((!s_full_t || GetTickCount() - s_t0 - s_full_t < BAR_HOLD_MS) && GetTickCount() < t_end) Sleep(16);
 #ifdef XHW_SPLASH_DUMP
         xhw_fbdump(s_fb, SCR_W, SCR_H, 32, SCR_W * 4);
 #endif

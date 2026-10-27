@@ -210,7 +210,7 @@ void xhw_watchdog_busy(int on) { s_busy = on; }
 void xhw_watchdog_disable(void) { s_disabled = 1; }
 
 static void watchdog_body(void* arg) {
-    unsigned last = 0, still = 0, secs = 0, fired = 0;
+    unsigned last = 0, still = 0, secs = 0, boot_secs = 0, fired = 0;
     unsigned last_p = 0, pstill = 0, pfired = 0, last_pf = 0;
     (void)arg;
     for (;;) {
@@ -232,7 +232,8 @@ static void watchdog_body(void* arg) {
             xhw_log_try(line);
         }
         if (f == 0) {
-            if (secs >= XHW_WATCHDOG_BOOT_SECS && !fired) {
+            if (!s_busy) boot_secs++;   /* the first boot's disc check isn't a hang */
+            if (boot_secs >= XHW_WATCHDOG_BOOT_SECS && !fired) {
                 dump_all("no first frame after boot", 1);
                 fired = 1;
             }

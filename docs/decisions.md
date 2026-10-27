@@ -97,6 +97,14 @@ reads; big-endian memory-card files; logs that survive long sessions; our
 own GX on the NV2A with generated vertex programs and TEV on the register
 combiners; ThinLTO + PGO for releases.
 
+- **Boot music inside the XBE** (round hw2, 2026-10-27): the first boot's
+  music is appended to `default.xbe` (IMA ADPCM, 8.3 MB, footer "PXIN"),
+  not shipped as `intro.pcm` beside it: "so people can't miss it". After
+  the last section, so the kernel never loads it; ADPCM rather than 31 MB
+  of PCM, for ~0.1% of the CPU (`tools/xbox/make_intro.py`).
+- **L + R + Y at boot forces the full disc check** (round hw2): a debug
+  combo, any build, no on-screen hint (`docs/boot-safety.md`).
+
 Not carried over: `disc_lower` and the `DISC_STRUCT` lowering. Melee keeps
 disc data big-endian in memory and melee-pc marks those structs; Prime reads
 almost everything through `CInputStream`, which MetroidPrimePort makes read

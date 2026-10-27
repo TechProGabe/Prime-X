@@ -45,7 +45,10 @@ match after compression. So Prime-X checks **files**, not chunks:
 `E:\UDATA\50580001\disc.ini`, which records the last result. An image that passed is not checked again (`disc.ini` holds its size and
 write time); a failed or unfinished check runs again next boot. Test builds
 take `env PX_DISC_CHECK=quick` (no full check) or `=full` (at boot, behind
-the splash's bar, with the A/B choice, even for an image that passed).
+the splash's bar, with the A/B choice, even for an image that passed). Any
+build: L + R + Y held while Prime-X starts forces the full check too, even
+from a DVD (for watching it on a console; nothing on screen mentions it,
+`[DISC] L+R+Y held at boot` in `boot.log`).
 
 ### What the player sees
 
