@@ -537,21 +537,32 @@ static int disc_quick_check(u32 fst_len, char* why, size_t why_cap) {
  * in disc.ini) or when force is set. Returns how many files differ, -1 on a
  * read error (its offset in *bad_off), -2 when progress (called after each
  * file with 0..1: the splash's bar) asked to stop. */
+/* this image passed a full check before (disc.ini: its size and write time) */
+static void disc_ini_line(char* ini, size_t icap, char* line, size_t lcap) {
+    snprintf(ini, icap, "%sdisc.ini", xhw_save_dir());
+    snprintf(line, lcap, "ok %llu %llu", (unsigned long long)s_img_size, (unsigned long long)s_img_written);
+}
+
+int xsdk_disc_passed_before(void) {
+    char ini[300], line[128], have[128] = { 0 };
+    FILE* f;
+    int same;
+    disc_ini_line(ini, sizeof ini, line, sizeof line);
+    if ((f = fopen(ini, "r")) == NULL) return 0;
+    same = fgets(have, sizeof have, f) && strncmp(have, line, strlen(line)) == 0;
+    fclose(f);
+    return same;
+}
+
 int xsdk_disc_full_check(int force, xsdk_disc_progress progress, char* first_bad, size_t cap, u32* bad_off) {
     char ini[300], line[128];
     FILE* f;
     u32 i, bad = 0;
     uint64_t done = 0, total = 0;
-    snprintf(ini, sizeof ini, "%sdisc.ini", xhw_save_dir());
-    snprintf(line, sizeof line, "ok %llu %llu", (unsigned long long)s_img_size, (unsigned long long)s_img_written);
-    if (!force && (f = fopen(ini, "r")) != NULL) {
-        char have[128] = { 0 };
-        int same = fgets(have, sizeof have, f) && strncmp(have, line, strlen(line)) == 0;
-        fclose(f);
-        if (same) {
-            xhw_logf("[DISC] full check: passed before for this image (disc.ini)");
-            return -3;
-        }
+    disc_ini_line(ini, sizeof ini, line, sizeof line);
+    if (!force && xsdk_disc_passed_before()) {
+        xhw_logf("[DISC] full check: passed before for this image (disc.ini)");
+        return -3;
     }
     for (i = 0; i < DISC_FILE_COUNT; i++) total += k_disc_files[i].size;
     xhw_logf("[DISC] full check: %u files, %llu MB", DISC_FILE_COUNT, (unsigned long long)(total >> 20));

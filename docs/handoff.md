@@ -27,13 +27,32 @@ Done this session:
   (`prime_sdk.c`, `vi.c`), DOL read for the default font, THP decode
   (aurora's decoder in `xbox/src/port/thp`), pads.
 
+## Console round hw1 (red, 2026-10-27)
+
+The one hardware round so far (`tools/xbox/scenarios/hw1`, logs and shots in
+`C:\xemu\hw\prime\logs-hw1`, map `C:\xemu\hw\prime\prime_x.hw1.map`):
+five chained stages (first boot to the Frigate, Tallon, Phendrana, Magmoor,
+Chozo Main Plaza) then free play. Red: 480i 4:3 composite (AV pack 1).
+
+- Works: boot, full disc check (matches the Redump hash; took about a
+  minute), title, file select, New Game, the Frigate, MP_BOOT_WORLD jumps,
+  walking, firing, pause inventory and map screens, MusyX sound effects and
+  music (the Frigate's and the Overworld's), rumble, the exit combo.
+- **CPU-bound, GPU idle**: Tallon ~10 fps in play (sim 70 ms, display lists
+  22 ms, 2800 draws, 66k vertices a frame); Chozo Main Plaza ~5 fps (display
+  lists 120 ms, 7000 draws, 148k vertices). Phase 6 starts here.
+- Memory: lowest free 3.7 MB (Frigate opening, Main Plaza).
+- Console-only bugs: the landing cinematic (Tallon, frame 900) washed out
+  white with vertical streaks; the arm cannon missing in Main Plaza (the
+  user also saw it "white sometimes").
+- The user: the disc check needed explaining (done: the boot screen, E).
+
 ## Next
 
-1. Get past the file select into the game (New Game -> Frigate). The
-   `title` scenario (`tools/xbox/scenarios/title`) presses START then A.
-2. Write `tools/xbox/prime_rooms.py` (lists every world's MLVL and area
-   MREA ids and names from the user's image) so `MP_BOOT_WORLD` jumps are
-   easy (`docs/testing.md` "Jumping to a room").
+1. Performance (phase 6): profile the Landing Site and Main Plaza in xemu
+   (instruction counts) and with the sampling profiler; the display-list
+   path (gx_vtx.c) and the game's per-frame work first.
+2. The console-only bugs above (white wash, missing arm cannon).
 3. Memory (plan 0.6): game `new` still uses the host heap; 13.6 MB free at
    the title. Route `rs_new` into `CGameAllocator`/MEM1, measure.
 4. Disc validation (`docs/boot-safety.md`): only the header ID and revision

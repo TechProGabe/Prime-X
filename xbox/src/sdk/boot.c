@@ -99,12 +99,24 @@ static void disc_full_check(void) {
         xhw_logf("[DISC] full check skipped (PX_DISC_CHECK=quick)");
         return;
     }
+    /* A burned disc: reading 1.3 GB at DVD speed takes minutes, and the
+     * image can't have changed since it was written; it is checked on the
+     * PC before burning (tools/xbox/verify_image.py). The quick check (size,
+     * FST, main.dol) still ran. */
+    if (xhw_running_from_dvd() && !(mode && strcmp(mode, "full") == 0)) {
+        xhw_logf("[DISC] full check skipped: running from a DVD (tools/xbox/verify_image.py checks it on the PC)");
+        xhw_splash_log("> FILES ON DVD: CHECKED WHEN BURNED");
+        return;
+    }
+    /* the first boot's spectacle: the music while every file is read */
+    if (!xsdk_disc_passed_before() || (mode && strcmp(mode, "full") == 0)) xhw_intro_start();
     /* why, in the player's words (the user, 2026-10-27): once per image */
     xhw_splash_stage("VERIFYING DISC IMAGE", "First boot only: checking every file so a bad copy is",
                      "caught now, not as a crash later. ~1 min.   B: skip");
     xhw_splash_progress(0.0f);
     xhw_watchdog_busy(1);
     bad = xsdk_disc_full_check(mode && strcmp(mode, "full") == 0, full_check_progress, first, sizeof first, &bad_off);
+    xhw_intro_stop();
     xhw_watchdog_busy(0);
     if (bad == -3) {
         xhw_splash_log("> FILES 178 CHECKED BEFORE ........ OK");
