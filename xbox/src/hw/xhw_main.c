@@ -223,6 +223,13 @@ unsigned xsdk_frame_count(void);
 unsigned xhw_frame_count(void) { return xsdk_frame_count(); }
 void xsdk_card_flush(void);   /* card.c: the writer thread's saves reach the disk */
 
+/* default.xbe was launched from the DVD drive (a burned disc, or xemu's
+ * virtual one), not from the hard drive */
+int xhw_running_from_dvd(void) {
+    const ANSI_STRING* img = &XeImageFileName[0];
+    return img->Length >= 14 && _strnicmp(img->Buffer, "\\Device\\CdRom", 13) == 0;
+}
+
 int main(void) {
     xhw_crash_guard(main_body, NULL);
     return 0;

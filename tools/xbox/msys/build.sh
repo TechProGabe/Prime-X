@@ -30,6 +30,7 @@ exec "$msys/usr/bin/bash" -lc '
   for kv in "$@"; do export "$kv"; done
   xbox/build.sh
   xbe=build-xbox/xbe/default.xbe
+  python3 tools/xbox/make_intro.py build-xbox/xbe/intro.pcm   # the boot screen music (needs ffmpeg)
   if [ -z "${XBOX_NO_ICON:-}" ] && [ -f "$xbe" ] && [ -f tools/xbox/xbe_title_image.py ]; then
     python3 tools/xbox/xbe_title_image.py "$xbe" xbox/assets/logo.png build-xbox/xbe/default.tbn
   fi' _ "$rootu" "${knobs[@]}"

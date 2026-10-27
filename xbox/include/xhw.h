@@ -227,6 +227,11 @@ void xhw_splash_log(const char* line);
 void xhw_splash_detail(const char* line1, const char* line2);
 /* B pressed on any controller (the first boot's disc check can be skipped) */
 int xhw_splash_skip_pressed(void);
+/* the boot screen's music (xhw_intro.c): intro.pcm next to default.xbe */
+void xhw_intro_start(void);
+void xhw_intro_stop(void);   /* a one-second fade, then returns */
+/* default.xbe runs from the DVD drive (a burned disc; xemu) */
+int xhw_running_from_dvd(void);
 /* an error card in the splash's look; 0 if the splash no longer owns the screen */
 int xhw_splash_card(const char* title, const char* const* lines);
 

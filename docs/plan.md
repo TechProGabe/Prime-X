@@ -250,9 +250,17 @@ restart, and the title screen's rows are reachable without a save file.
 measuring kit first (`[PERF]`, `[NV2A]`, the profiler, console rounds,
 `simh`), then work the biggest costs per room until the targets hold.
 
+**ThinLTO + PGO from the start of this phase** (the user, 2026-10-27:
+"this needs PGO LTO"): Melee-X's `XBOX_LTO=1` (`tools/xbox/thinlto_link.py`)
+and `XBOX_PGO=gen|<profdata>` (`xhw_pgo.c`, `tools/xbox/pgo_train.sh`,
+`pgo_raw.py`) ported to the one-triple build, the profile trained on the
+benchmark rooms (`docs/performance.md`) by autopad scenarios, so every
+measurement in this phase is of the build that ships. Round hw1 (red) found
+the game CPU-bound with the GPU idle: Tallon ~10 fps, Chozo's Main Plaza ~5.
+
 **Gate 6:** on the red and gold consoles, every benchmark room holds 60 fps
-at 480p (4:3 and 16:9) and at least 30 at 720p, with the game at full speed;
-releases built with ThinLTO + PGO.
+at 480p (4:3 and 16:9) and at least 30 at 720p, with the game at full speed,
+measured on ThinLTO + PGO builds (as releases are).
 
 ## Phase 7: whole game and release
 
