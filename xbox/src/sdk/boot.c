@@ -26,9 +26,24 @@ static int safe_video_held(void) {
     return 0;
 }
 
+/* L + R + Y held on any controller while Prime-X starts: the full disc
+ * check runs even on an image that passed it (or from a DVD). For testing
+ * the check on a console; nothing on screen says so. Looked at before the
+ * splash and again as the check starts, so holding through either counts. */
+static int s_force_check;
+static int force_check_held(void) {
+    xhw_pad p;
+    int i;
+    xhw_pad_poll();
+    for (i = 0; i < 4; i++)
+        if (xhw_pad_get(i, &p) && (p.buttons & XHW_BTN_Y) && p.lt > 128 && p.rt > 128) return 1;
+    return 0;
+}
+
 /* before the video mode is chosen */
 void xsdk_early(void) {
     int safe = safe_video_held();
+    s_force_check = force_check_held();
     /* 128 MB consoles always run in 64 MB (docs/boot-safety.md): held
      * before the settings file's allocations */
     uint32_t held = xhw_mem_hold_upper();
@@ -94,7 +109,12 @@ static void disc_full_check(void) {
     char first[96] = "?", line[160];
     u32 bad_off = 0;
     const char* mode = XHW_TEST_BUILD ? getenv("PX_DISC_CHECK") : NULL;
-    int bad;
+    int bad, force;
+    if (s_force_check || force_check_held()) {
+        xhw_logf("[DISC] L+R+Y held at boot: full check forced");
+        mode = "full";
+    }
+    force = mode && strcmp(mode, "full") == 0;
     if (mode && strcmp(mode, "quick") == 0) {
         xhw_logf("[DISC] full check skipped (PX_DISC_CHECK=quick)");
         return;
@@ -103,22 +123,29 @@ static void disc_full_check(void) {
      * image can't have changed since it was written; it is checked on the
      * PC before burning (tools/xbox/verify_image.py). The quick check (size,
      * FST, main.dol) still ran. */
-    if (xhw_running_from_dvd() && !(mode && strcmp(mode, "full") == 0)) {
+    if (xhw_running_from_dvd() && !force) {
         xhw_logf("[DISC] full check skipped: running from a DVD (tools/xbox/verify_image.py checks it on the PC)");
         xhw_splash_log("> FILES ON DVD: CHECKED WHEN BURNED");
         return;
     }
+    /* checked before: the bar goes on to LOADING without showing the
+     * check's stage at all */
+    if (xsdk_disc_passed_before() && !force) {
+        xhw_logf("[DISC] full check: passed before for this image (disc.ini)");
+        xhw_splash_log("> FILES 178 CHECKED BEFORE ........ OK");
+        return;
+    }
     /* the first boot's spectacle: the music while every file is read */
-    if (!xsdk_disc_passed_before() || (mode && strcmp(mode, "full") == 0)) xhw_intro_start();
+    xhw_intro_start();
     /* why, in the player's words (the user, 2026-10-27): once per image */
     xhw_splash_stage("VERIFYING DISC IMAGE", "First boot only: checking every file so a bad copy is",
                      "caught now, not as a crash later. ~1 min.   B: skip");
     xhw_splash_progress(0.0f);
     xhw_watchdog_busy(1);
-    bad = xsdk_disc_full_check(mode && strcmp(mode, "full") == 0, full_check_progress, first, sizeof first, &bad_off);
+    bad = xsdk_disc_full_check(force, full_check_progress, first, sizeof first, &bad_off);
     xhw_intro_stop();
     xhw_watchdog_busy(0);
-    if (bad == -3) {
+    if (bad == -3) {   /* disc.ini written between the two looks: can't happen, but the same answer */
         xhw_splash_log("> FILES 178 CHECKED BEFORE ........ OK");
         xhw_splash_stage("LOADING", NULL, NULL);
         return;
@@ -151,10 +178,11 @@ void xsdk_boot(const char* disc) {
     xhw_splash_stage("SCANNING", NULL, NULL);
     xhw_splash_progress(0.3f);
     if (!xsdk_dvd_open(disc, why, sizeof why)) xhw_fatal("Wrong or damaged disc image", why);
+    xhw_splash_progress(0.6f);
     xhw_splash_log("> DISC  GM8E01  REV 00 ......... FOUND");
     xhw_splash_log("> IMAGE SIZE  FST  MAIN.DOL ....... OK");
     disc_full_check();
-    xhw_splash_progress(1.0f);
+    xhw_splash_progress(1.0f);   /* xhw_splash_release waits for the bar to get there */
 
     /* The title card stays up through the loads above; the mode change
      * ends it. main.dol stays loaded: the game reads its default font from

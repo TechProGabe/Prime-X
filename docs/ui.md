@@ -34,9 +34,10 @@ order: "the headline should be Prime-X and then what it's doing".
 | headline | **PRIME-X** in unscii-16 at 5x, typed on (120 ms a letter), red and cyan fringes like a misaligned CRT gun, a 1 px glow, a block cursor that blinks once typed |
 | game line | `METROID PRIME - GM8E01 - USA 1.00` |
 | signal trace | a twitching line across the card, a burst every ~3 s |
-| task | what the boot is doing, at 2x: SCANNING, VERIFYING DISC IMAGE, LOADING, with the percentage; a 40-segment bar under it |
+| task | what the boot is doing, at 2x: SCANNING, VERIFYING DISC IMAGE, LOADING, with the percentage; a 40-segment bar under it. The bar eases towards the boot's progress (never slower than a second for the width) and the splash ends only once it has filled and held 300 ms (round hw2: it sat at 10% and jumped to 100%) |
 | detail | during the disc check: the file just checked with its CRC and OK/BAD, and a hex line of its bytes |
-| notes | the check says why and how to skip it: "First boot only: checking every file so a bad copy is / caught now, not as a crash later. ~1 min. B: skip" |
+| notes | the check says why and how to skip it: "First boot only: checking every file so a bad copy is / caught now, not as a crash later. ~1 min. B: skip", both lines the same colour (round hw2) |
+| music | the first boot's check plays `xbox/assets/intro.mp3` at 75%, appended to `default.xbe` as IMA ADPCM (`tools/xbox/make_intro.py`, `xhw_intro.c`): a copy of the game can't lose it, and it costs no memory (the kernel never loads it) and ~0.1% of the CPU |
 | boot log | top left, typed on: CHOZO ARCHIVE INTERFACE, then what the boot found: the CPU and its measured MHz (UPGRADED X86 past 780), memory (128 MB held to 64), the disc, the quick check, the files (178/178, checked before, skipped, mismatch) |
 | rain | glyph rain in phosphor green (hex, symbols, Latin-1 marks), white heads, stronger towards the edges, kept out of the card, the log, the tag and the hint |
 | tag | a red `// SIGNAL` top right, blinking slowly |
