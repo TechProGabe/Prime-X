@@ -47,7 +47,23 @@ Chozo Main Plaza) then free play. Red: 480i 4:3 composite (AV pack 1).
   user also saw it "white sometimes").
 - The user: the disc check needed explaining (done: the boot screen, E).
 
+## Console rounds hw2, hw3 (red, 2026-10-27)
+
+The first-boot experience: boot screen E, the full disc check with the
+intro music, then a second boot (logs `C:\xemu\hw\prime\logs-hw2`, `-hw3`).
+The user: "overall it's good", intro approved. Fixed after hw2: the check's
+second note line was dimmer; the bar sat at 10% and jumped to 100% on the
+second boot (it now eases and the splash waits for it to fill); the music
+moved from `intro.pcm` into `default.xbe` (IMA ADPCM, `make_intro.py`);
+L+R+Y at boot forces the full check; the watchdog wrote a false "no first
+frame" `hang.log` during the check. hw3 confirmed: the music plays from the
+XBE, the check passes in ~65 s, the splash costs 19 ms a frame at 25 fps
+(7.5 in xemu). **No more console rounds until the user says.**
+
 ## Next
+
+The user (after hw2): FPS first, then the port's settings menu (Options
+rows, `docs/ui.md`), and the front-end menu's doubled text.
 
 1. Performance (phase 6): profile the Landing Site and Main Plaza in xemu
    (instruction counts) and with the sampling profiler; the display-list
