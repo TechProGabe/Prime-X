@@ -1,0 +1,2944 @@
+#include "MetroidPrime/CFrontEndUI.hpp"
+
+#include "GameVersions.h"
+
+#include "Kyoto/Audio/CAudioGroupSet.hpp"
+#include "Kyoto/Audio/CAudioSys.hpp"
+#include "Kyoto/Audio/CSfxManager.hpp"
+#include "Kyoto/Audio/CStaticAudioPlayer.hpp"
+#include "Kyoto/Audio/CStreamAudioManager.hpp"
+#include "Kyoto/Basics/CBasics.hpp"
+#include "Kyoto/Basics/RAssertDolphin.hpp"
+#include "Kyoto/CDependencyGroup.hpp"
+#include "Kyoto/CDvdFile.hpp"
+#include "Kyoto/CResFactory.hpp"
+#include "Kyoto/CSimplePool.hpp"
+#include "Kyoto/Graphics/CColor.hpp"
+#include "Kyoto/Graphics/CMoviePlayer.hpp"
+#include "Kyoto/Graphics/CTexture.hpp"
+#include "Kyoto/SObjectTag.hpp"
+#include "Kyoto/Text/CStringTable.hpp"
+#include "Kyoto/Text/CTextExecuteBuffer.hpp"
+
+#include "GuiSys/CGuiFrame.hpp"
+#include "GuiSys/CGuiCamera.hpp"
+#include "GuiSys/CGuiModel.hpp"
+#include "GuiSys/CGuiTableGroup.hpp"
+#include "GuiSys/CGuiTextPane.hpp"
+#include "GuiSys/CGuiTextSupport.hpp"
+#include "GuiSys/CGuiWidget.hpp"
+#include "GuiSys/CGuiWidgetDrawParms.hpp"
+
+#include "MetroidPrime/CGBASupport.hpp"
+#include "MetroidPrime/CMain.hpp"
+#include "MetroidPrime/CMemoryCard.hpp"
+#include "MetroidPrime/CNESEmulator.hpp"
+#include "MetroidPrime/CQuitGameScreen.hpp"
+
+#include "port_apclient.h"
+#include "port_debug.h"
+#include "port_pointer_menu.h"
+#include "port_savestate.h"
+#ifdef MP_ENABLE_SMOKE_DRIVER
+#include "port_smoke.h"
+#endif
+#include "MetroidPrime/CSaveGameScreen.hpp"
+#include "MetroidPrime/CSaveWorldMemory.hpp"
+#include "MetroidPrime/CSlideShow.hpp"
+#include "MetroidPrime/CStateSetterFlow.hpp"
+#include "MetroidPrime/Decode.hpp"
+#include "MetroidPrime/DefaultWorld.hpp"
+#include "MetroidPrime/Player/CGameState.hpp"
+#include "MetroidPrime/SOptionsFrontEndFrame.hpp"
+#include "MetroidPrime/Tweaks/CTweakGame.hpp"
+
+#include "MetroidPrime/SFX/FrontEnd.h"
+
+#include "Kyoto/Graphics/CGraphics.hpp"
+#include "Kyoto/Input/CFinalInput.hpp"
+#include "Kyoto/Math/CTransform4f.hpp"
+#include "MetaRender/CCubeRenderer.hpp"
+#include "MetroidPrime/Cameras/CCameraFilterPass.hpp"
+
+#include "rstl/StringExtras.hpp"
+#include "rstl/math.hpp"
+
+namespace {
+// Port unlocks (F1 > Game > Unlocks) stand in for the save's flags here without
+// touching them, so switching an unlock off locks the extra again. The Fusion
+// Suit also needs normal mode beaten, so its unlock implies that too.
+bool NormalModeBeat() {
+#ifdef TARGET_PC
+  if (PortDebug::UnlockHardMode() || PortDebug::UnlockFusionSuit()) {
+    return true;
+  }
+#endif
+  return gpGameState->SystemState().GetNormalModeBeat();
+}
+
+bool FusionLinked() {
+#ifdef TARGET_PC
+  if (PortDebug::UnlockFusionSuit()) {
+    return true;
+  }
+#endif
+  return gpGameState->SystemState().GetFusionLinked();
+}
+} // namespace
+
+#include <dolphin/ar.h>
+#include <dolphin/os.h>
+
+#include <ctime>
+#include <string>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+struct FEMovie {
+  const char* path;
+  bool loop;
+};
+
+static const FEMovie FEMovies[] = {
+    {"Video/00_first_start.thp", false},
+    {"Video/01_startloop.thp", true},
+    {"Video/02_start_fileselect_A.thp", false},
+    {"Video/03_fileselectloop.thp", true},
+    {"Video/04_fileselect_playgame_A.thp", false},
+    {"Video/06_fileselect_GBA.thp", false},
+    {"Video/07_GBAloop.thp", true},
+    {"Video/08_GBA_fileselect.thp", false},
+    {"Video/08_GBA_fileselect.thp", false},
+};
+
+#ifdef TARGET_PC
+// Port: Trilogy's MP1 has none of the GameCube front-end movies; its own MP1 menu
+// movies sit in fe/Video/mp1. Each GameCube movie falls back to the nearest one there.
+static const char* PortFrontEndMovie(const char* path) {
+  static const struct {
+    const char* prefix;
+    const char* trilogy;
+  } skTrilogyMovies[] = {
+      {"Video/00_", "fe/Video/mp1/Mp1_wii_Titles_To_Logo.thp"},
+      {"Video/01_", "fe/Video/mp1/Mp1_wii_Logo_Loop.thp"},
+      {"Video/02_", "fe/Video/mp1/Mp1_wii_Logo_To_Main.thp"},
+      {"Video/03_", "fe/Video/mp1/Mp1_wii_Main_Menu_Loop.thp"},
+      {"Video/04_", "fe/Video/mp1/Mp1_wii_Main_To_Game.thp"},
+      {"Video/06_", "fe/Video/mp1/Mp1_wii_Main_Menu_Loop.thp"},
+      {"Video/07_", "fe/Video/mp1/Mp1_wii_Main_Menu_Loop.thp"},
+      {"Video/08_", "fe/Video/mp1/Mp1_wii_Main_Menu_Loop.thp"},
+      {"Video/attract0.", "fe/Video/mp1/Attract01.thp"},
+      {"Video/attract1.", "fe/Video/mp1/Attract02.thp"},
+  };
+  if (CDvdFile::FileExists(path)) {
+    return path;
+  }
+  for (int i = 0; i < static_cast< int >(sizeof(skTrilogyMovies) / sizeof(skTrilogyMovies[0]));
+       ++i) {
+    if (strncmp(path, skTrilogyMovies[i].prefix, strlen(skTrilogyMovies[i].prefix)) == 0 &&
+        CDvdFile::FileExists(skTrilogyMovies[i].trilogy)) {
+      return skTrilogyMovies[i].trilogy;
+    }
+  }
+  return path;
+}
+#define PORT_FE_MOVIE(path) PortFrontEndMovie(path)
+#else
+#define PORT_FE_MOVIE(path) (path)
+#endif
+// TODO: set this to the default value and bake version string as a post-build step
+#if VERSION == VERSION_GM8E_00
+const char MetroidBuildInfo[] = BUILD_INFO_TAG "Build v1.088 10/29/2002 2:21:25\0PAD";
+#elif VERSION == VERSION_GM8E_01
+const char MetroidBuildInfo[] = BUILD_INFO_TAG "Build v1.093 11/5/2002 19:50:01\0PAD";
+#else
+const char MetroidBuildInfo[] = BUILD_INFO;
+#endif
+const char* const BuildTime = MetroidBuildInfo + BUILD_INFO_TAG_SIZE;
+
+static const s16 FETransitionBackSFX[3][2] = {
+    {SFXfnt_transfore_00L, SFXfnt_transfore_00R},
+    {SFXfnt_transfore_01L, SFXfnt_transfore_01R},
+    {SFXfnt_transfore_02L, SFXfnt_transfore_02R},
+};
+
+static const s16 FETransitionForwardSFX[3][2] = {
+    {SFXfnt_transback_00L, SFXfnt_transback_00R},
+    {SFXfnt_transback_01L, SFXfnt_transback_01R},
+    {SFXfnt_transback_02L, SFXfnt_transback_02R},
+};
+
+static const char* const kAudioFrontend1Path = "Audio/frontend_1.rsf";
+static const char* const kAudioFrontend2Path = "Audio/frontend_2.rsf";
+static const char* const kFrontEndAGSCName = "FrontEnd_AGSC";
+
+static const float AudioFadeTimeB[3] = {
+    4.2f,
+    6.1f,
+    6.1f,
+};
+
+static const float AudioFadeTimeA[3] = {
+    0.43999997f,
+    5.4100003f,
+    3.4100003f,
+};
+
+static const CFrontEndUI::SFusionBonusFrame::SGBALinkFrame::EUIType NextLinkUI[10] = {
+    CFrontEndUI::SFusionBonusFrame::SGBALinkFrame::kUIT_ConnectSocket,
+    CFrontEndUI::SFusionBonusFrame::SGBALinkFrame::kUIT_PressStartAndSelect,
+    CFrontEndUI::SFusionBonusFrame::SGBALinkFrame::kUIT_BeginLink,
+    CFrontEndUI::SFusionBonusFrame::SGBALinkFrame::kUIT_Linking,
+    CFrontEndUI::SFusionBonusFrame::SGBALinkFrame::kUIT_Empty,
+    CFrontEndUI::SFusionBonusFrame::SGBALinkFrame::kUIT_TurnOffGBA,
+    CFrontEndUI::SFusionBonusFrame::SGBALinkFrame::kUIT_Complete,
+    CFrontEndUI::SFusionBonusFrame::SGBALinkFrame::kUIT_InsertPak,
+    CFrontEndUI::SFusionBonusFrame::SGBALinkFrame::kUIT_Empty,
+    CFrontEndUI::SFusionBonusFrame::SGBALinkFrame::kUIT_Empty,
+};
+
+static const CFrontEndUI::SFusionBonusFrame::SGBALinkFrame::EUIType PrevLinkUI[10] = {
+    CFrontEndUI::SFusionBonusFrame::SGBALinkFrame::kUIT_Cancelled,
+    CFrontEndUI::SFusionBonusFrame::SGBALinkFrame::kUIT_Cancelled,
+    CFrontEndUI::SFusionBonusFrame::SGBALinkFrame::kUIT_Cancelled,
+    CFrontEndUI::SFusionBonusFrame::SGBALinkFrame::kUIT_Cancelled,
+    CFrontEndUI::SFusionBonusFrame::SGBALinkFrame::kUIT_Empty,
+    CFrontEndUI::SFusionBonusFrame::SGBALinkFrame::kUIT_Cancelled,
+    CFrontEndUI::SFusionBonusFrame::SGBALinkFrame::kUIT_Empty,
+    CFrontEndUI::SFusionBonusFrame::SGBALinkFrame::kUIT_Cancelled,
+    CFrontEndUI::SFusionBonusFrame::SGBALinkFrame::kUIT_Empty,
+    CFrontEndUI::SFusionBonusFrame::SGBALinkFrame::kUIT_Empty,
+};
+
+void CFrontEndUI::PlayAdvanceSfx() {
+  CSfxManager::SfxStart(SFXui_x_start_00);
+  CSfxManager::SfxStart(SFXui_x_start_00r);
+}
+
+void CFrontEndUI::SFrontEndFrame::FindAndSetPairText(CGuiFrame& frame, const char* name,
+                                                     const wchar_t* str) {
+  CGuiTextPane* w1 = static_cast< CGuiTextPane* >(frame.FindWidget(name));
+  w1->TextSupport().SetText(rstl::wstring(str));
+  CGuiTextPane* w2 =
+      static_cast< CGuiTextPane* >(frame.FindWidget(CBasics::Stringize("%sb", name)));
+  w2->TextSupport().SetText(rstl::wstring(str));
+}
+
+CFrontEndUI::SGuiTextPair::SGuiTextPair() {
+  x0_textPane = nullptr;
+  x4_textPaneB = nullptr;
+}
+
+CFrontEndUI::SGuiTextPair::SGuiTextPair(const CGuiFrame* frame, const char* name) {
+  x0_textPane = static_cast< CGuiTextPane* >(frame->FindWidget(name));
+  x4_textPaneB = static_cast< CGuiTextPane* >(frame->FindWidget(CBasics::Stringize("%sb", name)));
+}
+
+void CFrontEndUI::SGuiTextPair::SetPairText(const wchar_t* str) {
+  x0_textPane->TextSupport().SetText(rstl::wstring(str));
+  x4_textPaneB->TextSupport().SetText(rstl::wstring(str));
+}
+
+void CFrontEndUI::SGuiTextPair::SetPairText(const rstl::wstring& str) {
+  x0_textPane->TextSupport().SetText(str);
+  x4_textPaneB->TextSupport().SetText(str);
+}
+
+CFrontEndUI::SNesEmulatorFrame::SNesEmulatorFrame()
+: x0_mode(kEM_Emulator)
+, x4_nesEmu(rs_new CNESEmulator())
+, x8_quitScreen(nullptr)
+, xc_textSupport(nullptr)
+, x10_remTime(8.f)
+, x14_emulationSuspended(false)
+, x15_enableFiltering(true) {
+  xc_textSupport = rs_new CGuiTextSupport(
+      gpResourceFactory->GetResourceIdByName("FONT_Deface14B")->GetId(),
+      CGuiTextProperties(false, true, kJustification_Left, kVerticalJustification_Center, nullptr),
+      CColor(0xFFFFFFFFu), CColor::Black(), CColor(0xFFFFFFFFu), 0, 0, gpSimplePool);
+  xc_textSupport->SetText(rstl::wstring_l(gpStringTable->GetString(0x67)));
+  xc_textSupport->SetExtentX(xc_textSupport->GetBounds().second.GetX());
+  xc_textSupport->SetExtentY(xc_textSupport->GetBounds().second.GetY());
+}
+
+CFrontEndUI::SNesEmulatorFrame::~SNesEmulatorFrame() {}
+
+void CFrontEndUI::SNesEmulatorFrame::SetMode(EMode mode) {
+  switch (mode) {
+  case kEM_Emulator:
+    x8_quitScreen = nullptr;
+    break;
+  case kEM_SaveProgress:
+    x8_quitScreen = nullptr;
+    x8_quitScreen = rs_new CQuitGameScreen(kQT_SaveProgress);
+    break;
+  case kEM_ContinuePlaying:
+    x8_quitScreen = nullptr;
+    x8_quitScreen = rs_new CQuitGameScreen(kQT_ContinuePlaying);
+    break;
+  case kEM_QuitNESMetroid:
+    x8_quitScreen = nullptr;
+    x8_quitScreen = rs_new CQuitGameScreen(kQT_QuitNESMetroid);
+    break;
+  default:
+    break;
+  }
+  x0_mode = mode;
+}
+
+int CFrontEndUI::SNesEmulatorFrame::Update(float dt, CSaveGameScreen* saveUi) {
+  const bool doUpdate = saveUi == nullptr || saveUi->GetUIType() == CSaveGameScreen::kUIT_SaveReady;
+  x10_remTime = rstl::max_val(0.f, x10_remTime - dt);
+
+  xc_textSupport->SetGeometryColor(CColor::White().WithAlphaOf(rstl::min_val(x10_remTime, 1.f)));
+
+  if (xc_textSupport->GetIsTextSupportFinishedLoading()) {
+    xc_textSupport->SetExtentX(xc_textSupport->GetBounds().second.GetX());
+    xc_textSupport->SetExtentY(xc_textSupport->GetBounds().second.GetY());
+  }
+
+  if (doUpdate) {
+    switch (x0_mode) {
+    case kEM_Emulator: {
+      x4_nesEmu->Update();
+      if (!x4_nesEmu->IsGameOver()) {
+        x14_emulationSuspended = false;
+      }
+      if (x4_nesEmu->IsGameOver() && !x14_emulationSuspended) {
+        x14_emulationSuspended = true;
+        if (saveUi != nullptr && !saveUi->IsSavingDisabled()) {
+          SetMode(kEM_SaveProgress);
+          break;
+        }
+        SetMode(kEM_ContinuePlaying);
+        break;
+      }
+      if (x4_nesEmu->GetPasswordEntryState() == CNESEmulator::kPES_NotEntered) {
+        if (saveUi != nullptr) {
+          x4_nesEmu->LoadPassword(gpGameState->SystemState().GetNESState());
+        }
+      }
+      break;
+    }
+    case kEM_SaveProgress: {
+      if (saveUi != nullptr) {
+        EQuitAction action = x8_quitScreen->Update(dt);
+        if (action == kQA_Yes) {
+          memcpy(gpGameState->SystemState().GetNESState(), x4_nesEmu->GetPassword(), 0x12);
+          saveUi->SaveNESState();
+          SetMode(kEM_ContinuePlaying);
+        } else if (action == kQA_No) {
+          SetMode(kEM_ContinuePlaying);
+        }
+      } else {
+        SetMode(kEM_ContinuePlaying);
+      }
+      break;
+    }
+    case kEM_ContinuePlaying: {
+      EQuitAction action = x8_quitScreen->Update(dt);
+      if (action == kQA_Yes) {
+        SetMode(kEM_Emulator);
+      } else if (action == kQA_No) {
+        return 1;
+      }
+      break;
+    }
+    case kEM_QuitNESMetroid: {
+      EQuitAction action = x8_quitScreen->Update(dt);
+      if (action == kQA_Yes) {
+        return 1;
+      } else if (action == kQA_No) {
+        SetMode(kEM_Emulator);
+      }
+      break;
+    }
+    default:
+      break;
+    }
+  }
+
+  return 0;
+}
+
+void CFrontEndUI::SNesEmulatorFrame::ProcessUserInput(const CFinalInput& input,
+                                                      CSaveGameScreen* sui) {
+  bool doInput = true;
+  if (sui != nullptr && sui->GetUIType() != CSaveGameScreen::kUIT_SaveReady) {
+    doInput = false;
+  }
+
+  if (sui != nullptr) {
+    sui->ProcessUserInput(input);
+  }
+
+  if (!doInput) {
+    return;
+  }
+
+  switch (x0_mode) {
+  case kEM_Emulator:
+    x4_nesEmu->ProcessUserInput(input, 4);
+    if (input.ControllerNumber() == 0 && input.PL()) {
+      SetMode(kEM_QuitNESMetroid);
+    }
+    break;
+  case kEM_SaveProgress:
+  case kEM_ContinuePlaying:
+  case kEM_QuitNESMetroid:
+    x8_quitScreen->ProcessUserInput(input);
+    break;
+  default:
+    break;
+  }
+}
+
+void CFrontEndUI::SNesEmulatorFrame::Draw(CSaveGameScreen* saveUi) const {
+  CColor mulColor = CColor::White();
+  CColor dimColor(static_cast< uchar >(0x60), static_cast< uchar >(0x60),
+                  static_cast< uchar >(0x60), static_cast< uchar >(0xFF));
+
+  bool blackout = false;
+  if (saveUi != nullptr && saveUi->GetUIType() != CSaveGameScreen::kUIT_SaveReady) {
+    blackout = true;
+  }
+
+  if (blackout) {
+    mulColor = CColor(0u);
+  } else if (x8_quitScreen.get() != nullptr) {
+    mulColor = dimColor;
+  }
+
+  x4_nesEmu->Draw(mulColor, x15_enableFiltering);
+
+  if (!blackout && x8_quitScreen.get() != nullptr) {
+    x8_quitScreen->Draw();
+  } else {
+    CGraphics::SetUseVideoFilter(x15_enableFiltering);
+  }
+
+  if (x10_remTime < 7.5f && x10_remTime > 0.f) {
+    if (xc_textSupport->GetIsTextSupportFinishedLoading()) {
+      CGraphics::SetCullMode(kCM_None);
+      gpRender->SetViewportOrtho(true, -4096.f, 4096.f);
+      gpRender->SetBlendMode_AlphaBlended();
+      gpRender->SetDepthReadWrite(false, false);
+      CGraphics::SetModelMatrix(CTransform4f::Translate(-280.f, 0.f, -160.f));
+      xc_textSupport->Render();
+    }
+  }
+}
+
+CFrontEndUI::SFusionBonusFrame::SGBALinkFrame::SGBALinkFrame(CGuiFrame* frme, CGBASupport* support,
+                                                             bool linkInProgress)
+: x0_uiType(kUIT_Empty)
+, x4_gbaSupport(support)
+, x8_frme(frme)
+, xc_textpane_instructions()
+, x14_textpane_yes(nullptr)
+, x18_textpane_no(nullptr)
+, x1c_model_gc(nullptr)
+, x20_model_gba(nullptr)
+, x24_model_cable(nullptr)
+, x28_model_circlegcport(nullptr)
+, x2c_model_circlegbaport(nullptr)
+, x30_model_circlestartselect(nullptr)
+, x34_model_pakout(nullptr)
+, x38_model_gbascreen(nullptr)
+, x3c_model_connect(nullptr)
+, x40_linkInProgress(linkInProgress) {
+  support->InitializeSupport();
+  FinishedLoading();
+}
+
+CFrontEndUI::SFusionBonusFrame::SGBALinkFrame::~SGBALinkFrame() {}
+
+void CFrontEndUI::SFusionBonusFrame::SGBALinkFrame::Draw() {
+  x8_frme->Draw(CGuiWidgetDrawParms::sDefaultDrawParms);
+}
+
+void CFrontEndUI::SFusionBonusFrame::SGBALinkFrame::FinishedLoading() {
+  xc_textpane_instructions = SGuiTextPair(x8_frme, "textpane_instructions");
+  x14_textpane_yes = static_cast< CGuiTextPane* >(x8_frme->FindWidget("textpane_yes"));
+  x18_textpane_no = static_cast< CGuiTextPane* >(x8_frme->FindWidget("textpane_no"));
+  x1c_model_gc = static_cast< CGuiModel* >(x8_frme->FindWidget("model_gc"));
+  x20_model_gba = static_cast< CGuiModel* >(x8_frme->FindWidget("model_gba"));
+  x24_model_cable = static_cast< CGuiModel* >(x8_frme->FindWidget("model_cable"));
+  x28_model_circlegcport = static_cast< CGuiModel* >(x8_frme->FindWidget("model_circlegcport"));
+  x2c_model_circlegbaport = static_cast< CGuiModel* >(x8_frme->FindWidget("model_circlegbaport"));
+  x30_model_circlestartselect =
+      static_cast< CGuiModel* >(x8_frme->FindWidget("model_circlestartselect"));
+  x34_model_pakout = static_cast< CGuiModel* >(x8_frme->FindWidget("model_pakout"));
+  x38_model_gbascreen = static_cast< CGuiModel* >(x8_frme->FindWidget("model_gbascreen"));
+  x3c_model_connect = static_cast< CGuiModel* >(x8_frme->FindWidget("model_connect"));
+  SetUIText(kUIT_InsertPak);
+}
+
+void CFrontEndUI::SFusionBonusFrame::SGBALinkFrame::Update(float dt) {
+  x4_gbaSupport->Update(dt);
+  x8_frme->Update(dt);
+}
+
+CFrontEndUI::SFusionBonusFrame::SGBALinkFrame::EAction
+CFrontEndUI::SFusionBonusFrame::SGBALinkFrame::ProcessUserInput(const CFinalInput& input,
+                                                                bool linkInProgress) {
+  if (linkInProgress != x40_linkInProgress) {
+    x40_linkInProgress = linkInProgress;
+    SetUIText(x0_uiType);
+  }
+
+  switch (x0_uiType) {
+  case kUIT_InsertPak:
+  case kUIT_ConnectSocket:
+  case kUIT_PressStartAndSelect:
+  case kUIT_BeginLink:
+  case kUIT_LinkFailed:
+  case kUIT_LinkCompleteOrLinking:
+  case kUIT_TurnOffGBA:
+    if (input.PA()) {
+      PlayAdvanceSfx();
+      SetUIText(NextLinkUI[x0_uiType]);
+    } else if (input.PB()) {
+      if (PrevLinkUI[x0_uiType] == kUIT_Empty)
+        break;
+      CSfxManager::SfxStart(SFXfnt_back, 0x7f, 0x40, false, CSfxManager::kMedPriority, false,
+                            CSfxManager::kAllAreas);
+      SetUIText(PrevLinkUI[x0_uiType]);
+    }
+    break;
+  case kUIT_Linking: {
+    if (x4_gbaSupport->GetPhase() == CGBASupport::kP_Complete) {
+      if (x4_gbaSupport->IsFusionLinked())
+        gpGameState->SystemState().SetFusionLinked(true);
+      if (x4_gbaSupport->IsFusionBeat())
+        gpGameState->SystemState().SetFusionBeat(true);
+      if (x4_gbaSupport->IsFusionLinked()) {
+        PlayAdvanceSfx();
+        SetUIText(kUIT_LinkCompleteOrLinking);
+      } else {
+        CSfxManager::SfxStart(SFXfnt_back, 0x7f, 0x40, false, CSfxManager::kMedPriority, false,
+                              CSfxManager::kAllAreas);
+        SetUIText(kUIT_LinkFailed);
+      }
+    } else if (x4_gbaSupport->GetPhase() == CGBASupport::kP_Failed) {
+      CSfxManager::SfxStart(SFXfnt_back, 0x7f, 0x40, false, CSfxManager::kMedPriority, false,
+                            CSfxManager::kAllAreas);
+      SetUIText(kUIT_LinkFailed);
+    }
+    break;
+  }
+  case kUIT_Complete:
+    return kGA_Complete;
+  case kUIT_Cancelled:
+    return kGA_Cancelled;
+  default:
+    break;
+  }
+
+  return kGA_None;
+}
+
+void CFrontEndUI::SFusionBonusFrame::SGBALinkFrame::SetUIText(EUIType tp) {
+  int instructions = -1;
+  int yes = -1;
+  int no = -1;
+  bool cableVisible = false;
+  bool circleGcVisible = false;
+  bool circleGbaVisible = false;
+  bool circleStartVisible = false;
+  bool pakoutVisible = false;
+  bool gbaScreenVisible = false;
+  bool connectVisible = false;
+
+  switch (tp) {
+  case kUIT_InsertPak:
+    instructions = 0x49;
+    no = 0x52;
+    yes = 0x53;
+    pakoutVisible = true;
+    circleGbaVisible = true;
+    break;
+  case kUIT_ConnectSocket:
+    instructions = 0x44;
+    no = 0x52;
+    yes = 0x53;
+    cableVisible = true;
+    circleGcVisible = true;
+    circleGbaVisible = true;
+    break;
+  case kUIT_PressStartAndSelect:
+    instructions = 0x4a;
+    no = 0x52;
+    yes = 0x53;
+    cableVisible = true;
+    circleStartVisible = true;
+    gbaScreenVisible = true;
+    break;
+  case kUIT_BeginLink:
+    instructions = 0x4b;
+    no = 0x52;
+    yes = 0x53;
+    cableVisible = true;
+    gbaScreenVisible = true;
+    break;
+  case kUIT_TurnOffGBA:
+    instructions = 0x4c;
+    no = 0x52;
+    yes = 0x53;
+    cableVisible = true;
+    gbaScreenVisible = true;
+    circleStartVisible = true;
+    break;
+  case kUIT_Linking:
+    x4_gbaSupport->StartLink();
+    instructions = 0x48;
+    cableVisible = true;
+    gbaScreenVisible = true;
+    connectVisible = true;
+    break;
+  case kUIT_LinkFailed:
+    instructions = 0x45;
+    no = 0x52;
+    yes = 0x54;
+    cableVisible = true;
+    circleGcVisible = true;
+    circleGbaVisible = true;
+    circleStartVisible = true;
+    gbaScreenVisible = true;
+    break;
+  case kUIT_LinkCompleteOrLinking:
+    yes = 0x53;
+    cableVisible = true;
+    gbaScreenVisible = true;
+    instructions = x40_linkInProgress ? 0x46 : 0x47;
+    break;
+  case kUIT_Complete:
+  case kUIT_Cancelled:
+  default:
+    break;
+  }
+
+  rstl::wstring emptyStr = rstl::wstring_l(L"");
+
+  xc_textpane_instructions.SetPairText(
+      instructions == -1 ? emptyStr : rstl::wstring_l(gpStringTable->GetString(instructions)));
+
+  x14_textpane_yes->TextSupport().SetText(
+      yes == -1 ? emptyStr : rstl::wstring_l(gpStringTable->GetString(yes)), false);
+
+  x18_textpane_no->TextSupport().SetText(
+      no == -1 ? emptyStr : rstl::wstring_l(gpStringTable->GetString(no)), false);
+
+  x1c_model_gc->SetVisibility(true, kTM_Children);
+  x20_model_gba->SetVisibility(true, kTM_Children);
+  x24_model_cable->SetVisibility(cableVisible, kTM_Children);
+  x28_model_circlegcport->SetVisibility(circleGcVisible, kTM_Children);
+  x2c_model_circlegbaport->SetVisibility(circleGbaVisible, kTM_Children);
+  x30_model_circlestartselect->SetVisibility(circleStartVisible, kTM_Children);
+  x34_model_pakout->SetVisibility(pakoutVisible, kTM_Children);
+  x38_model_gbascreen->SetVisibility(gbaScreenVisible, kTM_Children);
+  x3c_model_connect->SetVisibility(connectVisible, kTM_Children);
+
+  x0_uiType = tp;
+}
+
+CStateSetterFlow::CStateSetterFlow() : CIOWin(rstl::string_l("")) {}
+
+CStateSetterFlow::~CStateSetterFlow() {}
+
+CIOWin::EMessageReturn CStateSetterFlow::OnMessage(const CArchitectureMessage& message,
+                                                   CArchitectureQueue& queue) {
+  switch (message.GetType()) {
+  case kAM_TimerTick:
+    gpMain->RefreshGameState();
+    return kMR_RemoveIOWinAndExit;
+  default:
+    return kMR_Exit;
+  }
+}
+
+CFrontEndUI::SFrontEndFrame::SFrontEndFrame(uint rnd)
+: x0_rnd(rnd)
+, x4_action(kEA_None)
+, x8_frme(gpSimplePool->GetObj("FRME_FrontEndPL"))
+, x14_loadedFrme(nullptr)
+, x18_tablegroup_mainmenu(nullptr)
+, x1c_gbaPair()
+, x24_cheatPair() {
+  x8_frme.Lock();
+}
+
+CFrontEndUI::SFrontEndFrame::~SFrontEndFrame() {}
+
+bool CFrontEndUI::SFrontEndFrame::PumpLoad() {
+  if (x14_loadedFrme) {
+    return true;
+  }
+  if (x8_frme.TryCache()) {
+    CGuiFrame* frme = x8_frme.GetObject();
+    if (frme->GetIsFinishedLoading()) {
+      x14_loadedFrme = frme;
+      // Port: keep the front end's proportions in widescreen, pillarboxed: the
+      // HUD's spread would pull its text away from the panels behind it.
+      if (CGuiCamera* cam = frme->GetFrameCamera()) {
+        cam->SetAspectMatch(true, false);
+      }
+      FinishedLoading();
+      return true;
+    }
+  }
+  return false;
+}
+
+#ifdef TARGET_PC
+// Port: a PAL disc's front-end menus add a language row (`textpane_lang`) the
+// code doesn't handle (issue #152), which moves the rows after it down one. The
+// no-card menu's rows, in the order DoAdvance numbers them, by the text pane
+// each holds.
+static const char* const kPortMainMenuPanes[] = {"textpane_start", "textpane_gba",
+                                                 "textpane_options", "textpane_cheats"};
+
+// The row of `table` that is `pane` or holds it, or -1.
+static int PortRowOf(CGuiTableGroup* table, const CGuiWidget* pane) {
+  for (int i = 0; pane != nullptr; ++i) {
+    const CGuiWidget* worker = table->GetWorkerWidget(i);
+    if (worker == nullptr) {
+      break;
+    }
+    if (worker == pane || worker == pane->GetParent()) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+// The DoAdvance number of the no-card menu's row `row`, or -1 for a row it doesn't know.
+static int PortMainMenuRow(CGuiFrame* frame, CGuiTableGroup* table, int row) {
+  for (int k = 0; k < 4; ++k) {
+    if (PortRowOf(table, frame->FindWidget(kPortMainMenuPanes[k])) == row) {
+      return k;
+    }
+  }
+  return -1;
+}
+#endif
+
+void CFrontEndUI::SFrontEndFrame::FinishedLoading() {
+  x18_tablegroup_mainmenu =
+      static_cast< CGuiTableGroup* >(x14_loadedFrme->FindWidget("tablegroup_mainmenu"));
+
+  x1c_gbaPair = SGuiTextPair(x14_loadedFrme, "textpane_gba");
+  x1c_gbaPair.SetPairText(gpStringTable->GetString(0x25));
+
+  x24_cheatPair = SGuiTextPair(x14_loadedFrme, "textpane_cheats");
+  x24_cheatPair.SetPairText(gpStringTable->GetString(0x60));
+
+  FindAndSetPairText(*x14_loadedFrme, "textpane_start", gpStringTable->GetString(0x43));
+  FindAndSetPairText(*x14_loadedFrme, "textpane_options", gpStringTable->GetString(0x5e));
+  FindAndSetPairText(*x14_loadedFrme, "textpane_title", gpStringTable->GetString(0x62));
+
+  CGuiTextPane* proceed =
+      static_cast< CGuiTextPane* >(x14_loadedFrme->FindWidget("textpane_proceed"));
+  if (proceed) {
+    proceed->TextSupport().SetText(rstl::wstring_l(gpStringTable->GetString(0x55)));
+  }
+
+  x18_tablegroup_mainmenu->SetMenuAdvanceCallback(
+      TFunctor1FromMethod< SFrontEndFrame, CGuiTableGroup* const >::Make(
+          *this, &SFrontEndFrame::DoAdvance));
+  x18_tablegroup_mainmenu->SetMenuSelectionChangeCallback(
+      TFunctor2FromMethod< SFrontEndFrame, CGuiTableGroup* const, const int >::Make(
+          *this, &SFrontEndFrame::DoSelectionChange));
+  x18_tablegroup_mainmenu->SetMenuCancelCallback(
+      TFunctor1FromMethod< SFrontEndFrame, CGuiTableGroup* const >::Make(
+          *this, &SFrontEndFrame::DoCancel));
+
+#ifdef TARGET_PC
+  for (int i = 0; x18_tablegroup_mainmenu->GetWorkerWidget(i) != nullptr; ++i) {
+    if (PortMainMenuRow(x14_loadedFrme, x18_tablegroup_mainmenu, i) < 0) {
+      x18_tablegroup_mainmenu->GetWorkerWidget(i)->SetIsSelectable(false);
+    }
+  }
+#endif
+
+  HandleActiveChange(x18_tablegroup_mainmenu);
+}
+
+void CFrontEndUI::SFrontEndFrame::Update(float dt) {
+#ifdef TARGET_PC
+  int galleryRow = PortRowOf(x18_tablegroup_mainmenu, x24_cheatPair.x0_textPane);
+  CGuiWidget* imageGallery =
+      x18_tablegroup_mainmenu->GetWorkerWidget(galleryRow < 0 ? 3 : galleryRow);
+#else
+  CGuiWidget* imageGallery = x18_tablegroup_mainmenu->GetWorkerWidget(3);
+#endif
+
+  if (CSlideShow::SlideShowGalleryFlags()) {
+    imageGallery->SetIsSelectable(true);
+    x24_cheatPair.x0_textPane->TextSupport().SetFontColor(CColor::White());
+  } else {
+    imageGallery->SetIsSelectable(false);
+    CGuiTextSupport& textSupport = x24_cheatPair.x0_textPane->TextSupport();
+    CColor color = CColor::Grey().WithAlphaOf(0.5f);
+    textSupport.SetFontColor(color);
+  }
+
+  x14_loadedFrme->Update(dt);
+}
+
+CFrontEndUI::SFrontEndFrame::EAction
+CFrontEndUI::SFrontEndFrame::ProcessUserInput(const CFinalInput& input) {
+  x4_action = kEA_None;
+#ifdef TARGET_PC
+  if (PortPointerMenu::Begin()) {
+    if (PortPointerMenu::Table(x18_tablegroup_mainmenu) == PortPointerMenu::Action::Advance) {
+      return x4_action;
+    }
+    CFinalInput pointerInput = input;
+    if (PortPointerMenu::TakeBack()) {
+      PortPointerMenu::PressB(pointerInput);
+    }
+    x14_loadedFrme->ProcessUserInput(pointerInput);
+    return x4_action;
+  }
+#endif
+  x14_loadedFrme->ProcessUserInput(input);
+  return x4_action;
+}
+
+void CFrontEndUI::SFrontEndFrame::Draw() {
+  x14_loadedFrme->Draw(CGuiWidgetDrawParms::sDefaultDrawParms);
+}
+
+void CFrontEndUI::SFrontEndFrame::DoAdvance(CGuiTableGroup* caller) {
+#ifdef TARGET_PC
+  switch (PortMainMenuRow(x14_loadedFrme, x18_tablegroup_mainmenu,
+                          x18_tablegroup_mainmenu->GetUserSelection())) {
+#else
+  switch (x18_tablegroup_mainmenu->GetUserSelection()) {
+#endif
+  case 0:
+    CSfxManager::SfxStart(FETransitionForwardSFX[x0_rnd][0], 0x7f, 0x40, false,
+                          CSfxManager::kMedPriority, false, CSfxManager::kAllAreas);
+    CSfxManager::SfxStart(FETransitionForwardSFX[x0_rnd][1], 0x7f, 0x40, false,
+                          CSfxManager::kMedPriority, false, CSfxManager::kAllAreas);
+    x4_action = kEA_StartGame;
+    break;
+  case 1:
+    x4_action = kEA_FusionBonus;
+    break;
+  case 2:
+    PlayAdvanceSfx();
+    x4_action = kEA_GameOptions;
+    break;
+  case 3:
+    PlayAdvanceSfx();
+    x4_action = kEA_SlideShow;
+    break;
+  default:
+    break;
+  }
+}
+
+void CFrontEndUI::SFrontEndFrame::DoSelectionChange(CGuiTableGroup* caller, int oldSelection) {
+  CSfxManager::SfxStart(SFXfnt_selection_change, 0x7f, 0x40, false, CSfxManager::kMedPriority,
+                        false, CSfxManager::kAllAreas);
+  HandleActiveChange(caller);
+}
+
+void CFrontEndUI::SFrontEndFrame::HandleActiveChange(CGuiTableGroup* caller) {
+  CColor selected((uchar)0xFF, (uchar)0xFF, (uchar)0xFF, (uchar)0xFF);
+  CColor unselected((uchar)0xA0, (uchar)0xA0, (uchar)0xA0, (uchar)0xC8);
+  caller->SetColors(selected, unselected);
+}
+
+void CFrontEndUI::SFrontEndFrame::DoCancel(CGuiTableGroup* caller) {}
+
+float CFrontEndUI::SFileSelectOption::ComputeRandom() {
+  return rand() / static_cast< float >(RAND_MAX) * 30.f + 30.f;
+}
+
+void CFrontEndUI::SNewFileSelectFrame::StartTextAnimating(CGuiTextPane* text,
+                                                          const rstl::wstring& str, float chRate) {
+  text->TextSupport().SetText(rstl::wstring_l(L""));
+  text->TextSupport().SetText(str);
+  text->TextSupport().SetTypeWriteEffectOptions(true, 0.1f, chRate);
+}
+
+CFrontEndUI::SFileSelectOption::SFileSelectOption(CGuiFrame* frame, int idx)
+: x0_base(frame->FindWidget(CBasics::Stringize("basewidget_file%d", idx)))
+, x28_curField(0)
+, x2c_chRate(ComputeRandom()) {
+  char buf[32];
+  sprintf(buf, "textpane_filename%d", idx);
+  x4_textpanes.push_back(SGuiTextPair(frame, buf));
+
+  sprintf(buf, "textpane_world%d", idx);
+  x4_textpanes.push_back(SGuiTextPair(frame, buf));
+
+  sprintf(buf, "textpane_playtime%d", idx);
+  x4_textpanes.push_back(SGuiTextPair(frame, buf));
+
+  sprintf(buf, "textpane_date%d", idx);
+  x4_textpanes.push_back(SGuiTextPair(frame, buf));
+}
+
+CFrontEndUI::SNewFileSelectFrame::SNewFileSelectFrame(CSaveGameScreen* saveUI, uint rnd)
+: x0_rnd(rnd)
+, x4_saveUI(saveUI)
+, x8_subMenu(kSM_Root)
+, xc_action(kA_None)
+, x10_frme(gpSimplePool->GetObj("FRME_NewFileSelect"))
+, x1c_loadedFrame(nullptr)
+, x20_tablegroup_fileselect(nullptr)
+, x24_model_erase(nullptr)
+, x28_textpane_erase()
+, x30_textpane_cheats()
+, x38_textpane_gba()
+, x40_tablegroup_popup(nullptr)
+, x44_model_dash7(nullptr)
+, x48_textpane_popupadvance()
+, x50_textpane_popupcancel()
+, x58_textpane_popupextra()
+, x60_textpane_cancel(nullptr)
+, x64_fileSelections()
+, xf8_model_erase_position(CVector3f::Zero())
+, x104_rowPitch(0.f)
+, x108_curTime(0.f)
+, x10c_saveReady(false)
+, x10d_needsEraseToggle(false)
+, x10e_needsNewToggle(false) {
+  x10_frme.Lock();
+}
+
+CFrontEndUI::SNewFileSelectFrame::~SNewFileSelectFrame() {}
+
+bool CFrontEndUI::SNewFileSelectFrame::PumpLoad() {
+  if (x1c_loadedFrame) {
+    return true;
+  }
+  if (x10_frme.TryCache()) {
+    CGuiFrame* frme = x10_frme.GetObject();
+    if (frme->GetIsFinishedLoading()) {
+      x1c_loadedFrame = frme;
+      // Port: keep the file select's proportions in widescreen, pillarboxed (see
+      // SFrontEndFrame::PumpLoad).
+      if (CGuiCamera* cam = frme->GetFrameCamera()) {
+        cam->SetAspectMatch(true, false);
+      }
+      FinishedLoading();
+      return true;
+    }
+  }
+  return false;
+}
+
+void CFrontEndUI::SNewFileSelectFrame::FinishedLoading() {
+  x20_tablegroup_fileselect =
+      static_cast< CGuiTableGroup* >(x1c_loadedFrame->FindWidget("tablegroup_fileselect"));
+  x24_model_erase = static_cast< CGuiModel* >(x1c_loadedFrame->FindWidget("model_erase"));
+  xf8_model_erase_position = x24_model_erase->GetLocalPosition();
+
+  x28_textpane_erase = SGuiTextPair(x1c_loadedFrame, "textpane_erase");
+  x38_textpane_gba = SGuiTextPair(x1c_loadedFrame, "textpane_gba");
+  x30_textpane_cheats = SGuiTextPair(x1c_loadedFrame, "textpane_cheats");
+  x48_textpane_popupadvance = SGuiTextPair(x1c_loadedFrame, "textpane_popupadvance");
+  x50_textpane_popupcancel = SGuiTextPair(x1c_loadedFrame, "textpane_popupcancel");
+  x58_textpane_popupextra = SGuiTextPair(x1c_loadedFrame, "textpane_popupextra");
+
+  x40_tablegroup_popup =
+      static_cast< CGuiTableGroup* >(x1c_loadedFrame->FindWidget("tablegroup_popup"));
+  x44_model_dash7 = static_cast< CGuiModel* >(x1c_loadedFrame->FindWidget("model_dash7"));
+  x60_textpane_cancel =
+      static_cast< CGuiTextPane* >(x1c_loadedFrame->FindWidget("textpane_cancel"));
+
+  SFrontEndFrame::FindAndSetPairText(*x1c_loadedFrame, "textpane_title",
+                                     gpStringTable->GetString(0x61));
+
+  CGuiTextPane* proceed =
+      static_cast< CGuiTextPane* >(x1c_loadedFrame->FindWidget("textpane_proceed"));
+  if (proceed) {
+    proceed->TextSupport().SetText(rstl::wstring_l(gpStringTable->GetString(0x55)));
+  }
+
+  x40_tablegroup_popup->SetIsVisible(false);
+  x40_tablegroup_popup->SetIsActive(false);
+  x40_tablegroup_popup->SetVertical(false);
+  x40_tablegroup_popup->GetWorkerWidget(2)->SetIsSelectable(false);
+  x40_tablegroup_popup->GetWorkerWidget(2)->SetVisibility(false, kTM_Children);
+
+  x20_tablegroup_fileselect->SetMenuAdvanceCallback(
+      TFunctor1FromMethod< SNewFileSelectFrame, CGuiTableGroup* const >::Make(
+          *this, &SNewFileSelectFrame::DoFileselectAdvance));
+  x20_tablegroup_fileselect->SetMenuSelectionChangeCallback(
+      TFunctor2FromMethod< SNewFileSelectFrame, CGuiTableGroup* const, const int >::Make(
+          *this, &SNewFileSelectFrame::DoSelectionChange));
+  x20_tablegroup_fileselect->SetMenuCancelCallback(
+      TFunctor1FromMethod< SNewFileSelectFrame, CGuiTableGroup* const >::Make(
+          *this, &SNewFileSelectFrame::DoFileselectCancel));
+
+  x40_tablegroup_popup->SetMenuAdvanceCallback(
+      TFunctor1FromMethod< SNewFileSelectFrame, CGuiTableGroup* const >::Make(
+          *this, &SNewFileSelectFrame::DoPopupAdvance));
+  x40_tablegroup_popup->SetMenuSelectionChangeCallback(
+      TFunctor2FromMethod< SNewFileSelectFrame, CGuiTableGroup* const, const int >::Make(
+          *this, &SNewFileSelectFrame::DoSelectionChange));
+  x40_tablegroup_popup->SetMenuCancelCallback(
+      TFunctor1FromMethod< SNewFileSelectFrame, CGuiTableGroup* const >::Make(
+          *this, &SNewFileSelectFrame::DoPopupCancel));
+
+  for (int i = 0; i < 3; ++i) {
+    x64_fileSelections.push_back(SFileSelectOption(x1c_loadedFrame, i));
+  }
+
+  x104_rowPitch = (x64_fileSelections[1].x0_base->GetLocalPosition() -
+                   x64_fileSelections[0].x0_base->GetLocalPosition())
+                      .GetZ();
+#ifdef TARGET_PC
+  // Port: a PAL disc's FRME_NewFileSelect has a language row (`textpane_lang`,
+  // never filled in) after Erase (issue #152), which moves Fusion and the
+  // gallery down one. Rows past the files are told apart by widget, and a row
+  // the code doesn't know is never selected, by a tap or the pad.
+  for (int i = 3;; ++i) {
+    CGuiWidget* worker = x20_tablegroup_fileselect->GetWorkerWidget(i);
+    if (worker == nullptr) {
+      break;
+    }
+    if (worker != x28_textpane_erase.x0_textPane && worker != x38_textpane_gba.x0_textPane &&
+        worker != x30_textpane_cheats.x0_textPane) {
+      worker->SetIsSelectable(false);
+    }
+  }
+#endif
+}
+
+uint CFrontEndUI::SNewFileSelectFrame::GetUserFileSelection() const {
+  int sel = x20_tablegroup_fileselect->GetUserSelection();
+  return sel < 3 ? sel : 0;
+}
+
+void CFrontEndUI::SNewFileSelectFrame::Update(float dt) {
+  bool saveReady = x4_saveUI->GetUIType() == 0x10;
+  if (saveReady != x10c_saveReady) {
+    if (saveReady) {
+      ClearFrameContents();
+    } else {
+      if (x8_subMenu != kSM_Root) {
+        ResetFrame();
+        DeactivateExistingGamePopup();
+        DeactivateNewGamePopup();
+        x8_subMenu = kSM_Root;
+      }
+    }
+    x10c_saveReady = saveReady;
+  }
+  if (x10c_saveReady) {
+    SetupFrameContents();
+  }
+  x1c_loadedFrame->Update(dt);
+}
+
+bool CGuiWidget::GetIsActive() const { return xb6_26_isActive; }
+
+CFrontEndUI::SNewFileSelectFrame::EAction
+CFrontEndUI::SNewFileSelectFrame::ProcessUserInput(const CFinalInput& input) {
+  xc_action = kA_None;
+
+  if (x8_subMenu != kSM_EraseGamePopup) {
+    x4_saveUI->ProcessUserInput(input);
+  }
+
+  if (IsTextDoneAnimating()) {
+    const float maxTime = 0.5f;
+    x108_curTime = rstl::min_val(maxTime, x108_curTime + input.Time());
+  }
+
+  if (x108_curTime < 0.5f) {
+    return xc_action;
+  }
+
+  if (x10c_saveReady) {
+#ifdef TARGET_PC
+    bool pointerAdvanced = false;
+    CFinalInput pointerInput = input;
+    if (PortPointerMenu::Begin()) {
+      CGuiTableGroup* table = x40_tablegroup_popup->GetIsActive() ? x40_tablegroup_popup
+                                                                   : x20_tablegroup_fileselect;
+      pointerAdvanced = PortPointerMenu::Table(table) == PortPointerMenu::Action::Advance;
+      if (!pointerAdvanced && PortPointerMenu::TakeBack()) {
+        PortPointerMenu::PressB(pointerInput);
+      }
+    }
+    if (!pointerAdvanced) {
+      x1c_loadedFrame->ProcessUserInput(pointerInput);
+    }
+#else
+    x1c_loadedFrame->ProcessUserInput(input);
+#endif
+  }
+
+  if (x10d_needsEraseToggle) {
+    if (x40_tablegroup_popup->GetIsActive()) {
+      DeactivateExistingGamePopup();
+    } else {
+      ActivateExistingGamePopup();
+    }
+    x10d_needsEraseToggle = false;
+  }
+
+  if (x10e_needsNewToggle) {
+    if (x40_tablegroup_popup->GetIsActive()) {
+      DeactivateNewGamePopup();
+    } else {
+      ActivateNewGamePopup();
+    }
+    x10e_needsNewToggle = false;
+  }
+
+  return xc_action;
+}
+
+void CFrontEndUI::SNewFileSelectFrame::Draw() const {
+  if (x1c_loadedFrame != nullptr && x10c_saveReady) {
+    x1c_loadedFrame->Draw(CGuiWidgetDrawParms::sDefaultDrawParms);
+  }
+}
+
+void CFrontEndUI::SNewFileSelectFrame::HandleActiveChange(CGuiWidget* active) {
+  if (active != nullptr) {
+    int sel = static_cast< CGuiTableGroup* >(active)->GetUserSelection();
+    CColor selected((uchar)0xFF, (uchar)0xFF, (uchar)0xFF, (uchar)0xFF);
+    CColor unselected((uchar)0xA0, (uchar)0xA0, (uchar)0xA0, (uchar)0xC8);
+    static_cast< CGuiTableGroup* >(active)->SetColors(selected, unselected);
+    if (active == x20_tablegroup_fileselect) {
+      CVector3f pos = xf8_model_erase_position + CVector3f(0.f, 0.f, sel * x104_rowPitch);
+      const CTransform4f& xf = CTransform4f::Translate(pos);
+      CGuiModel* erase = x24_model_erase;
+      erase->LocalTransform() = xf;
+      erase->RecalculateTransforms();
+    }
+    bool shouldHide = (x8_subMenu == kSM_Root || x8_subMenu == kSM_NewGamePopup);
+    if (shouldHide) {
+      x24_model_erase->SetIsVisible(false);
+    } else {
+      x24_model_erase->SetIsVisible(true);
+    }
+  }
+}
+
+void CFrontEndUI::SNewFileSelectFrame::DoFileselectAdvance(CGuiTableGroup* caller) {
+  int userSel = x20_tablegroup_fileselect->GetUserSelection();
+#ifdef TARGET_PC
+  // Port: the PAL frame's extra row shifts these (see FinishedLoading).
+  if (userSel >= 3) {
+    const CGuiWidget* worker = x20_tablegroup_fileselect->GetWorkerWidget(userSel);
+    userSel = worker == x28_textpane_erase.x0_textPane ? 3
+              : worker == x38_textpane_gba.x0_textPane ? 4
+              : worker == x30_textpane_cheats.x0_textPane ? 5
+                                                         : -1;
+    if (userSel < 0) {
+      return;
+    }
+  }
+#endif
+  if (userSel < 3) {
+    if (x8_subMenu == kSM_EraseGame) {
+      if (x4_saveUI->GetGameData(userSel) != nullptr) {
+        PlayAdvanceSfx();
+        x10d_needsEraseToggle = true;
+      }
+    } else {
+      if (x4_saveUI->GetGameData(userSel) != nullptr) {
+        x4_saveUI->StartGame(userSel);
+      } else {
+        x10e_needsNewToggle = true;
+      }
+    }
+  } else if (userSel == 3) {
+    PlayAdvanceSfx();
+    EnterErase();
+  } else if (userSel == 4) {
+    xc_action = kA_FusionBonus;
+  } else if (userSel == 5) {
+    xc_action = kA_SlideShow;
+  }
+}
+
+void CFrontEndUI::SNewFileSelectFrame::SetupFrameContents() {
+  for (int i = 0; i < 3; ++i) {
+    SFileSelectOption& option = x64_fileSelections[i];
+    if (option.x28_curField == 4)
+      continue;
+
+    CGuiTextPane* curPane;
+    if (option.x28_curField == -1) {
+      curPane = nullptr;
+    } else {
+      curPane = option.x4_textpanes[option.x28_curField].x0_textPane;
+    }
+
+    if (curPane != nullptr) {
+      float total = curPane->TextSupport().GetNumCharsTotal();
+      float printed = curPane->TextSupport().GetNumCharactersPrinted();
+      if (!(printed >= total))
+        continue;
+    }
+
+    ++option.x28_curField;
+    if (option.x28_curField >= 4)
+      continue;
+
+    const CGameState::GameFileStateInfo* data =
+        static_cast< const CGameState::GameFileStateInfo* >(x4_saveUI->GetGameData(i));
+    SGuiTextPair& populatePair = option.x4_textpanes[option.x28_curField];
+    CGuiTextPane* pane0 = populatePair.x0_textPane;
+    CGuiTextPane* pane1 = populatePair.x4_textPaneB;
+    rstl::wstring str;
+
+    char timeBuf[32];
+    switch (option.x28_curField) {
+    case 0:
+      if (data != nullptr) {
+        char buf[32];
+        sprintf(buf, "  %02d%%", data->x18_itemPercent);
+        int strIdx = data->x20_hardMode ? 0x6a : 0x27;
+        str = rstl::wstring_l(gpStringTable->GetString(strIdx + i)) +
+              CStringExtras::ConvertToUNICODE(rstl::string_l(buf));
+      } else {
+        str = rstl::wstring(gpStringTable->GetString(0x24));
+      }
+      break;
+    case 1:
+      if (data != nullptr) {
+        const wchar_t* worldName = nullptr;
+        if (gpMemoryCard->HasSaveWorldMemory(data->x8_mlvlId)) {
+          worldName = gpMemoryCard->GetSaveWorldMemory(data->x8_mlvlId).GetFrontEndName();
+        }
+        str = rstl::wstring_l(worldName != nullptr ? worldName : L"??????");
+      } else {
+        str = rstl::wstring_l(gpStringTable->GetString(0x33));
+      }
+      break;
+    case 2:
+      if (data != nullptr) {
+        sprintf(timeBuf, "%02d:%02d", static_cast< int >(data->x0_playTime) / 3600,
+                (static_cast< int >(data->x0_playTime) % 3600) / 60);
+        str = CStringExtras::ConvertToUNICODE(rstl::string_l(timeBuf));
+      } else {
+        str = rstl::wstring_l(gpStringTable->GetString(0x34));
+      }
+      break;
+    case 3:
+      if (data != nullptr) {
+        str = rstl::wstring_l(gpStringTable->GetString(0x36));
+      } else {
+        str = rstl::wstring_l(gpStringTable->GetString(0x35));
+      }
+      break;
+    }
+
+    StartTextAnimating(pane0, str, option.x2c_chRate);
+    StartTextAnimating(pane1, str, option.x2c_chRate);
+  }
+}
+
+void CFrontEndUI::SNewFileSelectFrame::ClearFrameContents() {
+  x108_curTime = 0.f;
+  bool hasSave = false;
+  for (int i = 0; i < 3; ++i) {
+    if (x4_saveUI->GetGameData(i) != nullptr) {
+      hasSave = true;
+    }
+    x64_fileSelections[i].x2c_chRate = SFileSelectOption::ComputeRandom();
+    x64_fileSelections[i].x28_curField = -1;
+    for (int j = 0; j < 4; ++j) {
+      x64_fileSelections[i].x4_textpanes[j].x0_textPane->TextSupport().SetText(rstl::wstring_l(L""),
+                                                                               false);
+      x64_fileSelections[i].x4_textpanes[j].x4_textPaneB->TextSupport().SetText(
+          rstl::wstring_l(L""), false);
+    }
+  }
+
+  StartTextAnimating(x28_textpane_erase.x0_textPane,
+                     rstl::wstring_l(gpStringTable->GetString(0x26)), 60.f);
+  StartTextAnimating(x38_textpane_gba.x0_textPane, rstl::wstring_l(gpStringTable->GetString(0x25)),
+                     60.f);
+  StartTextAnimating(x30_textpane_cheats.x0_textPane,
+                     rstl::wstring_l(gpStringTable->GetString(0x60)), 60.f);
+
+  StartTextAnimating(x28_textpane_erase.x4_textPaneB,
+                     rstl::wstring_l(gpStringTable->GetString(0x26)), 60.f);
+  StartTextAnimating(x38_textpane_gba.x4_textPaneB, rstl::wstring_l(gpStringTable->GetString(0x25)),
+                     60.f);
+  StartTextAnimating(x30_textpane_cheats.x4_textPaneB,
+                     rstl::wstring_l(gpStringTable->GetString(0x60)), 60.f);
+
+  CGuiTextPane* erasePane = x28_textpane_erase.x0_textPane;
+  if (hasSave) {
+    erasePane->SetIsSelectable(true);
+    erasePane->TextSupport().SetFontColor(CColor::White());
+  } else {
+    erasePane->SetIsSelectable(false);
+    erasePane->TextSupport().SetFontColor(CColor::Grey().WithAlphaOf(0.5f));
+  }
+
+  x20_tablegroup_fileselect->SetUserSelection(0);
+#ifdef TARGET_PC
+  // Port: by widget, not row 5 (the PAL frame's extra row; see FinishedLoading).
+  CGuiTextPane* cheats = x30_textpane_cheats.x0_textPane;
+#else
+  CGuiTextPane* cheats =
+      static_cast< CGuiTextPane* >(x20_tablegroup_fileselect->GetWorkerWidget(5));
+#endif
+  if (CSlideShow::SlideShowGalleryFlags()) {
+    cheats->SetIsSelectable(true);
+    x30_textpane_cheats.x0_textPane->TextSupport().SetFontColor(CColor::White());
+  } else {
+    cheats->SetIsSelectable(false);
+    x30_textpane_cheats.x0_textPane->TextSupport().SetFontColor(CColor::Grey().WithAlphaOf(0.5f));
+  }
+
+  HandleActiveChange(x20_tablegroup_fileselect);
+}
+
+void CFrontEndUI::SNewFileSelectFrame::EnterErase() {
+  x8_subMenu = kSM_EraseGame;
+
+  x28_textpane_erase.x0_textPane->SetIsSelectable(false);
+  CGuiTextSupport& eraseTS = x28_textpane_erase.x0_textPane->TextSupport();
+  eraseTS.SetFontColor(CColor::Grey().WithAlphaOf(0.5f));
+
+  x38_textpane_gba.x0_textPane->SetIsSelectable(false);
+  CGuiTextSupport& gbaTS = x38_textpane_gba.x0_textPane->TextSupport();
+  gbaTS.SetFontColor(CColor::Grey().WithAlphaOf(0.5f));
+
+  x30_textpane_cheats.x0_textPane->SetIsSelectable(false);
+  CGuiTextSupport& cheatsTS = x30_textpane_cheats.x0_textPane->TextSupport();
+  cheatsTS.SetFontColor(CColor::Grey().WithAlphaOf(0.5f));
+
+  for (int i = 2; i >= 0; --i) {
+    if (x4_saveUI->GetGameData(i)) {
+      x64_fileSelections[i].x0_base->SetIsSelectable(true);
+      x20_tablegroup_fileselect->SetUserSelection(i);
+    } else {
+      x64_fileSelections[i].x0_base->SetIsSelectable(false);
+    }
+  }
+
+  x60_textpane_cancel->TextSupport().SetText(rstl::wstring_l(gpStringTable->GetString(0x52)));
+  HandleActiveChange(x20_tablegroup_fileselect);
+}
+
+void CFrontEndUI::SNewFileSelectFrame::ResetFrame() {
+  x8_subMenu = kSM_Root;
+
+  x38_textpane_gba.x0_textPane->SetIsSelectable(true);
+  x38_textpane_gba.x0_textPane->TextSupport().SetFontColor(CColor::White());
+
+  x30_textpane_cheats.x0_textPane->SetIsSelectable(true);
+  x30_textpane_cheats.x0_textPane->TextSupport().SetFontColor(CColor::White());
+
+  ClearFrameContents();
+
+  for (int i = 2; i >= 0; --i) {
+    x20_tablegroup_fileselect->GetWorkerWidget(i)->SetIsSelectable(true);
+  }
+
+  x60_textpane_cancel->TextSupport().SetText(rstl::wstring_l(L""));
+}
+
+void CFrontEndUI::SNewFileSelectFrame::ActivateNewGamePopup() {
+  x40_tablegroup_popup->SetIsActive(true);
+  x40_tablegroup_popup->SetIsVisible(true);
+  x40_tablegroup_popup->SetUserSelection(0);
+  const CTransform4f& xf =
+      CTransform4f::Translate(0.f, 0.f,
+                              x104_rowPitch * x20_tablegroup_fileselect->GetUserSelection()) *
+      x40_tablegroup_popup->GetTransform();
+  CGuiTableGroup* popup = x40_tablegroup_popup;
+  popup->LocalTransform() = xf;
+  popup->RecalculateTransforms();
+  x20_tablegroup_fileselect->SetIsActive(false);
+  x8_subMenu = kSM_NewGamePopup;
+  HandleActiveChange(x40_tablegroup_popup);
+  CColor col(static_cast< uchar >(0xff), static_cast< uchar >(0xff), static_cast< uchar >(0xff),
+             static_cast< uchar >(0x00));
+  x64_fileSelections[x20_tablegroup_fileselect->GetUserSelection()].x0_base->SetColor(col);
+
+  PlayAdvanceSfx();
+
+  if (NormalModeBeat()) {
+    x48_textpane_popupadvance.SetPairText(rstl::wstring_l(gpStringTable->GetString(0x66)));
+    x50_textpane_popupcancel.SetPairText(rstl::wstring_l(gpStringTable->GetString(0x5e)));
+    x58_textpane_popupextra.SetPairText(rstl::wstring_l(gpStringTable->GetString(0x65)));
+
+    x40_tablegroup_popup->GetWorkerWidget(2)->SetIsSelectable(true);
+    x40_tablegroup_popup->GetWorkerWidget(2)->SetVisibility(true, kTM_Children);
+    x44_model_dash7->SetVisibility(true, kTM_Children);
+  } else {
+    x48_textpane_popupadvance.SetPairText(rstl::wstring_l(gpStringTable->GetString(0x43)));
+    x50_textpane_popupcancel.SetPairText(rstl::wstring_l(gpStringTable->GetString(0x5e)));
+    x44_model_dash7->SetVisibility(false, kTM_Children);
+  }
+  x60_textpane_cancel->TextSupport().SetText(rstl::wstring_l(gpStringTable->GetString(0x52)));
+}
+
+void CFrontEndUI::SNewFileSelectFrame::DeactivateNewGamePopup() {
+  x40_tablegroup_popup->SetIsActive(false);
+  x40_tablegroup_popup->SetIsVisible(false);
+  x20_tablegroup_fileselect->SetIsActive(true);
+
+  x40_tablegroup_popup->GetWorkerWidget(2)->SetIsSelectable(false);
+  x40_tablegroup_popup->GetWorkerWidget(2)->SetVisibility(false, kTM_Children);
+
+  x44_model_dash7->SetVisibility(false, kTM_Children);
+
+  x10e_needsNewToggle = false;
+  HandleActiveChange(x20_tablegroup_fileselect);
+  CColor white(static_cast< uchar >(0xff), static_cast< uchar >(0xff), static_cast< uchar >(0xff),
+               static_cast< uchar >(0xff));
+  x64_fileSelections[x20_tablegroup_fileselect->GetUserSelection()].x0_base->SetColor(white);
+  x60_textpane_cancel->TextSupport().SetText(rstl::wstring_l(L""));
+}
+
+void CFrontEndUI::SNewFileSelectFrame::ActivateExistingGamePopup() {
+  x40_tablegroup_popup->SetIsActive(true);
+  x40_tablegroup_popup->SetIsVisible(true);
+  x40_tablegroup_popup->SetUserSelection(0);
+  const CTransform4f& xf =
+      CTransform4f::Translate(0.f, 0.f,
+                              x104_rowPitch * x20_tablegroup_fileselect->GetUserSelection()) *
+      x40_tablegroup_popup->GetTransform();
+  CGuiTableGroup* popup = x40_tablegroup_popup;
+  popup->LocalTransform() = xf;
+  popup->RecalculateTransforms();
+  x20_tablegroup_fileselect->SetIsActive(false);
+  x8_subMenu = kSM_EraseGamePopup;
+  HandleActiveChange(x40_tablegroup_popup);
+  x48_textpane_popupadvance.SetPairText(rstl::wstring_l(gpStringTable->GetString(0x5f)));
+  x50_textpane_popupcancel.SetPairText(rstl::wstring_l(gpStringTable->GetString(0x26)));
+  CColor col(static_cast< uchar >(0xff), static_cast< uchar >(0xff), static_cast< uchar >(0xff),
+             static_cast< uchar >(0x00));
+  x64_fileSelections[x20_tablegroup_fileselect->GetUserSelection()].x0_base->SetColor(col);
+  x44_model_dash7->SetVisibility(false, kTM_Children);
+}
+
+void CFrontEndUI::SNewFileSelectFrame::DeactivateExistingGamePopup() {
+  x40_tablegroup_popup->SetIsActive(false);
+  x40_tablegroup_popup->SetIsVisible(false);
+  x20_tablegroup_fileselect->SetIsActive(true);
+  HandleActiveChange(x20_tablegroup_fileselect);
+  CColor white(static_cast< uchar >(0xff), static_cast< uchar >(0xff), static_cast< uchar >(0xff),
+               static_cast< uchar >(0xff));
+  x64_fileSelections[x20_tablegroup_fileselect->GetUserSelection()].x0_base->SetColor(white);
+}
+
+bool CFrontEndUI::SNewFileSelectFrame::IsTextDoneAnimating() {
+  for (int i = 0; i < 3; ++i) {
+    if (x64_fileSelections[i].x28_curField != 4)
+      return false;
+  }
+
+  const CGuiTextSupport& ts1 = x28_textpane_erase.x0_textPane->GetTextSupport();
+  float curTime = ts1.GetCurTime();
+  if (curTime < ts1.GetTotalAnimationTime())
+    return false;
+
+  const CGuiTextSupport& ts2 = x30_textpane_cheats.x0_textPane->GetTextSupport();
+  curTime = ts2.GetCurTime();
+  if (curTime < ts2.GetTotalAnimationTime())
+    return false;
+
+  const CGuiTextSupport& ts3 = x38_textpane_gba.x0_textPane->GetTextSupport();
+  curTime = ts3.GetCurTime();
+  return !(curTime < ts3.GetTotalAnimationTime());
+}
+
+void CFrontEndUI::SNewFileSelectFrame::DoSelectionChange(CGuiTableGroup* caller, int oldSelection) {
+  HandleActiveChange(caller);
+  CSfxManager::SfxStart(SFXfnt_selection_change, 0x7f, 0x40, false, CSfxManager::kMedPriority,
+                        false, CSfxManager::kAllAreas);
+}
+
+void CFrontEndUI::SNewFileSelectFrame::DoFileselectCancel(CGuiTableGroup* caller) {
+  if (x8_subMenu == kSM_EraseGame) {
+    CSfxManager::SfxStart(SFXfnt_back, 0x7f, 0x40, false, CSfxManager::kMedPriority, false,
+                          CSfxManager::kAllAreas);
+    ResetFrame();
+  }
+}
+
+void CFrontEndUI::SNewFileSelectFrame::DoPopupAdvance(CGuiTableGroup* caller) {
+  if (x8_subMenu == kSM_EraseGamePopup) {
+    if (x40_tablegroup_popup->GetUserSelection() == 1) {
+      int fileSelection = x20_tablegroup_fileselect->GetUserSelection();
+      PlayAdvanceSfx();
+      x4_saveUI->EraseGame(fileSelection);
+      ResetFrame();
+    } else {
+      x8_subMenu = kSM_EraseGame;
+    }
+    x10d_needsEraseToggle = true;
+  } else {
+    if (NormalModeBeat()) {
+      if (x40_tablegroup_popup->GetUserSelection() == 1) {
+        PlayAdvanceSfx();
+        xc_action = kA_GameOptions;
+        return;
+      }
+      int fileSelection = GetUserFileSelection();
+      gpGameState->SetHardMode(x40_tablegroup_popup->GetUserSelection() == 0);
+      x4_saveUI->StartGame(fileSelection);
+    } else {
+      if (x40_tablegroup_popup->GetUserSelection() == 1) {
+        PlayAdvanceSfx();
+        xc_action = kA_GameOptions;
+        return;
+      }
+      int fileSelection = GetUserFileSelection();
+      x4_saveUI->StartGame(fileSelection);
+    }
+  }
+}
+
+void CFrontEndUI::SNewFileSelectFrame::DoPopupCancel(CGuiTableGroup* caller) {
+  if (x8_subMenu == kSM_EraseGamePopup) {
+    CSfxManager::SfxStart(SFXfnt_back, 0x7f, 0x40, false, CSfxManager::kMedPriority, false,
+                          CSfxManager::kAllAreas);
+    x8_subMenu = kSM_EraseGame;
+    x10d_needsEraseToggle = true;
+  } else {
+    CSfxManager::SfxStart(SFXfnt_back, 0x7f, 0x40, false, CSfxManager::kMedPriority, false,
+                          CSfxManager::kAllAreas);
+    x8_subMenu = kSM_Root;
+    x10e_needsNewToggle = true;
+  }
+}
+
+CFrontEndUI::SFusionBonusFrame::SFusionBonusFrame()
+: x0_gbaLinkFrame(nullptr)
+, x4_gbaSupport(rs_new CGBASupport())
+, x8_action(kFA_None)
+, xc_gbaScreen(gpSimplePool->GetObj("FRME_GBAScreen"))
+, x18_gbaLink(gpSimplePool->GetObj("FRME_GBALink"))
+, x24_loadedFrame(nullptr)
+, x28_tablegroup_options(nullptr)
+, x2c_tablegroup_fusionsuit(nullptr)
+, x30_textpane_instructions()
+, x38_lastDoDraw(false)
+, x39_fusionNotComplete(false)
+, x3a_mpNotComplete(false) {
+  xc_gbaScreen.Lock();
+  x18_gbaLink.Lock();
+}
+
+CFrontEndUI::SFusionBonusFrame::~SFusionBonusFrame() {}
+
+void CFrontEndUI::SFusionBonusFrame::Draw() {
+  if (!x38_lastDoDraw)
+    return;
+  if (x0_gbaLinkFrame.get() != nullptr) {
+    x0_gbaLinkFrame->Draw();
+  } else if (x24_loadedFrame != nullptr) {
+    x24_loadedFrame->Draw(CGuiWidgetDrawParms::sDefaultDrawParms);
+  }
+}
+
+void CFrontEndUI::SFusionBonusFrame::Update(float dt, CSaveGameScreen* saveUI) {
+  const bool doDraw = saveUI == nullptr || saveUI->GetUIType() == 0x10;
+  if (doDraw != x38_lastDoDraw) {
+    x38_lastDoDraw = doDraw;
+    if (x38_lastDoDraw) {
+      ResetCompletionFlags();
+    }
+  }
+
+  if (x0_gbaLinkFrame.get() != nullptr) {
+    x0_gbaLinkFrame->Update(dt);
+  } else if (x24_loadedFrame != nullptr) {
+    x24_loadedFrame->Update(dt);
+  }
+
+  const int sel = x28_tablegroup_options->GetUserSelection();
+  const bool showFusionSuit = FusionLinked() && NormalModeBeat();
+
+  const bool fusionBeat = gpGameState->SystemState().GetFusionBeat();
+  bool showProceed = sel == 1 && showFusionSuit;
+  x2c_tablegroup_fusionsuit->SetIsActive(showProceed);
+  x2c_tablegroup_fusionsuit->SetIsVisible(showProceed);
+  x24_loadedFrame->FindWidget("textpane_proceed")->SetIsVisible(!showProceed);
+
+  const wchar_t* text1 = x3a_mpNotComplete ? gpStringTable->GetString(0x50)
+                         : showFusionSuit  ? L""
+                                           : gpStringTable->GetString(0x4e);
+  const wchar_t* text0 = x39_fusionNotComplete ? gpStringTable->GetString(0x4f)
+                         : fusionBeat          ? L""
+                                               : gpStringTable->GetString(0x4d);
+
+  x30_textpane_instructions.SetPairText(sel == 1 ? text1 : text0);
+}
+
+CFrontEndUI::SFusionBonusFrame::EAction
+CFrontEndUI::SFusionBonusFrame::ProcessUserInput(const CFinalInput& input,
+                                                 CSaveGameScreen* saveUI) {
+  x8_action = kFA_None;
+
+  if (saveUI != nullptr) {
+    saveUI->ProcessUserInput(input);
+  }
+
+  if (x38_lastDoDraw) {
+#ifdef TARGET_PC
+    // Pointer: link pages advance on a click; the fusion suit toggle selects
+    // on click only, the option rows as in the main menu; back = B.
+    CFinalInput pointerInput = input;
+    if (PortPointerMenu::Begin()) {
+      if (x0_gbaLinkFrame.get() != nullptr) {
+        if (PortPointerMenu::TakeClick()) {
+          PortPointerMenu::PressA(pointerInput);
+        }
+      } else if (x24_loadedFrame != nullptr) {
+        PortPointerMenu::Table(x2c_tablegroup_fusionsuit, true, false);
+        PortPointerMenu::Table(x28_tablegroup_options);
+      }
+      if (PortPointerMenu::TakeBack()) {
+        PortPointerMenu::PressB(pointerInput);
+      }
+    }
+    const CFinalInput& input = pointerInput;
+#endif
+    if (x0_gbaLinkFrame.get() != nullptr) {
+      SGBALinkFrame::EAction action = x0_gbaLinkFrame->ProcessUserInput(input, saveUI != nullptr);
+      if (action != SGBALinkFrame::kGA_None) {
+        x0_gbaLinkFrame = nullptr;
+        if (action == SGBALinkFrame::kGA_Complete) {
+          if (x28_tablegroup_options->GetUserSelection() == 0 &&
+              !gpGameState->SystemState().GetFusionBeat()) {
+            x39_fusionNotComplete = true;
+          } else if (saveUI != nullptr) {
+            saveUI->SaveNESState();
+          }
+        }
+      }
+    } else if (x24_loadedFrame != nullptr) {
+      x24_loadedFrame->ProcessUserInput(input);
+    }
+  }
+
+  return x8_action;
+}
+
+bool CFrontEndUI::SFusionBonusFrame::PumpLoad() {
+  if (x24_loadedFrame) {
+    return true;
+  }
+  if (xc_gbaScreen.TryCache()) {
+    if (x18_gbaLink.TryCache()) {
+      if (x4_gbaSupport->IsReady()) {
+        CGuiFrame* frme = xc_gbaScreen.GetObject();
+        if (frme->GetIsFinishedLoading()) {
+          x24_loadedFrame = frme;
+          // Port: keep the GBA screen's proportions in widescreen.
+          if (CGuiCamera* cam = frme->GetFrameCamera()) {
+            cam->SetAspectMatch(true, false);
+          }
+          FinishedLoading();
+          return true;
+        }
+      }
+    }
+  }
+  return false;
+}
+
+void CFrontEndUI::SFusionBonusFrame::FinishedLoading() {
+  x28_tablegroup_options =
+      static_cast< CGuiTableGroup* >(x24_loadedFrame->FindWidget("tablegroup_options"));
+  x2c_tablegroup_fusionsuit =
+      static_cast< CGuiTableGroup* >(x24_loadedFrame->FindWidget("tablegroup_fusionsuit"));
+  x30_textpane_instructions = SGuiTextPair(x24_loadedFrame, "textpane_instructions");
+
+  SFrontEndFrame::FindAndSetPairText(*x24_loadedFrame, "textpane_nes",
+                                     gpStringTable->GetString(0x42));
+  SFrontEndFrame::FindAndSetPairText(*x24_loadedFrame, "textpane_fusionsuit",
+                                     gpStringTable->GetString(0x3f));
+  SFrontEndFrame::FindAndSetPairText(*x24_loadedFrame, "textpane_fusionsuitno",
+                                     gpStringTable->GetString(0x41));
+  SFrontEndFrame::FindAndSetPairText(*x24_loadedFrame, "textpane_fusionsuityes",
+                                     gpStringTable->GetString(0x40));
+  SFrontEndFrame::FindAndSetPairText(*x24_loadedFrame, "textpane_title",
+                                     gpStringTable->GetString(0x64));
+
+  CGuiTextPane* proceed =
+      static_cast< CGuiTextPane* >(x24_loadedFrame->FindWidget("textpane_proceed"));
+  proceed->TextSupport().SetText(rstl::wstring_l(gpStringTable->GetString(0x55)));
+
+  CGuiTextPane* cancel =
+      static_cast< CGuiTextPane* >(x24_loadedFrame->FindWidget("textpane_cancel"));
+  cancel->TextSupport().SetText(rstl::wstring_l(gpStringTable->GetString(0x52)));
+
+  x2c_tablegroup_fusionsuit->SetIsActive(false);
+  x2c_tablegroup_fusionsuit->SetIsVisible(false);
+  x2c_tablegroup_fusionsuit->SetVertical(false);
+  x2c_tablegroup_fusionsuit->SetUserSelection(gpGameState->SystemState().GetHasFusion() ? 1 : 0);
+
+  SetTableColors(x28_tablegroup_options);
+  SetTableColors(x2c_tablegroup_fusionsuit);
+
+  x28_tablegroup_options->SetMenuAdvanceCallback(
+      TFunctor1FromMethod< SFusionBonusFrame, CGuiTableGroup* const >::Make(
+          *this, &SFusionBonusFrame::DoOptionsAdvance));
+  x28_tablegroup_options->SetMenuSelectionChangeCallback(
+      TFunctor2FromMethod< SFusionBonusFrame, CGuiTableGroup* const, const int >::Make(
+          *this, &SFusionBonusFrame::DoSelectionChange));
+  x28_tablegroup_options->SetMenuCancelCallback(
+      TFunctor1FromMethod< SFusionBonusFrame, CGuiTableGroup* const >::Make(
+          *this, &SFusionBonusFrame::DoOptionsCancel));
+  x2c_tablegroup_fusionsuit->SetMenuSelectionChangeCallback(
+      TFunctor2FromMethod< SFusionBonusFrame, CGuiTableGroup* const, const int >::Make(
+          *this, &SFusionBonusFrame::DoSelectionChange));
+}
+
+void CFrontEndUI::SFusionBonusFrame::ResetCompletionFlags() {
+  x3a_mpNotComplete = false;
+  x39_fusionNotComplete = false;
+}
+
+void CFrontEndUI::SFusionBonusFrame::SetTableColors(CGuiTableGroup* tbgp) {
+  CColor selected(uchar(0xff), uchar(0xff), uchar(0xff), uchar(0xff));
+  CColor unselected(uchar(0xa0), uchar(0xa0), uchar(0xa0), uchar(0xc8));
+  tbgp->SetColors(selected, unselected);
+}
+
+void CFrontEndUI::SFusionBonusFrame::DoOptionsAdvance(CGuiTableGroup* caller) {
+  int sel = x28_tablegroup_options->GetUserSelection();
+  const CSystemState& systemState = gpGameState->SystemState();
+  bool normalModeBeat = NormalModeBeat();
+  bool fusionLinked = FusionLinked();
+  bool fusionBeat = systemState.GetFusionBeat();
+
+  switch (sel) {
+  case 1:
+    if (x3a_mpNotComplete) {
+      x3a_mpNotComplete = false;
+      PlayAdvanceSfx();
+    } else if (normalModeBeat) {
+      if (fusionLinked)
+        break;
+      x0_gbaLinkFrame = rs_new SGBALinkFrame(x18_gbaLink.GetObject(), x4_gbaSupport.get(), false);
+      PlayAdvanceSfx();
+    } else {
+      x3a_mpNotComplete = true;
+      CSfxManager::SfxStart(SFXfnt_back, 0x7f, 0x40, false, CSfxManager::kMedPriority, false,
+                            CSfxManager::kAllAreas);
+    }
+    break;
+  case 0:
+    if (x39_fusionNotComplete) {
+      x39_fusionNotComplete = false;
+      PlayAdvanceSfx();
+    } else if (fusionBeat) {
+      x8_action = kFA_PlayNESMetroid;
+    } else {
+      x0_gbaLinkFrame = rs_new SGBALinkFrame(x18_gbaLink.GetObject(), x4_gbaSupport.get(), false);
+      PlayAdvanceSfx();
+    }
+    break;
+  default:
+    break;
+  }
+}
+
+void CFrontEndUI::SFusionBonusFrame::DoSelectionChange(CGuiTableGroup* caller, int oldSelection) {
+  if (caller == x28_tablegroup_options) {
+    CSfxManager::SfxStart(SFXfnt_selection_change, 0x7f, 0x40, false, CSfxManager::kMedPriority,
+                          false, CSfxManager::kAllAreas);
+    x3a_mpNotComplete = false;
+    x39_fusionNotComplete = false;
+  } else {
+    CSfxManager::SfxStart(SFXfnt_enum_change, 0x7f, 0x40, false, CSfxManager::kMedPriority, false,
+                          CSfxManager::kAllAreas);
+    gpGameState->SystemState().SetHasFusion(x2c_tablegroup_fusionsuit->GetUserSelection() == 1);
+    gpGameState->PlayerState()->SetIsFusionEnabled(x2c_tablegroup_fusionsuit->GetUserSelection() ==
+                                                   1);
+  }
+  SetTableColors(caller);
+}
+
+void CFrontEndUI::SFusionBonusFrame::DoOptionsCancel(CGuiTableGroup* caller) {
+  if (x39_fusionNotComplete || x3a_mpNotComplete) {
+    x3a_mpNotComplete = false;
+    x39_fusionNotComplete = false;
+    CSfxManager::SfxStart(SFXfnt_back, 0x7f, 0x40, false, CSfxManager::kMedPriority, false,
+                          CSfxManager::kAllAreas);
+  } else {
+    x8_action = kFA_GoBack;
+    x28_tablegroup_options->SetUserSelection(0);
+    x2c_tablegroup_fusionsuit->SetIsActive(false);
+    x30_textpane_instructions.SetPairText(rstl::wstring_l(L""));
+    SetTableColors(x28_tablegroup_options);
+  }
+}
+
+#ifdef TARGET_PC
+// Port: quick resume. The title screen offers the state written when the app
+// last went to the background or quit (PortSaveState::ResumeSave). Yes walks
+// through file select to start the file it came from, as a press of A on that
+// slot would; the state is installed when the game starts. No deletes it.
+namespace {
+// The prompt starts with the Nintendo splash (CSplashScreen drives it through
+// the Port functions below) and goes on through the front end's loading. Starting
+// is the game start after Yes: black, with the file-select->game movie skipped.
+enum EResumeStage { kRS_Check, kRS_Prompt, kRS_Accepting, kRS_Starting, kRS_Done };
+EResumeStage sResumeStage = kRS_Check;
+bool sResumeYes = true;
+bool sResumeSound = false;
+// Whether the offer may still appear (the opening logos and the title).
+bool sResumeInFlow = true;
+int sResumeFrames = 0;
+PortSaveState::ResumeInfo sResumeInfo;
+
+// Pad, keyboard and the window's buttons all end here.
+void AnswerResume(bool yes) {
+  if (yes) {
+    fprintf(stderr, "[resume] prompt accepted\n");
+    sResumeStage = kRS_Accepting;
+    sResumeFrames = 0;
+  } else {
+    fprintf(stderr, "[resume] prompt dismissed; state kept\n");
+    sResumeStage = kRS_Done;
+  }
+}
+} // namespace
+
+void PortResumePromptTick() {
+  if (sResumeStage == kRS_Check) {
+    // The Archipelago identity is known a moment after launch: look again
+    // while the splashes, loading, logos and title wait.
+    if (sResumeInFlow && (sResumeFrames++ % 15) == 0 && PortSaveState::ResumeOffer(sResumeInfo)) {
+      sResumeStage = kRS_Prompt;
+      // A state that already crashed once after resuming starts on No.
+      sResumeYes = !sResumeInfo.crashedAgain;
+    }
+  }
+  // The window's buttons answer like A on the highlighted one.
+  if (sResumeStage == kRS_Prompt) {
+    const int answer = PortSaveState::TakeResumePromptAnswer();
+    if (answer >= 0) {
+      sResumeYes = answer == 1;
+      AnswerResume(sResumeYes);
+    }
+  }
+  if (sResumeStage == kRS_Prompt) {
+    PortSaveState::SetResumePrompt(&sResumeInfo, sResumeYes);
+  } else {
+    PortSaveState::SetResumePrompt(nullptr, false);
+  }
+}
+
+bool PortResumePromptInput(const CFinalInput& input) {
+  if (input.ControllerNumber() != 0) {
+    return false;
+  }
+  if (sResumeStage == kRS_Accepting || sResumeStage == kRS_Starting) {
+    return true;
+  }
+  if (sResumeStage != kRS_Prompt) {
+    return false;
+  }
+  if (input.PDPLeft() || input.PDPRight() || input.PDPUp() || input.PDPDown()) {
+    sResumeYes = !sResumeYes;
+    sResumeSound = true;
+  } else if ((input.PA() || input.PStart()) && PortDebug::MouseHeldButtons() == 0) {
+    // Only an explicit choice answers; B (Android's back gesture, a stray
+    // touch) does nothing. No keeps the state: the next play replaces it.
+    // A mouse button down is a click on the window, whose buttons answer
+    // (issue #166): one that also reaches the pad as A must not accept the
+    // highlighted Yes before the click on No lands.
+    sResumeSound = true;
+    AnswerResume(sResumeYes);
+  }
+  return true;
+}
+
+bool PortResumePromptTakeSound() {
+  const bool sound = sResumeSound;
+  sResumeSound = false;
+  return sound;
+}
+
+bool PortResumePromptAccepted() {
+  return sResumeStage == kRS_Accepting || sResumeStage == kRS_Starting;
+}
+#endif
+
+CFrontEndUI::CFrontEndUI()
+: CIOWin(rstl::string_l("FrontEndUI"))
+, x14_phase(kP_LoadDepsGroup)
+, x18_rndA(rand() % 3)
+, x1c_rndB(rand() % 3)
+, x20_depsGroup(gpSimplePool->GetObj("FrontEnd_DGRP"))
+, x28_deps()
+, x38_pressStart(gpSimplePool->GetObj("TXTR_PressStart"))
+, x44_frontendAudioGrp(gpSimplePool->GetObj(kFrontEndAGSCName))
+, x50_curScreen(kS_OpenCredits)
+, x54_nextScreen(kS_OpenCredits)
+, x58_fadeBlackTimer(0.f)
+, x5c_fadeBlackWithMovie(false)
+, x60_pressStartTime(0.f)
+, x64_pressStartAlpha(0.f)
+, x68_musicVol(1.f)
+, x6c_menuMovies(SMenuMovieData())
+, xb8_curMovie(kMM_Stopped)
+, xbc_nextAttract(0)
+, xc0_attractCount(0)
+, xc4_attractMovie()
+, xcc_curMoviePtr(nullptr)
+, xd0_playerSkipToTitle(false)
+, xd1_moviesLoaded(false)
+, xd2_deferSlideShow(false)
+, xd4_audio1(nullptr)
+, xd8_audio2(nullptr)
+, xdc_saveUI(rs_new CSaveGameScreen(kSC_FrontEnd, gpGameState->GetCardSerial()))
+, xe0_frontendCardFrme(nullptr)
+, xe4_fusionBonusFrme(nullptr)
+, xe8_frontendNoCardFrme(nullptr)
+, xec_emuFrme(nullptr)
+, xf0_optionsFrme(nullptr)
+, xf4_curAudio(nullptr) {
+  gpMain->ResetGameState();
+  gpGameState->SetCurrentWorldId(skDefaultWorld.GetId());
+#ifdef TARGET_PC
+  // The first front end of a launch keeps a prompt that began (or was answered)
+  // during the splashes; one built after a game ended starts over.
+  static bool sFrontEndBuilt = false;
+  if (sFrontEndBuilt) {
+    sResumeStage = kRS_Check;
+    sResumeYes = true;
+    sResumeSound = false;
+    sResumeInFlow = true;
+    sResumeFrames = 0;
+    PortSaveState::SetResumePrompt(nullptr, false);
+  }
+  sFrontEndBuilt = true;
+#endif
+#ifndef TARGET_PC
+  // Port: the options persist across launches and save files (issue #45).
+  gpGameState->GameOptions().ResetToDefaults();
+#endif
+  gpGameState->WriteBackupBuf();
+  gpResourceFactory->CanBuild(skDefaultWorld);
+  x20_depsGroup.Lock();
+  for (int i = 0;; ++i) {
+    if (!CDvdFile::FileExists(GetAttractMovieFileName(i))) {
+      break;
+    }
+    ++xc0_attractCount;
+  }
+}
+
+CFrontEndUI::~CFrontEndUI() {
+  if (x14_phase >= kP_DisplayFrontEnd) {
+    CAudioSys::SysPopGroupFromARAM();
+    const rstl::string groupName(x44_frontendAudioGrp.GetObject()->GetGroupSetName());
+    CAudioSys::SysUnloadGroupSet(groupName);
+  }
+  CStreamAudioManager::FadeBackIn(0.f);
+}
+
+void CFrontEndUI::TransitionToFive() {
+  if (x14_phase < kP_ToPlayGame) {
+    CSfxManager::SfxStart(FETransitionForwardSFX[x1c_rndB][0], 0x7f, 0x40, false,
+                          CSfxManager::kMedPriority, false, CSfxManager::kAllAreas);
+    CSfxManager::SfxStart(FETransitionForwardSFX[x1c_rndB][1], 0x7f, 0x40, false,
+                          CSfxManager::kMedPriority, false, CSfxManager::kAllAreas);
+    x14_phase = kP_ToPlayGame;
+    StartStateTransition(kS_ToPlayGame);
+  }
+}
+
+CIOWin::EMessageReturn CFrontEndUI::OnMessage(const CArchitectureMessage& message,
+                                              CArchitectureQueue& queue) {
+  switch (message.GetType()) {
+  case kAM_TimerTick: {
+#ifdef TARGET_PC
+    if (PortSaveState::TakeFrontEndReload()) {
+      PortReloadMods();
+    }
+#endif
+    float dt = MakeMsg::GetParmTimerTick(message).GetReal();
+    return Update(dt, queue);
+  }
+  case kAM_UserInput: {
+    const CFinalInput& input = MakeMsg::GetParmUserInput(message).GetUserInput();
+    ProcessUserInput(input, queue);
+    break;
+  }
+  case kAM_QuitGameplay:
+    x14_phase = kP_ExitFrontEnd;
+    break;
+  default:
+    break;
+  }
+  return kMR_Normal;
+}
+
+void CFrontEndUI::UpdateMusicVol() {
+  float volMul = (xf4_curAudio == xd4_audio1.get()) ? 0.7421875f : 0.7421875f;
+  if (xf4_curAudio != nullptr) {
+    xf4_curAudio->SetVolume(CCast::ToUint8(
+        volMul * x68_musicVol * static_cast< float >(gpGameState->GameOptions().GetMusicVolume())));
+  }
+}
+
+void CFrontEndUI::FinishedLoadingDepsGroup() {
+  CDependencyGroup* dgrp = x20_depsGroup.GetT();
+  const rstl::vector< SObjectTag >& tags = dgrp->GetObjectTagVector();
+  x28_deps.reserve(tags.size());
+  for (const SObjectTag* it = tags.data(); it != tags.data() + tags.size(); ++it) {
+    CToken tok(gpSimplePool->GetObj(*it));
+    tok.Lock();
+    x28_deps.push_back(tok);
+  }
+  x44_frontendAudioGrp.Lock();
+}
+
+bool CFrontEndUI::PumpLoad() {
+  for (int i = 0; i < x28_deps.size(); ++i) {
+    if (!x28_deps[i].IsLoaded())
+      return false;
+  }
+  return x44_frontendAudioGrp.TryCache();
+}
+
+CIOWin::EMessageReturn CFrontEndUI::Update(float dt, CArchitectureQueue& queue) {
+#ifdef TARGET_PC
+  if (!PortDebug::FastBoot()) {
+    const bool display = x14_phase == kP_DisplayFrontEnd;
+    const bool onTitle = display && IsInScreenNotTransitioning(kS_Title);
+    // The prompt lives from the first splash through the opening logos and the
+    // move to the title; loading counts as inside it.
+    const auto resumeScreen = [](EScreen screen) { return screen == kS_OpenCredits || screen == kS_Title; };
+    const bool inResumeFlow = !display || (resumeScreen(x50_curScreen) && resumeScreen(x54_nextScreen));
+    sResumeInFlow = inResumeFlow;
+    if (display && sResumeStage == kRS_Check && !onTitle && x50_curScreen != kS_OpenCredits &&
+        x50_curScreen != kS_AttractMovie) {
+      sResumeStage = kRS_Done;
+    } else if (display && sResumeStage == kRS_Prompt && !inResumeFlow) {
+      sResumeStage = kRS_Done;
+    } else if (display && sResumeStage == kRS_Accepting) {
+      // Passing through file select is not shown (Draw is black): finish the
+      // screen transitions at once, as fast boot does.
+      if (x50_curScreen != x54_nextScreen) {
+        CompleteStateTransition();
+      } else if (onTitle) {
+        StartStateTransition(kS_FileSelect);
+      } else if (x50_curScreen == kS_OpenCredits) {
+        StartStateTransition(kS_Title);
+      } else if (IsInScreenNotTransitioning(kS_FileSelect)) {
+        const SNewFileSelectFrame* files = xe0_frontendCardFrme.get();
+        const CSaveGameScreen* saveUI = xdc_saveUI.get();
+        const bool ready = files != nullptr && saveUI != nullptr && xf0_optionsFrme.get() == nullptr &&
+                           saveUI->GetUIType() == CSaveGameScreen::kUIT_SaveReady &&
+                           files->x10c_saveReady;
+        const bool stuck = ++sResumeFrames > 1200 ||
+                           (saveUI != nullptr && CSaveGameScreen::IsHiddenFromFrontEnd(saveUI->GetUIType()));
+        uint32_t fileIdx = 0;
+        if (ready) {
+          // The file must still be there; the state is kept if it is not.
+          sResumeStage = kRS_Done;
+          if (sResumeInfo.fileIdx < 3 && saveUI->GetGameData(sResumeInfo.fileIdx) != nullptr &&
+              PortSaveState::ResumeAccept(saveUI->GetCardSerial(), fileIdx)) {
+            fprintf(stderr, "[resume] loading file %u\n", fileIdx);
+            xdc_saveUI->StartGame(static_cast< int >(fileIdx));
+            // Black from here, and no file-select->game movie.
+            sResumeStage = kRS_Starting;
+            sResumeFrames = 0;
+          } else {
+            fprintf(stderr, "[resume] not accepted: file %u is %s or belongs to another game\n", sResumeInfo.fileIdx,
+                    sResumeInfo.fileIdx < 3 && saveUI->GetGameData(sResumeInfo.fileIdx) != nullptr ? "present" : "empty");
+          }
+        } else if (stuck) {
+          fprintf(stderr, "[resume] file select never became ready; state kept\n");
+          sResumeStage = kRS_Done;
+        }
+      }
+    } else if (sResumeStage == kRS_Starting) {
+      if (x14_phase == kP_ToPlayGame && x50_curScreen != x54_nextScreen) {
+        CompleteStateTransition(); // -> kP_ExitFrontEnd
+      } else if (++sResumeFrames > 1200) {
+        fprintf(stderr, "[resume] game start never followed; showing the front end\n");
+        sResumeStage = kRS_Done;
+      }
+    }
+    PortResumePromptTick();
+  }
+#endif
+  // Port: MP_FAST_BOOT=1 drives the title screen through file select into a new
+  // game without waiting for input, and completes each screen transition
+  // immediately. Used to reach gameplay quickly when iterating on engine work.
+  if (PortDebug::FastBoot() && (x14_phase == kP_DisplayFrontEnd || x14_phase == kP_ToPlayGame)) {
+    if (x50_curScreen != x54_nextScreen) {
+      CompleteStateTransition();
+    } else {
+      switch (x50_curScreen) {
+      case kS_OpenCredits:
+        StartStateTransition(kS_Title);
+        break;
+      case kS_Title:
+        StartStateTransition(kS_FileSelect);
+        break;
+      case kS_FileSelect: {
+        // Do not leave file select while the card is mid-write. On an empty
+        // card the save UI creates the file and then writes it in a second
+        // async step; leaving between the two strands a zero-filled file with
+        // a bad CRC that every later run reports as a corrupt save. A player
+        // cannot get here that early, because file select takes no input
+        // until the save UI reports SaveReady, so wait for the same thing.
+        // A card dialog (no card, corrupt, format...) means no write is in
+        // flight, so go on without answering it. The bound is 600 front-end
+        // frames, not wall time: card I/O runs on the main thread and advances
+        // one step per Update, so with frame_limit=0 it passes far faster than
+        // 10 s. A measured create plus write takes about 10-12 frames; the
+        // margin is deliberately large. It only stops a card that never
+        // settles from hanging fast boot.
+        static int sSaveWaitFrames = 0;
+        const CSaveGameScreen* saveUI = xdc_saveUI.get();
+        const bool cardSettled =
+            saveUI == nullptr || saveUI->GetUIType() == CSaveGameScreen::kUIT_SaveReady ||
+            CSaveGameScreen::IsHiddenFromFrontEnd(saveUI->GetUIType());
+        if (!cardSettled && ++sSaveWaitFrames == 600) {
+          fprintf(stderr, "[fast-boot] gave up waiting for the memory card after 600 frames; "
+                          "proceeding may strand a half-written save file\n");
+        }
+        if (cardSettled || sSaveWaitFrames >= 600) {
+          // StartGame is skipped, and it is what hands the card's serial to the
+          // game state. Without it every save station closes, reading 0 as no card.
+          if (saveUI != nullptr && saveUI->GetUIType() == CSaveGameScreen::kUIT_SaveReady) {
+            gpGameState->SetCardSerial(saveUI->GetCardSerial());
+          }
+          // Like StartGame, an Archipelago seed starts in its own room.
+          uint32_t world, area;
+          if (PortAp::NewGameStart(world, area)) {
+            gpGameState->SetCurrentWorldId(CAssetId(world));
+            CWorldState& worldState = gpGameState->CurrentWorldState();
+            worldState.SetAreaId(TAreaId(0));
+            worldState.SetDesiredAreaAssetId(area != 0 ? static_cast< CAssetId >(area)
+                                                       : kInvalidAssetId);
+          }
+          TransitionToFive();
+        }
+        break;
+      }
+      default:
+        break;
+      }
+    }
+  }
+
+#ifdef MP_ENABLE_SMOKE_DRIVER
+  // MP_SMOKE_CONTINUE: walk Title -> File Select -> Continue on slot 1 by
+  // reading this screen's own state, so a press lands only when the screen
+  // takes input. Only A on a ready file list is ever pressed at file select:
+  // a card dialog (corrupt, format, ...) is logged and left alone, never
+  // answered, so the driver cannot erase or format the card.
+  if (PortSmokeContinueEnabled() && x14_phase == kP_DisplayFrontEnd) {
+    static int sLastCur = -1, sLastNext = -1, sLastUi = -1;
+    static unsigned sTitleAt = 0, sReadyAt = 0, sPresses = 0;
+    static bool sPressedA = false;
+    const unsigned frame = PortSmokeCurrentFrame();
+    if (x50_curScreen != sLastCur || x54_nextScreen != sLastNext) {
+      fprintf(stderr, "[continue] frame %u: screen %d -> %d\n", frame, x50_curScreen,
+              x54_nextScreen);
+      sLastCur = x50_curScreen;
+      sLastNext = x54_nextScreen;
+    }
+    const int ui = xdc_saveUI.get() != nullptr ? xdc_saveUI->GetUIType() : -1;
+    if (x50_curScreen >= kS_FileSelect && ui != sLastUi) {
+      fprintf(stderr, "[continue] frame %u: save UI type %d\n", frame, ui);
+      sLastUi = ui;
+    }
+    if (IsInScreenNotTransitioning(kS_Title) &&
+        x58_fadeBlackTimer < 30.f - gpTweakGame->GetPressStartDelay()) {
+      if (sTitleAt == 0) {
+        sTitleAt = frame;
+        PortSmokeShotAfter(0, "title accepting Start");
+      } else if (frame >= sTitleAt + 20 && !PortSmokePressPending() && sPresses < 8) {
+        fprintf(stderr, "[continue] frame %u: title accepts input; pressing Start\n", frame);
+        PortSmokePress(PAD_BUTTON_START, 8);
+        sTitleAt = frame + 60;
+        ++sPresses;
+      }
+    }
+    SNewFileSelectFrame* files = xe0_frontendCardFrme.get();
+    if (IsInScreenNotTransitioning(kS_FileSelect) && files != nullptr &&
+        xf0_optionsFrme.get() == nullptr && ui == CSaveGameScreen::kUIT_SaveReady &&
+        files->x10c_saveReady && files->x108_curTime >= 0.5f) {
+      if (sReadyAt == 0) {
+        sReadyAt = frame;
+        for (int i = 0; i < 3; ++i) {
+          const CGameState::GameFileStateInfo* info = xdc_saveUI->GetGameData(i);
+          if (info == nullptr) {
+            fprintf(stderr, "[continue] slot %d: empty\n", i + 1);
+          } else {
+            fprintf(stderr,
+                    "[continue] slot %d: world %08x play %.2fs items %u%% energy tanks %u "
+                    "health %.1f hard %d\n",
+                    i + 1, static_cast< unsigned >(info->x8_mlvlId), info->x0_playTime,
+                    info->x18_itemPercent, info->x10_energyTanks, info->xc_health,
+                    info->x20_hardMode ? 1 : 0);
+          }
+        }
+        fprintf(stderr, "[continue] frame %u: file select ready, selection %d\n", frame,
+                files->x20_tablegroup_fileselect->GetUserSelection());
+        // Let the slot text finish typing before the evidence shot.
+        PortSmokeShotAfter(240, "file select with slot data");
+      } else if (frame >= sReadyAt + 300 && !sPressedA) {
+        sPressedA = true;
+        if (xdc_saveUI->GetGameData(0) != nullptr &&
+            files->x20_tablegroup_fileselect->GetUserSelection() == 0) {
+          fprintf(stderr, "[continue] frame %u: pressing A on slot 1\n", frame);
+          PortSmokePress(PAD_BUTTON_A, 8);
+        } else {
+          fprintf(stderr, "[continue] frame %u: slot 1 has no save or is not selected; "
+                          "not pressing\n", frame);
+        }
+      }
+    }
+  }
+#endif
+
+  // Update save UI if active and past file select phase
+  if (xdc_saveUI.get() != nullptr && x50_curScreen >= kS_FileSelect) {
+    int saveResult = xdc_saveUI->Update(dt);
+    if (saveResult == 1) {
+#ifdef MP_ENABLE_SMOKE_DRIVER
+      // The slot is already loaded into gpGameState here (StartGame ->
+      // BuildNewFileSlot -> LoadGameState); a new game would read 0 play time.
+      static bool sReported = false;
+      if (PortSmokeContinueEnabled() && !sReported) {
+        sReported = true;
+        fprintf(stderr, "[continue] frame %u: save UI returned Continue: file %u world %08x "
+                        "play %.2fs\n", PortSmokeCurrentFrame(), gpGameState->GetFileIdx(),
+                static_cast< unsigned >(gpGameState->CurrentWorldAssetId()),
+                gpGameState->GetTotalPlayTime());
+        PortSmokeShotAfter(1, "transition to play");
+        PortSmokeShotAfter(1500, "loaded game");
+        PortSmokeShotAfter(3000, "loaded game");
+      }
+#endif
+      TransitionToFive();
+    } else if (saveResult == 3 || saveResult == 2) {
+      xe0_frontendCardFrme = nullptr;
+      xdc_saveUI = nullptr;
+    }
+  }
+
+  UpdateMusicVol();
+
+  switch (x14_phase) {
+  case kP_LoadDepsGroup:
+    if (x20_depsGroup.IsLoaded()) {
+      FinishedLoadingDepsGroup();
+      x20_depsGroup.Unlock();
+      x14_phase = kP_LoadDeps;
+    } else {
+      return kMR_Exit;
+    }
+    // fallthrough
+  case kP_LoadDeps:
+    if (PumpLoad()) {
+      xe0_frontendCardFrme = rs_new SNewFileSelectFrame(xdc_saveUI.get(), x1c_rndB);
+      xe4_fusionBonusFrme = rs_new SFusionBonusFrame();
+      xe8_frontendNoCardFrme = rs_new SFrontEndFrame(x1c_rndB);
+
+      x38_pressStart.Lock();
+      x38_pressStart.TryCache();
+
+      const SObjectTag* tag = gpResourceFactory->GetResourceIdByName(kFrontEndAGSCName);
+      CAudioGrpSetLoc* audioGrp = x44_frontendAudioGrp.GetObject();
+      const rstl::string& audioGrpName = audioGrp->GetGroupSetName();
+      CAudioSys::SysLoadGroupSet(x44_frontendAudioGrp, audioGrpName, tag->GetId());
+      CAudioSys::SysPushGroupIntoARAM(audioGrpName, 0x26);
+      CAudioSys::SysUnloadSampleData(audioGrpName);
+
+      xd4_audio1 = rs_new CStaticAudioPlayer(rstl::string_l(kAudioFrontend1Path), 416480, 1973664);
+
+      xd8_audio2 = rs_new CStaticAudioPlayer(rstl::string_l(kAudioFrontend2Path), 273556, 1636980);
+
+      x14_phase = kP_LoadFrames;
+    }
+    if (x14_phase == kP_LoadDeps) {
+      return kMR_Exit;
+    }
+    // fallthrough
+  case kP_LoadFrames:
+    if (!xd4_audio1->IsReady() || !xd8_audio2->IsReady() || !xe0_frontendCardFrme->PumpLoad() ||
+        !xe4_fusionBonusFrme->PumpLoad() || !xe8_frontendNoCardFrme->PumpLoad() ||
+        !xdc_saveUI->PumpLoad()) {
+      return kMR_Exit;
+    }
+
+    xf4_curAudio = xd4_audio1.get();
+    xf4_curAudio->StartMixOut();
+    x14_phase = kP_LoadMovies;
+    // fallthrough
+  case kP_LoadMovies: {
+    bool moviesReady = true;
+    if (!PumpMovieLoad()) {
+      moviesReady = false;
+    } else {
+      UpdateMovies(dt);
+      for (int i = 0; i < 9; ++i) {
+        if (!x6c_menuMovies[i].x0_movie->GetIsFullyCached()) {
+          moviesReady = false;
+          break;
+        }
+      }
+    }
+    if (moviesReady) {
+      x14_phase = kP_DisplayFrontEnd;
+      StartStateTransition(kS_Title);
+    } else {
+      return kMR_Exit;
+    }
+    // fallthrough
+  }
+  case kP_DisplayFrontEnd:
+  case kP_ToPlayGame:
+    if (xec_emuFrme.get() != nullptr) {
+      if (xec_emuFrme->Update(dt, xdc_saveUI.get()) == 1) {
+        xec_emuFrme = nullptr;
+        if (xdc_saveUI.get() != nullptr) {
+          xdc_saveUI->SetInGame(false);
+        }
+        xf4_curAudio->StartMixOut();
+      }
+    } else {
+      if (xd2_deferSlideShow) {
+        xd2_deferSlideShow = false;
+        xf4_curAudio->StartMixOut();
+        if (xdc_saveUI.get() != nullptr) {
+          xdc_saveUI->ResetCardDriver();
+        }
+      }
+
+      if (IsInScreenNotTransitioning(kS_FileSelect)) {
+        if (xf0_optionsFrme.get() == nullptr) {
+          if (xe0_frontendCardFrme.get() == nullptr) {
+            xe8_frontendNoCardFrme->Update(dt);
+          } else {
+            xe0_frontendCardFrme->Update(dt);
+          }
+        } else {
+          CSaveGameScreen* saveUI = xdc_saveUI.get();
+          bool optionsActive = true;
+          if (saveUI != nullptr) {
+            CSaveGameScreen::EUIType type = saveUI->GetUIType();
+            if (type != CSaveGameScreen::kUIT_SaveReady) {
+              optionsActive = false;
+            }
+          }
+          if (optionsActive) {
+            xf0_optionsFrme->Update(dt, xdc_saveUI.get());
+          } else {
+            xf0_optionsFrme = nullptr;
+          }
+        }
+      } else if (IsInScreenNotTransitioning(kS_FusionBonus)) {
+        xe4_fusionBonusFrme->Update(dt, xdc_saveUI.get());
+      }
+
+      // Check movie transition completion
+      if (x50_curScreen != x54_nextScreen) {
+        if (xcc_curMoviePtr != nullptr && xcc_curMoviePtr->CanDrawVideo()) {
+          if (xcc_curMoviePtr->GetIsMovieFinishedPlaying() || xcc_curMoviePtr->IsLooping()) {
+            CompleteStateTransition();
+          }
+        }
+      }
+
+      // Handle fade timer
+      bool resumeHold = false;
+#ifdef TARGET_PC
+      // The attract movie would end the resume prompt for good: wait for an answer.
+      resumeHold = sResumeStage == kRS_Prompt && IsInScreenNotTransitioning(kS_Title);
+#endif
+      if (x58_fadeBlackTimer > 0.f && !x5c_fadeBlackWithMovie && !resumeHold) {
+        SetFadeBlackTimer(rstl::max_val(x58_fadeBlackTimer - dt, 0.f));
+        if (x58_fadeBlackTimer == 0.f) {
+          if (IsInScreenNotTransitioning(kS_Title)) {
+            if (xc0_attractCount > 0) {
+              StartStateTransition(kS_AttractMovie);
+            }
+          } else if (x54_nextScreen == kS_AttractMovie) {
+            CompleteStateTransition();
+          } else if (x50_curScreen != x54_nextScreen) {
+            CompleteStateTransition();
+          }
+        }
+      }
+
+      UpdateMovies(dt);
+
+      // Press start pulsing
+      if (x50_curScreen == kS_Title && x54_nextScreen == kS_Title &&
+          x58_fadeBlackTimer < 30.f - gpTweakGame->GetPressStartDelay()) {
+        x60_pressStartTime = static_cast< float >(fmod(x60_pressStartTime + dt, 1.0));
+        float halfTime = 0.5f;
+        float alpha;
+        if (x60_pressStartTime < halfTime) {
+          alpha = x60_pressStartTime / halfTime;
+        } else {
+          alpha = (1.f - x60_pressStartTime) / halfTime;
+        }
+        x64_pressStartAlpha = alpha;
+      } else {
+        x60_pressStartTime = 0.f;
+        x64_pressStartAlpha = 0.f;
+      }
+    }
+
+    // Music volume fade
+    if (x50_curScreen == kS_Title && x54_nextScreen == kS_FileSelect) {
+      if (xcc_curMoviePtr->CanDrawVideo()) {
+        float delay = AudioFadeTimeA[x18_rndA];
+        x68_musicVol =
+            1.f - CMath::Clamp(0.f, (xcc_curMoviePtr->GetPlayedSeconds() - delay) / 2.5f, 1.f);
+      }
+    } else if (x54_nextScreen == kS_ToPlayGame) {
+      if (xcc_curMoviePtr->CanDrawVideo()) {
+        float delay = AudioFadeTimeB[x1c_rndB];
+        float played = xcc_curMoviePtr->GetPlayedSeconds();
+        float total = xcc_curMoviePtr->GetTotalSeconds();
+        x68_musicVol = 1.f - CMath::Clamp(0.f, (played - delay) / (total - delay), 1.f);
+      }
+    } else {
+      x68_musicVol = 1.f;
+    }
+
+    return kMR_Exit;
+
+  case kP_ExitFrontEnd:
+    return kMR_RemoveIOWin;
+
+  default:
+    break;
+  }
+
+  return kMR_Exit;
+}
+
+bool CFrontEndUI::PumpMovieLoad() {
+  if (xd1_moviesLoaded) {
+    return true;
+  }
+
+  for (int i = 0; i < 9; ++i) {
+    if (x6c_menuMovies[i].x0_movie.null()) {
+      const FEMovie* movie = &FEMovies[static_cast< EMenuMovie >(i)];
+      char path[256];
+      strcpy(path, movie->path);
+
+      if (i == 2) {
+        path[strlen(path) - 5] = static_cast< char >(x18_rndA + 'A');
+      } else if (i == 4) {
+        path[strlen(path) - 5] = static_cast< char >(x1c_rndB + 'A');
+      }
+
+      x6c_menuMovies[i].x0_movie = rs_new CMoviePlayer(PORT_FE_MOVIE(path), 0.05f, movie->loop, true);
+      x6c_menuMovies[i].x0_movie->SetPlayMode(CMoviePlayer::kPM_Stopped);
+      return false;
+    }
+
+    if (x6c_menuMovies[i].x0_movie->PumpIndexLoad()) {
+      return false;
+    }
+  }
+
+  xd1_moviesLoaded = true;
+  return true;
+}
+
+void CFrontEndUI::UpdateMovies(float dt) {
+  if (xcc_curMoviePtr != nullptr) {
+    if (!xcc_curMoviePtr->PumpIndexLoad()) {
+      if (x5c_fadeBlackWithMovie) {
+        x5c_fadeBlackWithMovie = false;
+        x58_fadeBlackTimer = xcc_curMoviePtr->GetTotalSeconds();
+      }
+    }
+  }
+
+  for (int i = 0; i < 9; ++i) {
+    if (!x6c_menuMovies[i].x0_movie.null()) {
+      x6c_menuMovies[i].x0_movie->Update(dt);
+    }
+  }
+
+  CMoviePlayer* attractPlayer = xc4_attractMovie.get();
+  if (attractPlayer != nullptr) {
+    if (!attractPlayer->PumpIndexLoad()) {
+      xc4_attractMovie->Update(dt);
+    }
+  }
+}
+
+void CFrontEndUI::ProcessUserInput(const CFinalInput& padInput, CArchitectureQueue& queue) {
+#ifdef TARGET_PC
+  // A click or tap on the title, attract movie or credits stands in for A.
+  CFinalInput input = padInput;
+#else
+  const CFinalInput& input = padInput;
+#endif
+#ifdef TARGET_PC
+  // The resume prompt answers during loading too, and ahead of the card check.
+  if (PortResumePromptInput(input)) {
+    if (PortResumePromptTakeSound()) {
+      PlayAdvanceSfx();
+    }
+    return;
+  }
+  // The whole front end but the NES emulator is a pointer screen: the touch
+  // overlay keeps its gameplay buttons hidden through loading, movies and fades.
+  const bool pointerScreen = xec_emuFrme.get() == nullptr && PortPointerMenu::Begin();
+#endif
+  if (gpMain->GetCardBusy())
+    return;
+  if (input.ControllerNumber() > 1)
+    return;
+
+  if (xec_emuFrme.get() != nullptr) {
+    xec_emuFrme->ProcessUserInput(input, xdc_saveUI.get());
+    return;
+  }
+
+  if (x14_phase != kP_DisplayFrontEnd) {
+#ifdef TARGET_PC
+    // A tap while loading or fading out must not land on the next screen.
+    if (pointerScreen) {
+      PortPointerMenu::TakeClick();
+    }
+#endif
+    return;
+  }
+  if (input.ControllerNumber() != 0)
+    return;
+
+#ifdef TARGET_PC
+  // A click anywhere skips the attract movie and credits, and starts from the
+  // title: the screens where A has no widget to land on.
+  const bool clickIsA = x54_nextScreen == kS_AttractMovie ||
+                        (x50_curScreen == kS_OpenCredits && x54_nextScreen == kS_Title) ||
+                        (x50_curScreen == kS_Title && x54_nextScreen == kS_Title);
+  if (clickIsA && pointerScreen && PortPointerMenu::TakeClick()) {
+    PortPointerMenu::PressA(input);
+  }
+#endif
+
+  if (x50_curScreen != x54_nextScreen) {
+    if (x54_nextScreen == kS_AttractMovie) {
+      if (input.PStart() || input.PA()) {
+        const float maxFade = 1.f;
+        SetFadeBlackTimer(rstl::min_val(x58_fadeBlackTimer, maxFade));
+        PlayAdvanceSfx();
+        return;
+      }
+    }
+    if (input.PA() || input.PStart()) {
+      if (x50_curScreen == kS_OpenCredits && x54_nextScreen == kS_Title &&
+          x58_fadeBlackTimer > 1.f) {
+        xd0_playerSkipToTitle = true;
+        SetFadeBlackTimer(1.f);
+        return;
+      }
+    }
+  } else {
+    if (x50_curScreen == kS_Title) {
+      if (input.PStart() || input.PA()) {
+        if (x58_fadeBlackTimer < 30.f - gpTweakGame->GetPressStartDelay()) {
+          CSfxManager::SfxStart(FETransitionBackSFX[x18_rndA][0], 0x7f, 0x40, false,
+                                CSfxManager::kMedPriority, false, CSfxManager::kAllAreas);
+          CSfxManager::SfxStart(FETransitionBackSFX[x18_rndA][1], 0x7f, 0x40, false,
+                                CSfxManager::kMedPriority, false, CSfxManager::kAllAreas);
+          StartStateTransition(kS_FileSelect);
+          return;
+        }
+      }
+    } else {
+      bool isFileSelect = x50_curScreen == kS_FileSelect && x54_nextScreen == kS_FileSelect;
+      if (isFileSelect) {
+        if (xf0_optionsFrme.get() == nullptr) {
+          if (xe0_frontendCardFrme.get() == nullptr) {
+            SFrontEndFrame::EAction action = xe8_frontendNoCardFrme->ProcessUserInput(input);
+            if (action == SFrontEndFrame::kEA_FusionBonus) {
+              StartStateTransition(kS_FusionBonus);
+              return;
+            } else if (action == SFrontEndFrame::kEA_GameOptions) {
+              xf0_optionsFrme = rs_new SOptionsFrontEndFrame();
+              return;
+            } else if (action == SFrontEndFrame::kEA_StartGame) {
+              TransitionToFive();
+              return;
+            } else if (action == SFrontEndFrame::kEA_SlideShow) {
+              xd2_deferSlideShow = true;
+              StartSlideShow(queue);
+              return;
+            }
+          } else {
+            SNewFileSelectFrame::EAction action = xe0_frontendCardFrme->ProcessUserInput(input);
+            if (action == SNewFileSelectFrame::kA_FusionBonus) {
+              StartStateTransition(kS_FusionBonus);
+              return;
+            } else if (action == SNewFileSelectFrame::kA_GameOptions) {
+              xf0_optionsFrme = rs_new SOptionsFrontEndFrame();
+              return;
+            } else if (action == SNewFileSelectFrame::kA_SlideShow) {
+              xd2_deferSlideShow = true;
+              StartSlideShow(queue);
+              return;
+            }
+          }
+        } else {
+          if (xf0_optionsFrme->ProcessUserInput(input, xdc_saveUI.get()))
+            return;
+          xf0_optionsFrme = nullptr;
+          return;
+        }
+      } else {
+        bool isFusionBonus = x50_curScreen == kS_FusionBonus && x54_nextScreen == kS_FusionBonus;
+        if (isFusionBonus) {
+          SFusionBonusFrame::EAction action =
+              xe4_fusionBonusFrme->ProcessUserInput(input, xdc_saveUI.get());
+          if (action == SFusionBonusFrame::kFA_GoBack) {
+            StartStateTransition(kS_FileSelect);
+            return;
+          } else if (action == SFusionBonusFrame::kFA_PlayNESMetroid) {
+            xf4_curAudio->StopMixOut();
+            xec_emuFrme = rs_new SNesEmulatorFrame();
+            if (xdc_saveUI.get() != nullptr) {
+              xdc_saveUI->SetInGame(true);
+            }
+            return;
+          }
+        }
+      }
+    }
+  }
+}
+
+void CFrontEndUI::Draw() const {
+  if (x14_phase < kP_DisplayFrontEnd)
+    return;
+#ifdef TARGET_PC
+  if (sResumeStage == kRS_Accepting || sResumeStage == kRS_Starting)
+    return; // black until the game starts
+#endif
+
+  if (xec_emuFrme.get() != nullptr) {
+    xec_emuFrme->Draw(xdc_saveUI.get());
+  } else {
+    gpRender->SetDepthReadWrite(false, false);
+    gpRender->SetViewportOrtho(false, -4096.f, 4096.f);
+
+    int vpLeft = CGraphics::GetViewport().mLeft;
+    int vpTop = CGraphics::GetViewport().mTop;
+    int vpWidth = CGraphics::GetViewport().mWidth;
+    int vpHeight = CGraphics::GetViewport().mHeight;
+
+    if (xcc_curMoviePtr != nullptr && xcc_curMoviePtr->CanDrawVideo()) {
+      const uint vidWidth = xcc_curMoviePtr->GetWidth();
+      const uint vidHeight = xcc_curMoviePtr->GetHeight();
+      // Signed arithmetic: the video is narrower than a widescreen viewport, so
+      // an unsigned subtraction would underflow and throw the quad off-screen.
+#ifdef TARGET_PC
+      int centerX;
+      int centerY;
+      xcc_curMoviePtr->PortGetMargins(vpWidth, vpHeight, centerX, centerY);
+#else
+      const int centerX = (static_cast< int >(vidWidth) - vpWidth) / 2;
+      const int centerY = (static_cast< int >(vidHeight) - vpHeight) / 2;
+#endif
+      int vl = vpLeft - centerX;
+      int vr = vpLeft + vpWidth + centerX;
+      int vb = vpTop + vpHeight + centerY;
+      int vt = vpTop - centerY;
+      CVector3f v1(static_cast< float >(vl), 0.f, static_cast< float >(vb));
+      CVector3f v2(static_cast< float >(vr), 0.f, static_cast< float >(vb));
+      CVector3f v3(static_cast< float >(vl), 0.f, static_cast< float >(vt));
+      CVector3f v4(static_cast< float >(vr), 0.f, static_cast< float >(vt));
+      xcc_curMoviePtr->DrawFrame(v1, v2, v3, v4);
+    }
+
+    if (IsInScreenNotTransitioning(kS_FileSelect)) {
+      if (xf0_optionsFrme.get() == nullptr) {
+        if (xe0_frontendCardFrme.get() == nullptr)
+          xe8_frontendNoCardFrme->Draw();
+        else
+          xe0_frontendCardFrme->Draw();
+      } else {
+        xf0_optionsFrme->Draw();
+      }
+    } else if (IsInScreenNotTransitioning(kS_FusionBonus)) {
+      xe4_fusionBonusFrme->Draw();
+    }
+  }
+  if (x64_pressStartAlpha > 0.f && x38_pressStart.GetObject() != nullptr) {
+    CTexture* tex = x38_pressStart.GetObject();
+    short width = tex->GetWidth();
+    short height = tex->GetHeight();
+    CGraphics::SetTevOp(kTS_Stage0, CGraphics::kEnvModulate);
+    CGraphics::SetTevOp(kTS_Stage1, CGraphics::kEnvPassthru);
+    gpRender->SetBlendMode_AdditiveAlpha();
+    gpRender->SetDepthReadWrite(false, false);
+    const CColor& color = CColor::White().WithAlphaOf(x64_pressStartAlpha);
+    // Port: centre on the viewport, not on a 640-wide screen. Below 4:3 the title movie is drawn
+    // at the viewport's width (PortGetMargins), so scale this with it.
+    const int vpW = CGraphics::GetViewport().mWidth;
+    const int vpH = CGraphics::GetViewport().mHeight;
+    float k = 1.f;
+    int yOff = 0;
+    if (vpW > 0 && vpW < 640 && vpW * 480 < vpH * 640) {
+      k = static_cast< float >(vpW) / 640.f;
+      yOff = (vpH - static_cast< int >(480.f * k)) / 2;
+    }
+    const int w = static_cast< int >(static_cast< float >(width) * k);
+    const int h = static_cast< int >(static_cast< float >(height) * k);
+    CGraphics::Render2D(*tex, vpW / 2 - w / 2,
+                        yOff + static_cast< int >(72.f * k) - h / 2, w, h, color);
+  }
+
+  if (GetHasAttractMovies()) {
+    if (IsInScreenNotTransitioning(kS_Title) || x54_nextScreen == kS_AttractMovie) {
+      if (x58_fadeBlackTimer < 1.f) {
+        const CColor& color = CColor::Black().WithAlphaOf(1.f - x58_fadeBlackTimer);
+        CCameraFilterPass::DrawFilter(CCameraFilterPass::kFT_Blend,
+                                      CCameraFilterPass::kFS_Fullscreen, color, nullptr, 1.f);
+      }
+    }
+  }
+
+  if (xd0_playerSkipToTitle) {
+    if (x54_nextScreen == kS_Title && x50_curScreen == kS_OpenCredits) {
+      float t = CMath::Clamp(0.f, x58_fadeBlackTimer, 1.f);
+      const CColor& color = CColor::Black().WithAlphaOf(1.f - t);
+      CCameraFilterPass::DrawFilter(CCameraFilterPass::kFT_Blend, CCameraFilterPass::kFS_Fullscreen,
+                                    color, nullptr, 1.f);
+    } else if (x54_nextScreen == kS_Title && x50_curScreen == kS_Title) {
+      float t = CMath::Clamp(0.f, 30.f - x58_fadeBlackTimer, 1.f);
+      const CColor& color = CColor::Black().WithAlphaOf(1.f - t);
+      CCameraFilterPass::DrawFilter(CCameraFilterPass::kFT_Blend, CCameraFilterPass::kFS_Fullscreen,
+                                    color, nullptr, 1.f);
+    }
+  }
+
+  if (xdc_saveUI.get() != nullptr) {
+    CSaveGameScreen::EUIType uiType = xdc_saveUI->GetUIType();
+    if ((CanShowSaveUI() && !CSaveGameScreen::IsHiddenFromFrontEnd(uiType)) ||
+        IsInScreenNotTransitioning(kS_FileSelect) || IsInScreenNotTransitioning(kS_FusionBonus)) {
+      xdc_saveUI->Draw();
+    }
+  }
+}
+
+bool CFrontEndUI::CanShowSaveUI() const {
+  return (x50_curScreen == kS_FileSelect || x50_curScreen == kS_FusionBonus) &&
+         (x54_nextScreen == kS_FileSelect || x54_nextScreen == kS_FusionBonus);
+}
+
+void CFrontEndUI::StartStateTransition(EScreen screen) {
+  switch (x50_curScreen) {
+  case kS_OpenCredits:
+    break;
+  case kS_Title:
+    if (screen == kS_FileSelect) {
+      SetCurrentMovie(kMM_StartFileSelectA);
+      SetFadeBlackTimer(xcc_curMoviePtr->GetTotalSeconds());
+    }
+    break;
+  case kS_AttractMovie:
+    break;
+  case kS_FileSelect:
+    if (screen == kS_ToPlayGame) {
+      SetCurrentMovie(kMM_FileSelectPlayGameA);
+      SetFadeBlackTimer(xcc_curMoviePtr->GetTotalSeconds());
+    } else if (screen == kS_FusionBonus) {
+      SetCurrentMovie(kMM_FileSelectGBA);
+      SetFadeBlackTimer(xcc_curMoviePtr->GetTotalSeconds());
+      CSfxManager::SfxStart(SFXfnt_tofusion_L);
+      CSfxManager::SfxStart(SFXfnt_tofusion_R);
+    }
+    break;
+  case kS_FusionBonus:
+    if (screen == kS_ToPlayGame) {
+      SetCurrentMovie(kMM_GBAFileSelectB);
+      SetFadeBlackTimer(xcc_curMoviePtr->GetTotalSeconds());
+    } else if (screen == kS_FileSelect) {
+      SetCurrentMovie(kMM_GBAFileSelectA);
+      SetFadeBlackTimer(xcc_curMoviePtr->GetTotalSeconds());
+      CSfxManager::SfxStart(SFXfnt_fromfusion_L);
+      CSfxManager::SfxStart(SFXfnt_fromfusion_R);
+    }
+    break;
+  default:
+    break;
+  }
+
+  switch (screen) {
+  case kS_OpenCredits:
+  case kS_Title:
+    SetCurrentMovie(kMM_FirstStart);
+    SetFadeBlackTimer(xcc_curMoviePtr->GetTotalSeconds());
+    break;
+  case kS_AttractMovie:
+    StartAttractMovie();
+    SetFadeBlackWithMovie();
+    break;
+  case kS_FileSelect:
+  default:
+    break;
+  }
+
+  x54_nextScreen = screen;
+}
+
+void CFrontEndUI::CompleteStateTransition() {
+  EScreen oldScreen = x50_curScreen;
+  x50_curScreen = x54_nextScreen;
+
+  switch (x50_curScreen) {
+  case kS_AttractMovie:
+    x54_nextScreen = kS_OpenCredits;
+    x50_curScreen = kS_OpenCredits;
+    xd0_playerSkipToTitle = false;
+    StartStateTransition(kS_Title);
+    break;
+
+  case kS_Title:
+    SetCurrentMovie(kMM_StartLoop);
+    SetFadeBlackTimer(30.f);
+    break;
+
+  case kS_FileSelect:
+    SetCurrentMovie(kMM_FileSelectLoop);
+    if (oldScreen == kS_Title) {
+      xf4_curAudio->StopMixOut();
+      xf4_curAudio = xd8_audio2.get();
+      xf4_curAudio->StartMixOut();
+    }
+    if (xdc_saveUI.get() != nullptr) {
+      xdc_saveUI->ResetCardDriver();
+    }
+    break;
+
+  case kS_FusionBonus:
+    SetCurrentMovie(kMM_GBALoop);
+    break;
+
+  case kS_ToPlayGame:
+    x14_phase = kP_ExitFrontEnd;
+    break;
+
+  default:
+    break;
+  }
+}
+
+void CFrontEndUI::StartAttractMovie() {
+  if (!xc4_attractMovie.null()) {
+    return;
+  }
+  SetCurrentMovie(kMM_Stopped);
+  const char* name = GetNextAttractMovieFileName();
+  xc4_attractMovie = rstl::auto_ptr< CMoviePlayer >(rs_new CMoviePlayer(name, 0.f, false, false));
+  xcc_curMoviePtr = xc4_attractMovie.get();
+}
+
+void CFrontEndUI::StopAttractMovie() {
+  if (xc4_attractMovie.null()) {
+    return;
+  }
+  xc4_attractMovie = rstl::auto_ptr< CMoviePlayer >();
+  xcc_curMoviePtr = nullptr;
+}
+
+void CFrontEndUI::SetCurrentMovie(EMenuMovie movie) {
+  if (movie == xb8_curMovie) {
+    return;
+  }
+  StopAttractMovie();
+  if (xb8_curMovie != kMM_Stopped) {
+    xcc_curMoviePtr->SetPlayMode(CMoviePlayer::kPM_Stopped);
+    xcc_curMoviePtr->Rewind();
+  }
+  xb8_curMovie = movie;
+  if (xb8_curMovie != kMM_Stopped) {
+    xcc_curMoviePtr = x6c_menuMovies[movie].x0_movie.get();
+    xcc_curMoviePtr->SetPlayMode(CMoviePlayer::kPM_Playing);
+  } else {
+    xcc_curMoviePtr = nullptr;
+  }
+}
+
+const char* CFrontEndUI::GetNextAttractMovieFileName() {
+  const char* ret = GetAttractMovieFileName(xbc_nextAttract);
+  xbc_nextAttract = (xbc_nextAttract + 1) % xc0_attractCount;
+  return ret;
+}
+
+const char* CFrontEndUI::GetAttractMovieFileName(int idx) {
+  return PORT_FE_MOVIE(CBasics::Stringize("Video/attract%d.thp", idx));
+}
+
+#ifdef TARGET_PC
+// Port: a mod reload in the front end rebuilds the disc-file overlays, which
+// breaks the reads of open files, and the movies stream from the mod's Video/
+// while they play. They are closed first and opened again from the new files.
+void CFrontEndUI::PortReloadMods() {
+  const EMenuMovie curMovie = xb8_curMovie;
+  const bool attract = !xc4_attractMovie.null();
+  xc4_attractMovie = rstl::auto_ptr< CMoviePlayer >();
+  xcc_curMoviePtr = nullptr;
+  xb8_curMovie = kMM_Stopped;
+  for (int i = 0; i < 9; ++i) {
+    x6c_menuMovies[i].x0_movie = rstl::auto_ptr< CMoviePlayer >();
+  }
+  const bool moviesWereLoaded = xd1_moviesLoaded;
+  xd1_moviesLoaded = false;
+
+  PortSaveState::ReloadModsNow();
+
+  if (!moviesWereLoaded) {
+    return; // kP_LoadMovies opens them
+  }
+  while (!PumpMovieLoad()) {
+    ARQPoll();
+    OSYieldThread();
+  }
+  if (attract) {
+    const int idx = (xbc_nextAttract + xc0_attractCount - 1) % xc0_attractCount;
+    xc4_attractMovie = rstl::auto_ptr< CMoviePlayer >(
+        rs_new CMoviePlayer(GetAttractMovieFileName(idx), 0.f, false, false));
+    xcc_curMoviePtr = xc4_attractMovie.get();
+  } else {
+    SetCurrentMovie(curMovie);
+  }
+}
+#endif
+
+void CFrontEndUI::SetFadeBlackTimer(float seconds) {
+  x58_fadeBlackTimer = seconds;
+  x5c_fadeBlackWithMovie = false;
+}
+
+void CFrontEndUI::SetFadeBlackWithMovie() {
+  x58_fadeBlackTimer = 1000000.f;
+  x5c_fadeBlackWithMovie = true;
+}
+
+void CFrontEndUI::StartSlideShow(CArchitectureQueue& queue) {
+  xf4_curAudio->StopMixOut();
+  queue.Push(MakeMsg::CreateCreateIOWin(kAMT_IOWinManager, kFrontEndUIMsgPriority,
+                                        kFrontEndUIDrawPriority, rs_new CSlideShow()));
+}

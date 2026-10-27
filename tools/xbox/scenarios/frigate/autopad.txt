@@ -1,0 +1,7 @@
+# frigate: boot straight into the Space Pirate Frigate (MP_BOOT_WORLD), shots as it loads and runs
+env PX_DISC_CHECK=quick
+env MP_BOOT_WORLD=158EFE17
+600 SHOT
+1200 SHOT
+1800 SHOT
+2400 SHOT

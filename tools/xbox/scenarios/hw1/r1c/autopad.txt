@@ -1,0 +1,9 @@
+# r1c: Phendrana Drifts' default room (textures, snow particles)
+env MP_BOOT_WORLD=A8BE6291
+env PX_NEXT_XBE=F:\Applications\Prime-X-r1d\default.xbe
+900 SHOT
+1500 SHOT
+2100 SHOT
+2150 SU for 120
+2300 SHOT
+2500 NEXT

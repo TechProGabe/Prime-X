@@ -27,6 +27,33 @@ boot, correctness and Dolphin comparisons, not frame rates. Scenarios
 (`tools/xbox/scenarios/`) script the pad: per benchmark room
 (`docs/performance.md`), per visor, the boot-safety cases, settings rows.
 
+## Jumping to a room (level skip)
+
+Test builds (`XBOX_CFLAGS=-DXHW_AUTOPAD=1`) read `autopad.txt` from the
+XBE's folder (`D:\`): in xemu it is staged with `PX_STAGE_EXTRA`, on a
+console put it next to `default.xbe`. Its `env` lines set what the game's
+`getenv` sees, so MetroidPrimePort's test hooks work the same in both:
+
+| line | effect |
+|---|---|
+| `env MP_BOOT_WORLD=<MLVL>[:<MREA>]` | no logos or front end: a new game starts in that world (its default room without an MREA). Logged as `[TEST] boot world` |
+| `env MP_FAST_BOOT=1` | skip the boot logos |
+| `env MP_SKIP_CUTSCENES=1`, `env MP_CUTSCENE_SPEED=4` | skip or speed up cinematics |
+| `env MP_INVULNERABLE=1` | no damage |
+| `env PX_LOCKSTEP=1` | one simulation tick per frame (comparable screenshots) |
+
+The ids come from your own image:
+
+```sh
+python tools/xbox/prime_rooms.py "<GM8E01 image>"                   # every world and room
+python tools/xbox/prime_rooms.py "<image>" --find "reactor"         # matching rooms
+python tools/xbox/prime_rooms.py "<image>" --env "Landing Site"     # the env line to paste
+```
+
+Worlds (USA 1.00): Frigate `158EFE17`, Tallon Overworld `39F2DE28`, Chozo
+Ruins `83F6FF6F`, Magmoor Caverns `3EF8237C`, Phendrana Drifts `A8BE6291`,
+Phazon Mines `B1AC4D65`, Impact Crater `C13B09D1`.
+
 ## Consoles
 
 The user's two consoles, as on Melee-X (its `CLAUDE.md` "Hardware"): **red**

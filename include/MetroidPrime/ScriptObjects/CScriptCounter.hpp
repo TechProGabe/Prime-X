@@ -1,0 +1,24 @@
+#ifndef _CSCRIPTCOUNTER
+#define _CSCRIPTCOUNTER
+
+#include "MetroidPrime/CEntity.hpp"
+
+class CScriptCounter : public CEntity {
+  friend struct PortEntitySchema; // save-state field schema (platform/include/port_entity_schema.h)
+  friend struct PortRoomState;
+
+  int x34_initial;
+  int x38_current;
+  int x3c_max;
+  bool x40_autoReset;
+
+public:
+  CScriptCounter(TUniqueId, const rstl::string& name, const CEntityInfo& info, int, int, bool,
+                 bool);
+  ~CScriptCounter();
+
+  void AcceptScriptMsg(EScriptObjectMessage msg, TUniqueId objId, CStateManager& stateMgr) override;
+  DECLARE_ACCEPT;
+};
+
+#endif // _CSCRIPTCOUNTER
