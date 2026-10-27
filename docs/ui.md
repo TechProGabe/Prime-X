@@ -21,32 +21,37 @@ gradient, "TechProGabe Presents..." in unscii-16 fading in, held 2 s
 `xhw_splash_show()`, `xhw_splash_progress(f)`, `xhw_splash_release()`;
 `-DXHW_NO_SPLASH` turns it off.
 
-### Prime-X: the same card, as a scan-visor readout
+### Prime-X: a haunted CRT terminal (built, 2026-10-27)
 
-Keep the API, the timing, the skip and the safe-video hint. Change the look:
+The user picked option E of five (`tools/xbox/splash_mockups.py` draws them;
+"A" was the scan-visor readout this section first described) and set the
+order: "the headline should be Prime-X and then what it's doing".
+`xbox/src/hw/xhw_splash.c`:
 
-| element | Melee-X | Prime-X |
-|---|---|---|
-| background | navy to near-black gradient | near-black at the top to deep teal at the bottom (`#020608` to `#072a33`), like visor glass; faint scanlines (every 4th row ~6% brighter); a soft dark vignette at the edges |
-| grid | none | a faint dot grid (every 32 px) that fades out toward the edges, drawn once |
-| title | "TechProGabe Presents..." fading in | the same words in unscii-16 at 2x, cyan (`#7fe9ff`) with a 1 px dim-cyan glow, **typed on** a character at a time (~40 ms each) the way Prime's scan text writes itself, a block cursor blinking after the last character |
-| framing | none | four scan brackets that slide in from the screen corners and lock around the title (~400 ms, eased); they flash orange (`#ff8a2a`) on locking, then settle to cyan |
-| load bar | a bar under the title | a thin scan bar with tick marks: "SCANNING" at its left, the percentage at its right, filling as boot progresses; "SCAN COMPLETE" flashes once when it fills |
-| first boot of a new disc image | n/a | the bar is the full disc check's progress: "VERIFYING DISC IMAGE 37%" (`docs/boot-safety.md`), with "B: skip" |
-| fade | fade in | 300 ms fade in from black, fade to black when the game takes the display |
-| footer | the safe-video hint | the same hint, dim cyan, bottom centre: "Hold BACK for safe video (480i)" |
+| element | what |
+|---|---|
+| credit | "TechProGabe Presents..." small and dim above the headline |
+| headline | **PRIME-X** in unscii-16 at 5x, typed on (120 ms a letter), red and cyan fringes like a misaligned CRT gun, a 1 px glow, a block cursor that blinks once typed |
+| game line | `METROID PRIME - GM8E01 - USA 1.00` |
+| signal trace | a twitching line across the card, a burst every ~3 s |
+| task | what the boot is doing, at 2x: SCANNING, VERIFYING DISC IMAGE, LOADING, with the percentage; a 40-segment bar under it |
+| detail | during the disc check: the file just checked with its CRC and OK/BAD, and a hex line of its bytes |
+| notes | the check says why and how to skip it: "First boot only: checking every file so a bad copy is / caught now, not as a crash later. ~1 min. B: skip" |
+| boot log | top left, typed on: CHOZO ARCHIVE INTERFACE, then what the boot found: the CPU and its measured MHz (UPGRADED X86 past 780), memory (128 MB held to 64), the disc, the quick check, the files (178/178, checked before, skipped, mismatch) |
+| rain | glyph rain in phosphor green (hex, symbols, Latin-1 marks), white heads, stronger towards the edges, kept out of the card, the log, the tag and the hint |
+| tag | a red `// SIGNAL` top right, blinking slowly |
+| brackets | slide in from the corners (400 ms, eased), orange as they lock, then cyan |
+| CRT | scanlines, darker corners, a band torn sideways every ~4 s, a 300 ms fade in |
+| errors | the same glass with orange brackets, "PRIME-X // SIGNAL LOST", the title in orange-red, the lines in light cyan (`xhw_error_screen` before the game owns the display) |
+| footer | "Hold BACK for safe video (480i)" |
 
-The text, bracket and bar areas are redrawn each frame; the background and
-grid are drawn once. At 16:9 the card stays centred in a 4:3 area with the
-background filling the sides.
-
-**Error screens** (no disc, wrong disc, failed check, fatal errors; Melee-X's
-`xhw_error_screen`) take the same look: the same background, orange
-brackets, the title in orange-red, the lines in light cyan, and a "B: quit,
-A: continue" line only where going on is allowed.
-
-Kill switch `-DXHW_NO_SPLASH`; duration `-DXHW_SPLASH_MS=<n>`. Screenshot
-it with `[FBDUMP]` for the docs and the README once it exists.
+Cost (the user: "should not interfere with the main goal"): the glass, the
+card and a per-pixel shade (scanlines, corners) are made once; a frame
+copies them, draws only what moves through the shade and is copied out,
+~25 fps from a normal-priority thread: 7 ms a frame in xemu (`[SPLASH]` in
+`boot.log` has the console's). Minimum hold 2 s, any button skips the
+hold (never the work). Kill switch `-DXHW_NO_SPLASH`; `-DXHW_SPLASH_DUMP`
+takes `[FBDUMP]`s of the settled screen and of a quarter-done stage.
 
 ## Settings, inside the game's Options
 

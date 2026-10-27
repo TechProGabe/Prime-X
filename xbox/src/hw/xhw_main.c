@@ -59,8 +59,15 @@ static int find_disc_image(char* out, size_t cap) {
 }
 
 void xhw_error_screen(const char* title, const char* const* lines) {
-    int i;
+    const char* card[16];
+    int i, n = 0;
     xhw_watchdog_disable();
+    /* before the game takes the display: in the splash's look (docs/ui.md) */
+    for (i = 0; lines && lines[i] && n < 13; i++) card[n++] = lines[i];
+    card[n++] = "";
+    card[n++] = "Press any button or wait to return to the dashboard.";
+    card[n] = NULL;
+    if (xhw_splash_card(title, card)) return;
     pb_show_debug_screen();
     debugClearScreen();
     debugPrint("\n\n    Prime-X\n\n    %s\n\n", title);
