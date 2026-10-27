@@ -1,0 +1,81 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 715 300" width="715" height="300" role="img" aria-label="Prime-X">
+<title>Prime-X</title>
+<!-- Melee-X's logo layout (docs/logo.svg there), remixed for Prime: angular
+     hand-drawn letters instead of a font, the Varia suit's orange-to-red in
+     place of the fire gradient, a cyan scan-visor arc and reticle in place of
+     the trophy, an energy orb in place of the spark. The green X badge is
+     the family mark shared with Melee-X and OpenCrossing-Xbox. -->
+<defs>
+  <linearGradient id="varia" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0" stop-color="#fff1b8"/><stop offset=".4" stop-color="#ffb347"/><stop offset=".78" stop-color="#ff5f1a"/><stop offset="1" stop-color="#c2260f"/>
+  </linearGradient>
+  <linearGradient id="xbox" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0" stop-color="#b6f23a"/><stop offset=".55" stop-color="#52b043"/><stop offset="1" stop-color="#107c10"/>
+  </linearGradient>
+  <linearGradient id="visor" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0" stop-color="#1b5f6e"/><stop offset="1" stop-color="#03141b"/>
+  </linearGradient>
+  <radialGradient id="orb" cx=".4" cy=".35" r=".65">
+    <stop offset="0" stop-color="#ffffff"/><stop offset=".3" stop-color="#c8fff0"/><stop offset=".7" stop-color="#3fe0d0"/><stop offset="1" stop-color="#0b6f7a"/>
+  </radialGradient>
+  <radialGradient id="flare" cx=".5" cy=".5" r=".5">
+    <stop offset="0" stop-color="#ffffff"/><stop offset=".45" stop-color="#9ff6ff"/><stop offset="1" stop-color="#9ff6ff" stop-opacity="0"/>
+  </radialGradient>
+  <!-- P R I M E on a 106-unit cap height, baseline 228; holes cut even-odd -->
+  <path id="word" fill-rule="evenodd" d="
+    M100 138 L116 122 H172 L188 138 V176 L172 192 H126 V228 H100 Z M126 144 V170 H162 V144 Z
+    M202 138 L218 122 H274 L290 138 V170 L276 184 L294 228 H266 L250 192 H228 V228 H202 Z M228 144 V170 H264 V144 Z
+    M306 122 H332 V228 H306 Z
+    M348 228 V138 L364 122 H378 L404 160 L430 122 H444 L460 138 V228 H434 V170 L404 210 L374 170 V228 Z
+    M476 138 L492 122 H556 V144 H502 V164 H546 V186 H502 V206 H556 V228 H476 Z"/>
+</defs>
+
+<!-- scan-visor arc over the word, dotted like Melee-X's -->
+<path d="M150 80 C 320 34, 435 34, 595 96" fill="none" stroke="#ffffff" stroke-width="7" stroke-linecap="round" stroke-dasharray="2 17" opacity=".95"/>
+<path d="M150 80 C 320 34, 435 34, 595 96" fill="none" stroke="#3fd8f0" stroke-width="3.5" stroke-linecap="round" stroke-dasharray="2 17" transform="translate(0 1)"/>
+
+<!-- scan reticle: visor glass disc, broken ring, corner brackets -->
+<g transform="translate(96 78) rotate(-12)">
+  <circle r="44" fill="#03141b" transform="translate(5 7)" opacity=".35"/>
+  <circle r="44" fill="none" stroke="#ffffff" stroke-width="12"/>
+  <circle r="44" fill="url(#visor)" stroke="#071a24" stroke-width="5"/>
+  <g fill="none" stroke="#3fd8f0" stroke-width="5" stroke-linecap="round">
+    <path d="M-30 -18 A35 35 0 0 1 -18 -30"/><path d="M18 -30 A35 35 0 0 1 30 -18"/>
+    <path d="M30 18 A35 35 0 0 1 18 30"/><path d="M-18 30 A35 35 0 0 1 -30 18"/>
+  </g>
+  <g fill="none" stroke="#9ff6ff" stroke-width="4" stroke-linecap="square">
+    <path d="M-16 -8 V-16 H-8"/><path d="M8 -16 H16 V-8"/><path d="M16 8 V16 H8"/><path d="M-8 16 H-16 V8"/>
+  </g>
+  <circle r="4" fill="#ff7a2a"/>
+</g>
+
+<!-- energy orb with a cross flare, where Melee-X has its spark -->
+<g transform="translate(630 100)">
+  <circle r="30" fill="url(#flare)" opacity=".8"/>
+  <path d="M0 -40 L5 -5 L40 0 L5 5 L0 40 L-5 5 L-40 0 L-5 -5 Z" fill="#ffffff" opacity=".9"/>
+  <circle r="17" fill="#03141b" transform="translate(4 6)" opacity=".35"/>
+  <circle r="17" fill="none" stroke="#ffffff" stroke-width="10"/>
+  <circle r="17" fill="url(#orb)" stroke="#071a24" stroke-width="4"/>
+  <ellipse cx="-5" cy="-6" rx="6" ry="4" fill="#ffffff" opacity=".85"/>
+</g>
+
+<!-- the word: shadow, dark outline, white outline, Varia fill, thin inner line -->
+<g transform="translate(30 0) skewX(-9)">
+  <use href="#word" fill="#071a24" transform="translate(7 9)"/>
+  <use href="#word" fill="none" stroke="#071a24" stroke-width="30" stroke-linejoin="round"/>
+  <use href="#word" fill="none" stroke="#ffffff" stroke-width="14" stroke-linejoin="round"/>
+  <use href="#word" fill="url(#varia)"/>
+  <use href="#word" fill="none" stroke="#a01e0c" stroke-width="2" stroke-linejoin="round" opacity=".55"/>
+  <!-- visor-glint scanline across the letters -->
+  <path d="M96 150 H560" stroke="#ffffff" stroke-width="3" opacity=".35"/>
+</g>
+
+<!-- the X badge, as on Melee-X -->
+<g transform="rotate(-6 635.0 200)">
+  <rect x="585.0" y="161.0" width="100" height="78" rx="20" fill="#071a24" transform="translate(5 7)"/>
+  <rect x="585.0" y="161.0" width="100" height="78" rx="20" fill="url(#xbox)" stroke="#071a24" stroke-width="8"/>
+  <path d="M613.0 178 L657.0 222 M657.0 178 L613.0 222" stroke="#071a24" stroke-width="26" stroke-linecap="round" transform="translate(3 4)" opacity=".45"/>
+  <path d="M613.0 178 L657.0 222 M657.0 178 L613.0 222" stroke="#071a24" stroke-width="26" stroke-linecap="round"/>
+  <path d="M613.0 178 L657.0 222 M657.0 178 L613.0 222" stroke="#ffffff" stroke-width="15" stroke-linecap="round"/>
+</g>
+</svg>

@@ -1,0 +1,26 @@
+# reference checkouts (tools/fetch_refs.sh), never committed
+/ref/
+
+# build output
+/build-xbox*/
+/build/
+__pycache__/
+*.pyc
+
+# never commit game data, console dumps or emulator firmware
+*.iso
+*.gcm
+*.ciso
+*.rvz
+*.wbfs
+*.nkit
+*.dol
+*.xiso
+*.bin
+*.gci
+*.pak
+*.qcow2
+*.img
+
+# release zips (tools/xbox/package_release.py)
+/dist/
