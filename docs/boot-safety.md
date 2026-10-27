@@ -38,14 +38,14 @@ match after compression. So Prime-X checks **files**, not chunks:
 | when | what | cost |
 |---|---|---|
 | every boot | magic `0xC2339F3D`; ID `GM8E01`; version byte 0; the image is `.iso`/`.gcm` of exactly 1,459,978,240 bytes or a `.ciso` whose map covers every file; the FST equals the table (entry count, every name, offset and size); CRC32 of `main.dol` (the code the font addresses and every symbol are tied to) and of the FST | well under a second |
-| first boot of an image | CRC32 of every file against the table, on a worker while the splash's scan bar shows progress; for a plain `.iso`/`.gcm` also the SHA-1 of the whole image, for the Redump line | about a minute from the hard drive (1.4 GB); slicing-by-8 CRC on the P3 is not the limit |
+| first boot of an image | CRC32 of every file against the table, at boot behind the splash: "VERIFYING DISC IMAGE" with the file and its CRC as they pass, and why it runs ("so a bad copy is caught now, not as a crash later"); B skips it for that boot | about a minute on red (round hw1); never again for that image (`disc.ini`) |
 | Options > Verify disc image | the full check again | same |
 
 "New image" means a size, modification time and FST-CRC triple not in
-`E:\UDATA\50580001\disc.ini`, which records the last result. The full check
-can be skipped with B (it says what that risks) and then runs again on the
-next boot; a skipped or failed check is in every `boot.log` until a full
-check passes.
+`E:\UDATA\50580001\disc.ini`, which records the last result. An image that passed is not checked again (`disc.ini` holds its size and
+write time); a failed or unfinished check runs again next boot. Test builds
+take `env PX_DISC_CHECK=quick` (no full check) or `=full` (at boot, behind
+the splash's bar, with the A/B choice, even for an image that passed).
 
 ### What the player sees
 

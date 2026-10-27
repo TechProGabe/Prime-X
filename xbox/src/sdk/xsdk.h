@@ -21,7 +21,12 @@ int xsdk_snprintf(char* out, size_t cap, const char* fmt, ...);
 
 /* dvd.c */
 int xsdk_dvd_open(const char* path, char* why, size_t why_cap);
-int xsdk_disc_full_check(int force, void (*progress)(float), char* first_bad, size_t cap, u32* bad_off);
+/* every file's CRC on an image's first boot (docs/boot-safety.md): after each
+ * file, progress gets 0..1, the file, its CRC, whether it matches, a few of
+ * its bytes and its offset; a nonzero return stops the check (-2). -3: the
+ * image passed before (disc.ini), nothing was read. */
+typedef int (*xsdk_disc_progress)(float f, const char* file, u32 crc, int ok, const u8* sample, u32 off);
+int xsdk_disc_full_check(int force, xsdk_disc_progress progress, char* first_bad, size_t cap, u32* bad_off);
 void xsdk_dvd_deliver(void);
 void xsdk_dvd_free_dol(void);
 /* On the DVD worker, inside a read's completion callback: 1 if [p, p + len)

@@ -1,3 +1,7 @@
 # Port* hooks defined by hand (port_overrides.cpp, port_debug.cpp, ...): not generated
 PortFx::gTimeScale
 PortMods::RemapEffectId
+PortFontAccent::Composite
+PortFontAccent::Decode
+PortFontAccent::Encode
+PortFontAccent::MarkFor

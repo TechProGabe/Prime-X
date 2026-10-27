@@ -468,6 +468,8 @@ static u32 crc32_update(u32 crc, const u8* p, u32 n) {
 }
 
 static u8* s_crc_buf;
+/* bytes per read */
+static u32 s_crc_chunk = 1u << 20;
 static void disc_crc_buffer_free(void) {
     free(s_crc_buf);
     s_crc_buf = NULL;
@@ -478,7 +480,7 @@ static u32 img_crc(u32 off, u32 len, int* ok) {
     *ok = 0;
     if (!s_crc_buf && !(s_crc_buf = (u8*)malloc(1u << 20))) return 0;
     while (len) {
-        u32 n = len > (1u << 20) ? (1u << 20) : len;
+        u32 n = len > s_crc_chunk ? s_crc_chunk : len;
         if (!img_read_committed(off, s_crc_buf, n)) return 0;
         crc = crc32_update(crc, s_crc_buf, n);
         off += n;
@@ -533,9 +535,9 @@ static int disc_quick_check(u32 fst_len, char* why, size_t why_cap) {
 
 /* Every file's CRC, on the first boot of an image (size and write time not
  * in disc.ini) or when force is set. Returns how many files differ, -1 on a
- * read error (its offset in *bad_off). progress(0..1) drives the splash's
- * scan bar. */
-int xsdk_disc_full_check(int force, void (*progress)(float), char* first_bad, size_t cap, u32* bad_off) {
+ * read error (its offset in *bad_off), -2 when progress (called after each
+ * file with 0..1: the splash's bar) asked to stop. */
+int xsdk_disc_full_check(int force, xsdk_disc_progress progress, char* first_bad, size_t cap, u32* bad_off) {
     char ini[300], line[128];
     FILE* f;
     u32 i, bad = 0;
@@ -548,7 +550,7 @@ int xsdk_disc_full_check(int force, void (*progress)(float), char* first_bad, si
         fclose(f);
         if (same) {
             xhw_logf("[DISC] full check: passed before for this image (disc.ini)");
-            return 0;
+            return -3;
         }
     }
     for (i = 0; i < DISC_FILE_COUNT; i++) total += k_disc_files[i].size;
@@ -569,7 +571,12 @@ int xsdk_disc_full_check(int force, void (*progress)(float), char* first_bad, si
             bad++;
         }
         done += d->size;
-        if (progress) progress((float)((double)done / (double)total));
+        if (progress && progress((float)((double)done / (double)total), d->path, crc, crc == d->crc, s_crc_buf,
+                                 d->off)) {
+            disc_crc_buffer_free();
+            xhw_logf("[DISC] full check skipped at %u of %u files (checks again next boot)", i + 1, DISC_FILE_COUNT);
+            return -2;
+        }
     }
     disc_crc_buffer_free();
     if (bad) {

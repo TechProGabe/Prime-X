@@ -33,6 +33,7 @@ void xsdk_early(void) {
      * before the settings file's allocations */
     uint32_t held = xhw_mem_hold_upper();
     if (held) xhw_logf("[MEM] 128 MB console: running in 64 MB, %u KB above it held back", held);
+    xhw_splash_log(held ? "> MEM   128 MB, HELD TO 64 MB ...... OK" : "> MEM   64 MB  MEM1 24 / ARAM 16 .. OK");
     xsdk_settings_load();
     if (safe) {
         /* saved, so the next boot stays visible too; the Options rows turn them back on */
@@ -46,8 +47,26 @@ void xsdk_early(void) {
     xhw_video_set_pref_480p(g_xsdk_settings.progressive);
 }
 
-/* the splash's bar from 0.3 to 0.95 while every file is checked */
-static void full_check_progress(float f) { xhw_splash_progress(0.3f + 0.65f * f); }
+void xhw_watchdog_busy(int on);   /* hw: a long, deliberate stall */
+
+/* the splash's bar is the check's; B skips it (the image is checked again
+ * next boot) */
+static int s_check_skipped;
+static int full_check_progress(float f, const char* file, u32 crc, int ok, const u8* sample, u32 off) {
+    char l1[64], l2[64];
+    const char* name = strrchr(file, '/');
+    name = name ? name + 1 : file;
+    snprintf(l1, sizeof l1, "> %-22.22s CRC %08X  %s", name, (unsigned)crc, ok ? "OK" : "BAD");
+    if (sample)
+        snprintf(l2, sizeof l2, "  %08X  %02X %02X %02X %02X %02X %02X %02X %02X %02X", (unsigned)off, sample[0],
+                 sample[1], sample[2], sample[3], sample[4], sample[5], sample[6], sample[7], sample[8]);
+    else
+        l2[0] = 0;
+    xhw_splash_detail(l1, l2);
+    xhw_splash_progress(f);
+    if (xhw_splash_skip_pressed()) s_check_skipped = 1;
+    return s_check_skipped;
+}
 
 /* A: 1, B (or a minute of nothing): 0 */
 static int ask_a_or_b(void) {
@@ -65,8 +84,12 @@ static int ask_a_or_b(void) {
     return 0;
 }
 
-/* Every file's CRC on the first boot of an image (docs/boot-safety.md).
- * Test builds can skip it with env PX_DISC_CHECK=quick (autopad.txt). */
+/* Every file's CRC on the first boot of an image (docs/boot-safety.md),
+ * behind the splash: its bar reads "VERIFYING DISC IMAGE", with what it is
+ * and that it happens once (the user, round hw1: the minute of waiting
+ * needs saying). An image that passed is in disc.ini and never checked
+ * again. B skips it for this boot. Test builds: env PX_DISC_CHECK=quick
+ * skips it, =full checks even an image that passed. */
 static void disc_full_check(void) {
     char first[96] = "?", line[160];
     u32 bad_off = 0;
@@ -76,19 +99,35 @@ static void disc_full_check(void) {
         xhw_logf("[DISC] full check skipped (PX_DISC_CHECK=quick)");
         return;
     }
+    /* why, in the player's words (the user, 2026-10-27): once per image */
+    xhw_splash_stage("VERIFYING DISC IMAGE", "First boot only: checking every file so a bad copy is",
+                     "caught now, not as a crash later. ~1 min.   B: skip");
+    xhw_splash_progress(0.0f);
+    xhw_watchdog_busy(1);
     bad = xsdk_disc_full_check(mode && strcmp(mode, "full") == 0, full_check_progress, first, sizeof first, &bad_off);
-    if (bad < 0) {
+    xhw_watchdog_busy(0);
+    if (bad == -3) {
+        xhw_splash_log("> FILES 178 CHECKED BEFORE ........ OK");
+        xhw_splash_stage("LOADING", NULL, NULL);
+        return;
+    }
+    if (bad == 0) xhw_splash_log("> FILES 178 / 178 ................. OK");
+    if (bad == -2) xhw_splash_log("> FILES CHECK SKIPPED (NEXT BOOT)");
+    if (bad > 0) xhw_splash_log("> FILES MISMATCH ................ WARN");
+    if (bad < 0 && bad != -2) {
         snprintf(line, sizeof line, "The image couldn't be read at offset %u (hard drive or disc fault).", bad_off);
         xhw_fatal("Disc image read error", line);
     }
     if (bad > 0) {
         static char l0[160];
-        const char* lines[] = { l0, "The game may crash in those areas.", "", "A: play anyway    B: quit", NULL };
+        const char* lines[] = { l0, "The game may crash in those areas (boot.log lists them).", "",
+                                "A: play anyway    B: quit", NULL };
         snprintf(l0, sizeof l0, "%d files don't match a clean dump (first: %s).", bad, first);
         xhw_error_screen("Disc image doesn't match", lines);
         if (!ask_a_or_b()) xhw_quit_to_dashboard();
         xhw_logf("[DISC] playing anyway with %d files that differ", bad);
     }
+    xhw_splash_stage("LOADING", NULL, NULL);
 }
 
 void xsdk_boot(const char* disc) {
@@ -97,8 +136,11 @@ void xsdk_boot(const char* disc) {
 
     OSInit();
     xsdk_prime_sdk_init();
+    xhw_splash_stage("SCANNING", NULL, NULL);
     xhw_splash_progress(0.3f);
     if (!xsdk_dvd_open(disc, why, sizeof why)) xhw_fatal("Wrong or damaged disc image", why);
+    xhw_splash_log("> DISC  GM8E01  REV 00 ......... FOUND");
+    xhw_splash_log("> IMAGE SIZE  FST  MAIN.DOL ....... OK");
     disc_full_check();
     xhw_splash_progress(1.0f);
 

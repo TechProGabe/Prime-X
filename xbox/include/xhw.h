@@ -219,6 +219,16 @@ void xhw_video_boot(void);
 void xhw_wait_vblank(void);
 /* Boot title card (xhw_splash.c): load bar, 0..1; nothing once the mode is set. */
 void xhw_splash_progress(float f);
+/* the task line ("VERIFYING DISC IMAGE") and two note lines under the bar (NULL: none) */
+void xhw_splash_stage(const char* task, const char* note1, const char* note2);
+/* a line of the boot log (top left), typed on */
+void xhw_splash_log(const char* line);
+/* the detail line and the hex line under the bar (the disc check's file) */
+void xhw_splash_detail(const char* line1, const char* line2);
+/* B pressed on any controller (the first boot's disc check can be skipped) */
+int xhw_splash_skip_pressed(void);
+/* an error card in the splash's look; 0 if the splash no longer owns the screen */
+int xhw_splash_card(const char* title, const char* const* lines);
 
 /* ---- front LED effects (xhw_led.c) ----
  * Game events, posted from the game thread: a few stores and a SetEvent when
