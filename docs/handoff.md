@@ -69,8 +69,13 @@ user's request; `Melee-X` and `Prime-X` (free play, the disc images) stay.
   Phendrana 36-43.
 - Landing cinematic: the vertical streaks are gone (particle texcoords).
   4 of 9 shots are washed out white, letterbox bars too: the full-screen
-  additive camera filter (lightning?) is being traced for its colour and
-  alpha (`/c/xemu/px/white2.log`).
+  additive camera filter (lightning?). **Next:** read its vertex colour and
+  alpha. Trace builds now print vertex colours for untextured draws; a
+  dense lockstep run of frames 640-1400 every 10 (`/c/xemu/px/scen-one`)
+  was started and stopped unfinished at the end of the session. If the
+  game's alpha is small and the frame still goes white, the blend is at
+  fault; if the colour itself is near-white at full alpha, it's the game's
+  flash (compare with Dolphin).
 - Profile, Landing Site: `GXCallDisplayList` 13%, `memcpy` 10%, the rain's
   per-vertex path ~11% (`GXTexCoord1s16`, `GXPosition3s16`,
   `gx_vtx_flush`), `CEnvFxManager::Update` 3.5%, `BuildBoneRange` 3.3%.
