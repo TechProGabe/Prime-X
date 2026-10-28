@@ -62,7 +62,7 @@ To be measured in phase 2 and kept current, as Melee-X's table is.
 | item | size | note |
 |---|---|---|
 | XBE image (game + MusyX + Xbox layer) | est. 8-10 MB | GameCube `main.dol` is ~4 MB of PowerPC; x86 C++ at `-O2` with ThinLTO is bigger. Measure in phase 1 |
-| MEM1 (game heaps) | 24 MB reserved, committed on demand | Prime's `CGameAllocator`, as on the GameCube; game `new` routed here (plan 0.6) |
+| MEM1 (game heaps) | 32 MB reserved (the game told 24), committed on demand in 64 KB chunks, freed blocks' chunks given back | Prime's `CGameAllocator`, as on the GameCube; game `new` routed here (plan 0.6). Measured in xemu: ~20 MB live in the Landing Site, Main Plaza leaves 4.7 MB of the Xbox free at its lowest (2.6 MB with `new` in malloc) |
 | ARAM | 16 MB reserved, committed on demand | MusyX sample groups and Prime's ARAM use; disc-backed pages as Melee-X |
 | NV2A framebuffers | 4.9 MB at 480 (32-bit x3 + Z), 9.1 MB at 720p (R5G6B5 x3 + Z24S8) | as Melee-X |
 | NV2A texture pool | 6 MB at 720p, 8 MB at 480 | Prime's textures are already in MEM1 (`CTexture`); the pool is a second copy in NV2A formats |

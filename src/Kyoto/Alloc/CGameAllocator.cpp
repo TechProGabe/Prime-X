@@ -24,6 +24,34 @@
 #include "port_log.h"
 #endif
 
+#ifdef TARGET_XBOX
+extern "C" void xhw_lazy_decommit(void* chunk); // xbox/include/xhw.h
+#define XHW_LAZY_CHUNK (64u * 1024)
+
+bool gPortXboxQuietOom; // PORT_XBOX: set while operator new allocates (CMemory.cpp)
+
+// PORT_XBOX: MEM1 is committed in 64 KB chunks as the game touches it
+// (xhw_reserve_lazy); a free block gives back the whole chunks inside it, so
+// a load's buffers freed again stop costing Xbox RAM (round hw5 ran out
+// with ~4 MB of the heap committed but free). A free block's bookkeeping is
+// all in its header, and a chunk touched again is committed again (zeroed).
+// [lo, hi) is the part of the block that may hold chunks still committed:
+// the rest of a merged block was free, and given back, already.
+static void PortXboxDecommitFree(const void* block, size_t len, uintptr_t lo, uintptr_t hi) {
+  const uintptr_t chunk = XHW_LAZY_CHUNK;
+  const uintptr_t start = reinterpret_cast< uintptr_t >(block);
+  if (lo < start) {
+    lo = start;
+  }
+  if (hi > start + len) {
+    hi = start + len;
+  }
+  for (lo = (lo + chunk - 1) & ~(chunk - 1); lo + chunk <= hi; lo += chunk) {
+    xhw_lazy_decommit(reinterpret_cast< void* >(lo));
+  }
+}
+#endif
+
 /* Here just to make sure the data section matches */
 static const char* string_NULL = "<NULL>";
 static const char* string_SOURCE_MODULE_UNLOADED = "<SOURCE MODULE UNLOADED>";
@@ -233,6 +261,13 @@ void* CGameAllocator::Alloc(size_t size, const EHint hint, const EScope scope, c
   }
 
   if (info == nullptr) {
+#ifdef TARGET_XBOX
+    // PORT_XBOX: operator new asking (CMemory.cpp PortXboxHeapAlloc): it has
+    // the Xbox's heap to fall back on, so no callback and no dump
+    if (gPortXboxQuietOom) {
+      return nullptr;
+    }
+#endif
     void* mediumBuf = nullptr;
     if (x58_oomCallback) {
       x58_oomCallback(x5c_oomTarget, size);
@@ -623,6 +658,10 @@ bool CGameAllocator::PeekLiveBlock(const void* ptr, const char** fileAndLine, si
 
 bool CGameAllocator::FreeNormalAllocation(const void* ptr) {
   SGameMemInfo* info = GetMemInfoFromBlockPtr(ptr);
+#ifdef TARGET_XBOX
+  // PORT_XBOX: the chunks this block (and the next block's header) touch
+  const uintptr_t portFreedLo = reinterpret_cast< uintptr_t >(info) - XHW_LAZY_CHUNK;
+#endif
 #ifdef TARGET_PC
   if (const char* bad = ValidateBlock(info, true, HeapCheckEnabled())) {
     ReportCorruption(bad, ptr, info);
@@ -664,6 +703,10 @@ bool CGameAllocator::FreeNormalAllocation(const void* ptr) {
     info->SetAllocated(false);
   }
   AddFreeEntryToFreeList(info);
+#ifdef TARGET_XBOX
+  PortXboxDecommitFree(info + 1, info->x4_len, portFreedLo,
+                       reinterpret_cast< uintptr_t >(ptr) + len + sizeof(SGameMemInfo) + XHW_LAZY_CHUNK);
+#endif
 
   x84_ -= 1;
   x88_ -= infoLen;

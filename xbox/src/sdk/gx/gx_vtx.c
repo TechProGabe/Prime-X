@@ -1274,7 +1274,10 @@ static void call_display_list(const void* list, u32 nbytes) {
 #define DLC_MAX_BATCH 4096      /* Fountain of Dreams' stage: one 104 KB list of more than 512 */
 #define DLC_MAX_RANGE 12
 #define DLC_VOLATILE 4          /* rebuilds before a list goes dynamic */
-#define DLC_DYN_BUDGET (1024u * 1024)   /* template + index bytes for all dynamic lists */
+#define DLC_DYN_BUDGET (2048u * 1024)   /* template + index bytes for all dynamic lists (1 MB left the
+                                           ship's save station, Samus up close, decoded every call:
+                                           12-14 fps, round hw5) */
+#define DLC_DYN_RETRY 120       /* frames before a list the budget turned away tries again */
 
 typedef struct {
     uint32_t prim, count, offset;   /* offset: bytes into the entry's buffer */
@@ -1330,6 +1333,7 @@ typedef struct {
     DynList* dyn;
     uint16_t nbatch;
     uint8_t fmts, nrange, rebuilds, is_volatile;
+    uint32_t vol_retry;            /* volatile for want of budget: the frame to try dyn_build again (0: never) */
     uint8_t bounds;                /* bmin/bmax hold the positions' box (no per-vertex matrix) */
     float bmin[3], bmax[3];
     DlRange range[DLC_MAX_RANGE];
@@ -2115,6 +2119,7 @@ static int dyn_call(DlEntry* e, uint32_t frame) {
             log_volatile(e, e->rebuilds >= DLC_VOLATILE * 4 ? (sig_changed ? "formats changed" : "contents changed")
                                                             : "over the dynamic budget");
             e->is_volatile = 1;
+            e->vol_retry = e->rebuilds >= DLC_VOLATILE * 4 ? 0 : frame + DLC_DYN_RETRY;
             return 0;
         }
         d = e->dyn;
@@ -2179,7 +2184,17 @@ static int dlc_call(const uint8_t* dl, uint32_t nbytes) {
     }
     e = dlc_find(dl, nbytes);
     if (e && e->dyn) return dyn_call(e, frame);
-    if (e && e->is_volatile) return 0;
+    if (e && e->is_volatile) {
+        /* turned away by the budget: lists left behind free it in time */
+        if (!e->vol_retry || (int32_t)(frame - e->vol_retry) < 0) return 0;
+        if (!dyn_build(e, frame)) {
+            e->vol_retry = frame + DLC_DYN_RETRY;
+            return 0;
+        }
+        e->is_volatile = 0;
+        e->vol_retry = 0;
+        return dyn_call(e, frame);
+    }
     if (e && e->mem && (e->sig != vtx_sig(e->fmts, 1) || dlc_content_changed(e, frame))) {
         if (e->sig != vtx_sig(e->fmts, 1)) s_st_chg_sig++;
         else s_st_chg_data++;
@@ -2188,6 +2203,7 @@ static int dlc_call(const uint8_t* dl, uint32_t nbytes) {
             if (dyn_build(e, frame)) return dyn_call(e, frame);
             log_volatile(e, "no dynamic form");
             e->is_volatile = 1;
+            e->vol_retry = frame + DLC_DYN_RETRY;
             return 0;
         }
     }
