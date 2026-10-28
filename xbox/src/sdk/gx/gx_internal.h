@@ -42,6 +42,7 @@ void gx_tex_invalidate_all(void);
 void gx_tex_note_efb_copy(const void* dest, uint32_t tex, uint32_t w, uint32_t h, uint32_t fmt);
 uint32_t gx_tex_efb_texture(const void* dest);
 int gx_tex_make_room(uint32_t bytes);
+int gx_dlc_evict_spilled(int max);   /* gx_vtx.c: display lists that spilled into the texture pool */
 int gx_tex_grow_for_frame(void);
 void gx_vtx_frame_end(void);
 void gx_tex_init(void);

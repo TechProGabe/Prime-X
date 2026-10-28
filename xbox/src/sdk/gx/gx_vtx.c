@@ -1461,6 +1461,29 @@ static int dlc_content_changed(DlEntry* e, uint32_t frame) {
 
 /* evicts the least recently used entry not drawn this frame, other than
  * `keep`; 0: none */
+/* Textures need the room spilled display lists took in the texture pool
+ * (xgx_vbuf_alloc): drop up to `max` of them, least recently used first,
+ * none drawn this frame. Returns how many. */
+int gx_dlc_evict_spilled(int max) {
+    uint32_t frame = xgx_present_count();
+    int n = 0;
+    while (n < max) {
+        int i, pick = -1;
+        uint32_t best = DLC_FREE;
+        for (i = 0; i < DLC_MAX; i++) {
+            uint32_t u = s_dlc_lru[i];
+            if (u < best && u != frame && s_dlc[i].mem && xgx_vbuf_spilled(s_dlc[i].mem)) {
+                best = u;
+                pick = i;
+            }
+        }
+        if (pick < 0) break;
+        dlc_drop_mem(pick, 1);
+        n++;
+    }
+    return n;
+}
+
 static int dlc_evict_one(uint32_t frame, const DlEntry* keep) {
     int i, pick = -1, skip = keep ? (int)(keep - s_dlc) : -1;
     uint32_t best = DLC_FREE;

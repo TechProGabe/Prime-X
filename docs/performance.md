@@ -92,6 +92,15 @@ SSE1 CPU) and the planes' GX-tile conversion 18%. An integer IDCT
 (libjpeg's jidctfst arrangement, `THPDec.cpp`) and whole-tile I8 copies
 (`gx_tex.c`) halved it in xemu: 68 -> 33 ms a frame (11.8 -> 26 fps).
 
+Chozo Ruins' Main Plaza (hw1: ~5 fps on the console, 7000 draws): its
+cached display lists need ~6 MB and the vertex pool is 4 MB, so ~130 lists
+were evicted and rebuilt every frame (display lists 53-58 ms in xemu). The
+texture pool had ~5.6 MB idle there: display lists now spill into it,
+keeping 2 MB free for textures, and the texture allocator gives spilled
+lists back before it drops a texture (`nv2a.c` `xgx_vbuf_alloc`,
+`gx_dlc_evict_spilled`). Main Plaza in xemu: display lists ~3 ms, game
+~20 ms, 7 -> ~29 fps.
+
 ## Levers, roughly in the order to try them
 
 | lever | where | note |

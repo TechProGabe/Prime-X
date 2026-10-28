@@ -440,6 +440,8 @@ int gx_tex_make_room(uint32_t bytes) {
         drop_at(i);
         n++;
     }
+    /* textures first; then display lists that spilled into this pool */
+    if (freed < bytes) n += gx_dlc_evict_spilled(16);
     return n;
 }
 

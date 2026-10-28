@@ -2598,6 +2598,15 @@ void* xgx_vtx_alloc(uint32_t count, uint32_t stride) {
 
 uint32_t xgx_vbuf_offset(const void* p) { return (uint32_t)((const uint8_t*)p - s_vb.base); }
 
+/* Prime's Chozo Ruins Main Plaza needs ~6 MB of cached display lists and
+ * used 2.4 MB of the 8 MB texture pool: with 4 MB of vertex pool it evicted
+ * and rebuilt ~130 lists a frame (55 ms of display lists in xemu). A
+ * cached list that doesn't fit the vertex pool takes texture-pool memory
+ * instead, as long as VB_SPILL_RESERVE stays free there for textures. Such
+ * a buffer draws like any other (xgx_draw: it doesn't join the pool's
+ * draws), and frees by owner (release_deferred, xgx_vbuf_free_now). */
+#define VB_SPILL_RESERVE (2048u * 1024)
+
 void* xgx_vbuf_alloc(uint32_t bytes) {
     void* p;
     if (!s_vb.base || bytes > s_vb.bytes) return NULL;
@@ -2607,8 +2616,13 @@ void* xgx_vbuf_alloc(uint32_t bytes) {
         release_deferred();
         p = pool_alloc(&s_vb, bytes);
     }
+    if (!p && s_tp.base && s_tp.bytes - s_tp.used >= bytes + VB_SPILL_RESERVE) p = pool_alloc(&s_tp, bytes);
     return p;
 }
+
+/* a display list's buffer in the texture pool (gx_tex.c gives them back
+ * when textures need the room: gx_dlc_evict_spilled) */
+int xgx_vbuf_spilled(const void* p) { return p && s_vb.base && !pool_owns(&s_vb, p); }
 
 void xgx_vbuf_free(void* p) {
     if (p) defer_free(p);
@@ -2623,7 +2637,7 @@ void xgx_vbuf_free_now(void* p) {
     /* before the frame's first GPU use the last frame may still be drawing
      * (XGX_OVERLAP): opening the frame waits for it */
     if (p && XGX_VBUF_FREE_NOW) frame_open();
-    if (p && XGX_VBUF_FREE_NOW) pool_free(&s_vb, p);
+    if (p && XGX_VBUF_FREE_NOW) pool_free(pool_owns(&s_vb, p) ? &s_vb : &s_tp, p);   /* or spilled (xgx_vbuf_alloc) */
     else if (p) defer_free(p);
 }
 
