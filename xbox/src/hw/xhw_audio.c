@@ -584,11 +584,20 @@ int xhw_audio_init(uint32_t rate) {
     }
     xemu = running_in_xemu();
     audio_found();
+    /* Round hw4: the third XBE of a chain froze here (after "found", before
+     * "idle"), with no hang.log. Each step is on disk before it runs, so the
+     * next one says which. */
+    xhw_log("[AUDIO] step: idle (halt the bus masters, stop the APU)");
+    xhw_log_sync();
     audio_idle(!(XHW_AUDIO_APU && xemu), note, sizeof note);
+    xhw_log("[AUDIO] step: cold reset");
+    xhw_log_sync();
     if (!aci_init()) {
         xhw_logf("[AUDIO] AC97 init failed");
         return 0;
     }
+    xhw_log("[AUDIO] step: codec power-up");
+    xhw_log_sync();
     pd = codec_power_up(&wrote);
     xhw_logf("[AUDIO] idle: %s, bus-master reset %u polls, codec 26 %04x%s", note, s_rr_polls, pd,
              wrote ? " (powered up)" : "");

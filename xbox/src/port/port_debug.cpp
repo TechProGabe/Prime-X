@@ -146,6 +146,7 @@ void SetFirstPersonFov(float fov) {
   if (fov >= kFovMin && fov <= kFovMax)
     sFirstPersonFov = fov;
 }
+bool SkippableCutscenes() { return sSkippableCutscenes; }
 void SetSkippableCutscenes(bool on) { sSkippableCutscenes = on; }
 bool CinemaBars() { return true; }
 

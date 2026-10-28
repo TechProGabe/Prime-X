@@ -443,6 +443,12 @@ bool decode_block(BitReader& reader, DecodeContext& context, size_t componentInd
 inline float fmaf_exact(float a, float b, float c) noexcept {
 #ifdef __FMA__
   return std::fma(a, b, c);
+#elif defined(TARGET_XBOX)
+  // The Pentium III has SSE1 only: the double path runs on the x87 with a
+  // float/double round trip per operation, in the IDCT's every step (the
+  // title screen's movie held the front end at ~17 fps, round hw4). One
+  // float rounding more than fused: under a pixel step in an 8-bit frame.
+  return a * b + c;
 #else
   return static_cast<float>(static_cast<double>(a) * static_cast<double>(b) + static_cast<double>(c));
 #endif

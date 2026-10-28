@@ -11,6 +11,7 @@
  *   [game]
  *   hud_wide = 0        ; 1: at 16:9 the HUD reaches the screen's edges (0: centred, as 4:3)
  *   fov = 55            ; first-person field of view in degrees (55 is the GameCube's)
+ *   skip_cutscenes = 0  ; 1: every cutscene can be skipped (START), as randomprime's patches make them
  *   [input]
  *   rumble = 100        ; percent
  *   cstick_1p = 0       ; 1: the C-stick attacks in 1P modes (training...), not the camera
@@ -99,6 +100,7 @@ static void defaults(xsdk_settings* st) {
     st->rumble = 1.0f;
     st->hud_wide = 0;
     st->fov = 55;
+    st->skip_cutscenes = 0;
     for (p = 0; p < 4; p++) {
         xsdk_port_settings* ps = &st->port[p];
         ps->stick_deadzone = 0.20f;
@@ -167,6 +169,7 @@ static int parse(FILE* f, xsdk_settings* st) {
         } else if (_stricmp(section, "game") == 0) {
             if (_stricmp(key, "hud_wide") == 0) st->hud_wide = atoi(val) != 0;
             else if (_stricmp(key, "fov") == 0) st->fov = clampi(atoi(val), 45, 75);
+            else if (_stricmp(key, "skip_cutscenes") == 0) st->skip_cutscenes = atoi(val) != 0;
         } else if (_stricmp(section, "input") == 0) {
             if (_stricmp(key, "rumble") == 0) st->rumble = clampi(atoi(val), 0, 100) / 100.0f;
             else if (_stricmp(key, "cstick_1p") == 0) st->cstick_1p = atoi(val) != 0;
@@ -194,7 +197,7 @@ int xsdk_settings_equal(const xsdk_settings* a, const xsdk_settings* b) {
     if (a->video_720p != b->video_720p || a->progressive != b->progressive || a->widescreen != b->widescreen ||
         a->fps != b->fps || a->shots != b->shots || a->led != b->led ||
         pct(a->rumble) != pct(b->rumble) || a->cstick_1p != b->cstick_1p || a->hud_wide != b->hud_wide ||
-        a->fov != b->fov)
+        a->fov != b->fov || a->skip_cutscenes != b->skip_cutscenes)
         return 0;
     for (p = 0; p < 4; p++) {
         const xsdk_port_settings *x = &a->port[p], *y = &b->port[p];
@@ -285,7 +288,8 @@ static void write_all(FILE* f, const xsdk_settings* st) {
     fprintf(f, "; Leave it 0 on a console with a modchip that drives the LED (Kronos and similar).\n");
     fprintf(f, "[system]\nscreenshots = %d\nled_effects = %d\n\n", st->shots, st->led);
     fprintf(f, "; hud_wide = 1: at 16:9 the HUD reaches the screen's edges. fov: 45-75 degrees, 55 is the GameCube's.\n");
-    fprintf(f, "[game]\nhud_wide = %d\nfov = %d\n\n", st->hud_wide, st->fov);
+    fprintf(f, "[game]\nhud_wide = %d\nfov = %d\nskip_cutscenes = %d\n\n", st->hud_wide, st->fov,
+            st->skip_cutscenes);
     fprintf(f, "; cstick_1p = 1: the C-stick does smash attacks in 1P modes and training too (not the camera).\n");
     fprintf(f, "[input]\nrumble = %d\ncstick_1p = %d\n\n", pct(st->rumble), st->cstick_1p);
     fprintf(f, "; trigger_z = left or right: that trigger is Z (grab) instead of L/R; off: both are L/R.\n");
