@@ -128,6 +128,40 @@ const wchar_t* Title(int option) {
   }
 }
 
+const wchar_t* Description(int option) {
+  if (IsBind(option)) {
+    return L"What this button does. Left and right change it.";
+  }
+  switch (option) {
+  case kXO_Widescreen:
+    return L"Auto follows the dashboard. 720p is always 16:9.";
+  case kXO_WidescreenHud:
+    return L"Edges spreads the HUD to the sides of a 16:9 screen.";
+  case kXO_Fov:
+    return L"How wide Samus sees. 55 is the GameCube's.";
+  case kXO_FpsCounter:
+    return L"Frames per second in the corner of the screen.";
+  case kXO_VideoOutput:
+    return L"Used from the next start. Hold BACK at start for 480i.";
+  case kXO_RumbleStrength:
+    return L"How strongly the controller shakes.";
+  case kXO_StickDeadZone:
+    return L"Raise it if Samus moves with the stick untouched.";
+  case kXO_CStickDeadZone:
+    return L"Raise it if the C-stick acts on its own.";
+  case kXO_TriggerClick:
+    return L"How far L and R press in before they click.";
+  case kXO_Screenshots:
+    return L"BACK saves a screenshot to the save folder.";
+  case kXO_SkipCutscenes:
+    return L"START skips any cutscene, from the next room.";
+  case kXO_FusionSuit:
+    return L"The Fusion Suit, a GBA-link bonus on the GameCube.";
+  default:
+    return nullptr;
+  }
+}
+
 bool IsList(int option) { return IsBind(option); }
 
 const wchar_t* ListLabel(int option, int offset) {
