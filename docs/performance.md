@@ -76,6 +76,18 @@ ten `[PERF]` periods:
 | + strip/fan joining, GUI subtree, builtins | ~410 | 21.6 | 5.4 |
 | + ThinLTO, PGO, link order | ~375 | 17.8 | 2.7 |
 
+2026-10-28, LTO + PGO, same scene: the line clipper (`gx_vtx.c`
+`clip_lines`, needed for the rain's lines that cross the camera) first
+cost ~12% of the CPU in xemu, in `gx_vtx_flush`. xemu runs the guest's
+float maths through softfloat, so float-heavy code looks several times
+dearer there than on a Pentium III. It now tests outcodes first and
+divides only for the few lines that cross a plane (~2% of them), and the
+rain and snow grids wholly outside the view are skipped before their
+vertices are built (`CEnvFxManagerGrid::Render`, `GXPortBoxCulled`): xemu
+~27 -> ~30 fps. Most grids touch the view (the camera is inside the rain
+volume), so about half of the rain's lines are still built and then
+dropped as off-screen.
+
 The profile of the last (LTO + PGO) build: `GXCallDisplayList` 16.6%
 (skinned models' lists decoded on every call; the dynamic-list budget is
 full) and 5% more in its copies, the rain's immediate-mode calls ~9% (it
