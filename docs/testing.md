@@ -41,6 +41,7 @@ console put it next to `default.xbe`. Its `env` lines set what the game's
 | `env MP_SKIP_CUTSCENES=1`, `env MP_CUTSCENE_SPEED=4` | skip or speed up cinematics |
 | `env PX_ALL_ITEMS=1` | with `MP_BOOT_WORLD`: every item (visors, beams, suits, 250 missiles, 14 tanks) |
 | `env PX_SKIPPABLE=1` | Port Options' Skip Cutscenes on, over settings.ini |
+| `env PX_WIDESCREEN=0`, `=1`, `=2` | Port Options' Widescreen: 4:3, as the dashboard, 16:9 (over settings.ini) |
 | `env MP_INVULNERABLE=1` | no damage |
 | `env PX_LOCKSTEP=1` | one simulation tick per frame (comparable screenshots) |
 

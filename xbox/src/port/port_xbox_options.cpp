@@ -412,6 +412,12 @@ void RestoreDefaults(int category) {
 }
 
 void ApplyAtBoot() {
+#if XHW_TEST_BUILD
+  // test builds: "env PX_WIDESCREEN=0|1|2" (4:3, as the dashboard, 16:9) over settings.ini
+  if (const char* w = getenv("PX_WIDESCREEN")) {
+    g_xsdk_settings.widescreen = atoi(w) == 1 ? 1 : atoi(w) == 2 ? 2 : 0;
+  }
+#endif
   ApplyAspect();
   PortDebug::SetHudWide(g_xsdk_settings.hud_wide != 0);
   PortDebug::SetSkippableCutscenes(g_xsdk_settings.skip_cutscenes != 0);
