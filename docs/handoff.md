@@ -3,11 +3,11 @@
 Update this at the end of every session: what was done, what's next,
 what's broken, anything the next agent would otherwise rediscover.
 
-## Where it stands now (2026-10-28, overnight)
+## Where it stands now (2026-10-28, morning)
 
 The game plays through every world in xemu (`tools/xbox/room_sweep.sh`:
-14 rooms, no failure) and on the red console (round hw4: the Landing Site
-at ~27-41 fps, up from hw1's ~10). Everything is committed and pushed on
+14 rooms, no failure) and on the red console (round hw5: ~35-45 fps in most
+rooms at 480i, the Landing Site 37-46, up from hw1's ~10). Everything is committed and pushed on
 `dev`. Ship builds are `XBOX_LTO=1 XBOX_PGO=xbox/prime.profdata`
 (`docs/pgo.md`). Done overnight, newest first:
 
@@ -53,6 +53,30 @@ at ~27-41 fps, up from hw1's ~10). Everything is committed and pushed on
 - Streamed music (the AI path) mixed into MusyX's output.
 - Test hooks: `env PX_ALL_ITEMS=1`, `PX_SKIPPABLE=1`, `PX_WIDESCREEN=0|1|2`.
 - Console round hw5 (a profile of five scenes) is prepared, not run.
+
+## Console round hw5 (red, 2026-10-28)
+
+Chain `tools/xbox/scenarios/hw5` (five profiler builds, ThinLTO + PGO with
+the retrained profile), logs and shots in `C:\xemu\hw\prime\logs-hw5`,
+map `C:\xemu\hw\prime\prime_x.hw5.map`. The old test folders on the
+console (`Melee-X-r14*`, `-r15*`, `Prime-X-r1*`, `-r4*`) were removed at the
+user's request; `Melee-X` and `Prime-X` (free play, the disc images) stay.
+
+- Ran start to end and returned to the dashboard by itself; no hang, and
+  the audio start-up freeze of hw4's r4c didn't recur.
+- fps at 480i: front end 32-45, Landing Site 37-46 (hw4 27-41, hw1 ~10),
+  Main Plaza 21-46 (hw1 ~5; low while it streams in), Frigate 26-43,
+  Phendrana 36-43.
+- Landing cinematic: the vertical streaks are gone (particle texcoords).
+  4 of 9 shots are washed out white, letterbox bars too: the full-screen
+  additive camera filter (lightning?) is being traced for its colour and
+  alpha (`/c/xemu/px/white2.log`).
+- Profile, Landing Site: `GXCallDisplayList` 13%, `memcpy` 10%, the rain's
+  per-vertex path ~11% (`GXTexCoord1s16`, `GXPosition3s16`,
+  `gx_vtx_flush`), `CEnvFxManager::Update` 3.5%, `BuildBoneRange` 3.3%.
+  Main Plaza: display lists 13%, `xgx_draw` 8%.
+- Watchdog: a busy stall (the boot screen) over 5 minutes now counts as a
+  hang, so a freeze there reboots to the dashboard like any other.
 
 ## The first build session (2026-10-27)
 

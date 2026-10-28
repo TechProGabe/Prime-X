@@ -2790,9 +2790,10 @@ static void trace_draw(uint32_t prim, uint32_t count, const XgxState* st, int ap
         xhw_logf("[DRAW]  scissor %d,%d %dx%d viewport %d,%d %dx%d", (int)st->scissor[0], (int)st->scissor[1],
                  (int)st->scissor[2], (int)st->scissor[3], (int)st->viewport[0], (int)st->viewport[1],
                  (int)st->viewport[2], (int)st->viewport[3]);
-        for (v = 0; v < count && v < 4 && l->off_tc[0] >= 0; v++) {   /* the first vertices' position and tc0, x1000 */
+        for (v = 0; v < count && v < 4 && (l->off_tc[0] >= 0 || l->off_col[0] >= 0); v++) {   /* the first vertices' position, tc0 (x1000) and colour */
+            static const float k_none[2] = { 0, 0 };
             const float* p = (const float*)(s_draw_base + v * l->stride + l->off_pos);
-            const float* t = (const float*)(s_draw_base + v * l->stride + l->off_tc[0]);
+            const float* t = l->off_tc[0] >= 0 ? (const float*)(s_draw_base + v * l->stride + l->off_tc[0]) : k_none;
             const uint8_t* c = l->off_col[0] >= 0 ? s_draw_base + v * l->stride + l->off_col[0] : NULL;
             xhw_logf("[DRAW]  v%u pos %d %d %d tc0 %d %d col %02x%02x%02x%02x", v, (int)(p[0] * 1000),
                      (int)(p[1] * 1000), (int)(p[2] * 1000), (int)(t[0] * 1000), (int)(t[1] * 1000), c ? c[0] : 0,

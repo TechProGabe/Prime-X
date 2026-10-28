@@ -15,6 +15,10 @@ XBOX_CFLAGS="-DXHW_AUTOPAD=1 -DXHW_PROF=1"`), one folder each under
 | `Prime-X-r5d` | the Frigate's opening (the heaviest scene in xemu) |
 | `Prime-X-r5e` | Phendrana Drifts |
 
+Result (2026-10-28): ran through and back to the dashboard; fps and the
+profile are in `docs/handoff.md` ("Console round hw5") and
+`docs/roadmap.md`.
+
 What it answers: where the console's ~15-25 ms of "sim" goes (xemu's CPU
 is faster than the Pentium III and its proportions differ), and whether
 the audio start-up freeze after a chained launch (round hw4 r4c) recurs:

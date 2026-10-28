@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/status-planning-orange" alt="status: planning">
+  <img src="https://img.shields.io/badge/status-in%20development-orange" alt="status: in development">
   <img src="https://img.shields.io/badge/platform-Original%20Xbox-107c10" alt="platform: Original Xbox">
   <img src="https://img.shields.io/badge/target-real%20hardware-2ea44f" alt="target: real hardware">
   <img src="https://img.shields.io/badge/video-480i%20%7C%20480p%20%7C%20720p-1f6fe0" alt="video: 480i, 480p, 720p">
@@ -12,7 +12,7 @@
 
 Metroid Prime, running natively on an original Xbox. No emulator. The game's own decompiled code, rebuilt for the Xbox's Pentium III and drawn by its NV2A GPU.
 
-> **Status: planning.** Nothing runs yet. This repo holds the plan an agent picks up to build the port: start at [docs/plan.md](docs/plan.md). The rest of this README describes what Prime-X is meant to be when it ships, in the same shape as [Melee-X](https://github.com/TechProGabe/Melee-X)'s.
+> **Status: in development, no release yet.** The game boots and plays on a real console and in xemu: every world loads, with sound, music, rumble and the Prime-X settings. On a stock console at 480 it runs at about 35-45 fps in most rooms, with 60 the goal. Where it stands, what's broken and what's next: [docs/roadmap.md](docs/roadmap.md) and [docs/handoff.md](docs/handoff.md). The rest of this README describes Prime-X as it will ship.
 
 This is the third port in the family, after [OpenCrossing-Xbox](https://github.com/TechProGabe/OpenCrossing-Xbox) (Animal Crossing) and [Melee-X](https://github.com/TechProGabe/Melee-X) (Super Smash Bros. Melee). Melee-X proved the Xbox can run a decompiled GameCube game at full speed; Prime-X takes the same GameCube-on-Xbox layer and puts Metroid Prime on it.
 
@@ -25,8 +25,8 @@ What it's aiming for:
 - The whole game, Frigate Orpheon to the credits
 - **60 fps at 480i/480p, 30 fps or better at 720p**, and as high as the console allows everywhere. The game itself always ticks at full speed
 - 480i, 480p or 720p, with **16:9 widescreen at both 480 and 720**, up to whatever your dashboard allows
-- Settings right in the game's own Options screens, on the title screen and in the pause menu, drawn in Prime's own visor style
-- A few extras on top of the GameCube game: skippable cutscenes, an edge-to-edge widescreen HUD, and a field-of-view slider
+- Settings right in the game's own screens, drawn in Prime's own visor style: **Port Options** on the main menu (no save file needed) and in the pause menu's Options
+- A few extras on top of the GameCube game, all off or retail by default: skippable cutscenes, an edge-to-edge widescreen HUD, a field-of-view setting, an FPS counter, screenshots, and the Fusion Suit (a GBA-link bonus on the GameCube)
 - Rumble, and saves in the GameCube `.gci` format, so a Dolphin or memory card save works here and the other way around
 - **L + R + Back + Black** on any controller quits to the dashboard
 
@@ -60,7 +60,7 @@ The same as Melee-X: grab `Prime-X-<version>.zip` from Releases, put your disc i
 | Start | Start | pause |
 | L + R + Back + Black | | quit to the dashboard |
 
-The buttons sit where they do on a GameCube pad, as on Melee-X. They can be remapped per port.
+The buttons sit where they do on a GameCube pad, as on Melee-X. They can be remapped per controller in Port Options. In menus, B goes back.
 
 ## Video
 
@@ -73,13 +73,17 @@ Your dashboard decides what your TV and cables can handle, and Prime-X never goe
 
 **Black screen?** Hold **Back** on any controller while Prime-X starts (the boot screen tells you when). That boot comes up in 480i and turns 720p and 480p off in your settings.
 
+## First start
+
+The first start checks every file of your disc image against the known-good copy, about a minute with the intro music playing; later starts only check that the image is the one that passed. A bad or different dump gets a screen saying what's wrong instead of a crash later.
+
 ## Saves and logs
 
 Saves go to `E:\UDATA\50580001\card_a\` as normal GameCube `.gci` files, written to a new file first and only then swapped in. Logs go to `E:\UDATA\50580001\`: `boot.log`, `boot_prev.log`, and `crash.log` or `hang.log` if something went wrong. Settings live in `E:\UDATA\50580001\settings.ini`.
 
 ## Building it
 
-nxdk and LLVM 21, natively on Windows with MSYS2 or in Docker, the same toolchain as Melee-X. There's no code yet: [docs/plan.md](docs/plan.md) is the plan, [docs/toolchain.md](docs/toolchain.md) the setup, and [docs/](docs/README.md) has the rest.
+nxdk and LLVM 21, natively on Windows with MSYS2 (`tools/xbox/msys/build.sh`) or in Docker (`tools/xbox/docker/build.sh`), the same toolchain as Melee-X. Release builds use ThinLTO and profile-guided optimization with the committed profile (`XBOX_LTO=1 XBOX_PGO=xbox/prime.profdata`, [docs/pgo.md](docs/pgo.md)). Setup is in [docs/toolchain.md](docs/toolchain.md), testing in xemu and on consoles in [docs/testing.md](docs/testing.md), and [docs/](docs/README.md) has the rest.
 
 ## Thanks
 
