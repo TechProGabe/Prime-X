@@ -1274,9 +1274,12 @@ static void call_display_list(const void* list, u32 nbytes) {
 #define DLC_MAX_BATCH 4096      /* Fountain of Dreams' stage: one 104 KB list of more than 512 */
 #define DLC_MAX_RANGE 12
 #define DLC_VOLATILE 4          /* rebuilds before a list goes dynamic */
-#define DLC_DYN_BUDGET (2048u * 1024)   /* template + index bytes for all dynamic lists (1 MB left the
-                                           ship's save station, Samus up close, decoded every call:
-                                           12-14 fps, round hw5) */
+#define DLC_DYN_BUDGET (1024u * 1024)   /* template + index bytes for all dynamic lists */
+/* and 1 MB more while the Xbox has DLC_DYN_EXTRA_FREE free: 1 MB left the
+ * ship's save station (Samus up close) decoded every call, 12-14 fps on the
+ * console (round hw5), but the memory is the game's to have first */
+#define DLC_DYN_EXTRA (1024u * 1024)
+#define DLC_DYN_EXTRA_FREE (6u * 1024)  /* KB */
 #define DLC_DYN_RETRY 120       /* frames before a list the budget turned away tries again */
 
 typedef struct {
@@ -1975,7 +1978,7 @@ static int dyn_build(DlEntry* e, uint32_t frame) {
     static IdxRange r;
     DlBatch* batch;
     uint32_t* idx_first;
-    uint32_t total, nidx = 0, a, bytes;
+    uint32_t total, nidx = 0, a, bytes, budget;
     uint8_t fmts;
     DynList* d;
     int nb = dl_scan(e->dl, e->nbytes, &total, &fmts), i, k;
@@ -2025,9 +2028,10 @@ static int dyn_build(DlEntry* e, uint32_t frame) {
     /* over the budget: make room by dropping the dynamic lists no draw has
      * used for a while (a model from a room left behind keeps its template
      * otherwise, and every list after it goes volatile: Phendrana, ~80) */
-    while (s_dyn_bytes + bytes > DLC_DYN_BUDGET && dyn_evict_idle(frame, e)) {
+    budget = DLC_DYN_BUDGET + (xhw_mem_free_kb() >= DLC_DYN_EXTRA_FREE ? DLC_DYN_EXTRA : 0);
+    while (s_dyn_bytes + bytes > budget && dyn_evict_idle(frame, e)) {
     }
-    if (s_dyn_bytes + bytes > DLC_DYN_BUDGET) {
+    if (s_dyn_bytes + bytes > budget) {
         free(d->batch);
         free(d);
         return 0;

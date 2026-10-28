@@ -486,14 +486,22 @@ void xhw_commit(const void* p, uint32_t bytes) {
     if (!bytes || !(l = lazy_find(a))) return;
     if (end > l->base + l->size) end = l->base + l->size;
     for (a = (a - l->base) / LAZY_CHUNK; a <= (end - 1 - l->base) / LAZY_CHUNK; a++)
-        if (!lazy_commit_chunk(l, (uint32_t)a))
+        if (!lazy_commit_chunk(l, (uint32_t)a)) {
+            xhw_logf("[MEM] out of memory committing %u KB at %08x (free %u KB)", bytes / 1024,
+                     (unsigned)(uintptr_t)p, xhw_mem_free_kb());
             xhw_fatal("Out of memory", "The Xbox ran out of memory for the game's main memory or ARAM.");
+        }
 }
 
 int xhw_lazy_fault(uintptr_t addr) {
     Lazy* l = lazy_find(addr);
     if (!l || KeGetCurrentIrql() >= DISPATCH_LEVEL) return 0;
-    return lazy_commit_chunk(l, (uint32_t)((addr - l->base) / LAZY_CHUNK));
+    if (lazy_commit_chunk(l, (uint32_t)((addr - l->base) / LAZY_CHUNK))) return 1;
+    /* the Xbox has no page left for it: say so, as xhw_commit does, not as
+     * an access violation (the instrumented build in the Frigate) */
+    xhw_logf("[MEM] out of memory committing %08x (free %u KB)", (unsigned)addr, xhw_mem_free_kb());
+    xhw_fatal("Out of memory", "The Xbox ran out of memory for the game's main memory or ARAM.");
+    return 0;
 }
 
 void xhw_lazy_set_fill(const void* base, void (*fill)(void* chunk)) {
