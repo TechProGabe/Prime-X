@@ -11,6 +11,20 @@ at ~27-41 fps, up from hw1's ~10). Everything is committed and pushed on
 `dev`. Ship builds are `XBOX_LTO=1 XBOX_PGO=xbox/prime.profdata`
 (`docs/pgo.md`). Done overnight, newest first:
 
+- **Particles' texture coordinates**: CElementGen writes each quad corner's
+  TEX0 (two S8s, one fraction bit) with `GXTexCoord1s16(0x0202)`; it was
+  taken as one 16-bit coordinate, so every particle's t was 0 and its
+  texture's top row stretched across it in stripes. A 16-bit write now
+  fills the vertex's next two bytes whatever the call is named (`gx_vtx.c`
+  `put16`; it also covers the rain's RGBA4 colour, `color16_next` before).
+  This was the landing cinematic's "washed out white with vertical streaks"
+  (round hw1): the ship's steam clouds, close to the camera.
+- **Lines clipped on the CPU** to the near plane and a 2x guard band
+  (`gx_vtx.c` `clip_lines`): the rain lines with an end behind or just in
+  front of the camera came out flipped or ~300,000 px long.
+- Trace builds (`-DXGX_DEBUG_TRACE=1`) print each traced draw's first four
+  vertices (position, tc0).
+
 - The picture's aspect follows the game's EFB (`VIConfigure` ->
   `xgx_set_efb_width`): no more 9% squeeze and side bars at 480, full 16:9
   at 720p, letterboxed 16:9 on a 4:3 screen. 720p tested in xemu (slot 3,
@@ -64,7 +78,8 @@ Chozo Main Plaza) then free play. Red: 480i 4:3 composite (AV pack 1).
   lists 120 ms, 7000 draws, 148k vertices). Phase 6 starts here.
 - Memory: lowest free 3.7 MB (Frigate opening, Main Plaza).
 - Console-only bugs: the landing cinematic (Tallon, frame 900) washed out
-  white with vertical streaks; the arm cannon missing in Main Plaza (the
+  white with vertical streaks (fixed 2026-10-28: particle texcoords, see
+  the top); the arm cannon missing in Main Plaza (the
   user also saw it "white sometimes").
 - The user: the disc check needed explaining (done: the boot screen, E).
 
@@ -97,7 +112,7 @@ XBE, the check passes in ~65 s, the splash costs 19 ms a frame at 25 fps
   game switches palettes per run of text without reloading the font.
 - **Rain**: `RenderRainParticles` writes its RGBA4 colour with
   `GXTexCoord1s16`; taken as a texcoord, every rain batch ended short and no
-  rain drew (`gx_vtx.c` `color16_next`).
+  rain drew (`gx_vtx.c` `color16_next`, now `put16`).
 - **GUI**: `CGuiObject` recomputes only the moved subtree (was n^2).
 - **Options rows** on the pause screen (`docs/ui.md`); still to do: the
   title-screen Options, Skip Cutscenes, **button remap page** (the user:
@@ -146,15 +161,15 @@ Open, in rough order:
    in bright rooms (the user's "gun white sometimes"), Magmoor's second room
    (`/c/xemu/px/scen-mag`, shot 2: the gun grey, big translucent blue
    panels; maybe the elevator's glass), the visors once they switch.
-3b. Magmoor's Lava Lake (`env MP_BOOT_WORLD=3EF8237C:A4719C6A`): the lava
-   shows as a block with vertical streaks. The draw (`-DXGX_DEBUG_TRACE=1`,
-   #373: 6 TEV stages, position texgens through sane texture matrices, one
-   emboss-bump texgen we don't support) looks right on paper; it may be a
-   lava fall. Needs a Dolphin frame of the same spot to judge. The heat-haze
-   overlay (#418) is an indirect warp of an EFB copy, drawn without the warp.
+3b. Magmoor's Lava Lake (`env MP_BOOT_WORLD=3EF8237C:A4719C6A`): the
+   "block with vertical streaks" was the particle texcoord bug (fixed
+   2026-10-28); the lava and its fire draw right in the sweep now. The
+   heat-haze overlay is an indirect warp of an EFB copy, drawn without the
+   warp (3c).
 3c. Morph Ball (`env PX_ALL_ITEMS=1`, Phendrana): transforms and rolls; the
    transition frame has a fine crosshatch over the whole screen (the
-   game's blur through an EFB copy?). The heat haze over Magmoor's rooms is
+   game's blur through an EFB copy? or the transition's particles, which
+   drew striped before 2026-10-28's texcoord fix: recheck first). The heat haze over Magmoor's rooms is
    drawn without its indirect warp: its two indirect maps are 512x256
    A8R8G8B8 (EFB copies, new each frame), past `ind_tex`'s 64K-texel limit;
    converting them would read ~1 MB of uncached pool memory a frame, ~5-10
@@ -195,6 +210,14 @@ interlaced movies, streamed music, the title's text.)
   unfinished merge: never touch it; read `ref/Melee-X` (pinned) instead.
 - Heredocs in Git Bash mangle backslashes in some cases: write files that
   contain `\\` with the editor tools, not `cat <<EOF`.
+- Host tests on this PC: `PATH=/c/msys64/mingw64/bin:$PATH CC=gcc python
+  tools/xbox/test_<name>.py` (no compiler on the Windows PATH, no Docker;
+  `test_vp_encoder.py` also wants the `nv2a_vsh` module).
+- `PX_LOCKSTEP=1` runs aren't frame-exact from one run to the next (loads
+  and streaming vary), so a SHOT frame number lands on different moments.
+  To bisect a glitch, shoot a dense run of frames in one run, pick the bad
+  ones by their traced draw count, and skip draw ranges (`XGX_SKIP`) over
+  that window. The trace's first-vertices lines show bad attribute decodes.
 
 ## The user's requirements, in one place
 
