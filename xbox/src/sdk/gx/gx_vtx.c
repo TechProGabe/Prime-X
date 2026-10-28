@@ -8,6 +8,7 @@
  *    (big-endian disc data, or native when the game built them).
  * Both decode each attribute by the current vertex descriptor and the VAT
  * of the batch's vertex format, into a vertex slot the back end handed out. */
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -392,9 +393,105 @@ static int list_prim(uint32_t prim, uint32_t n) {
     }
 }
 
+/* Immediate lines against the view volume, on the CPU. The vertex program
+ * divides by w itself (nv2a_vp.c), so a line with an end behind the camera
+ * came out flipped across the screen, and one with an end just in front of
+ * it hundreds of thousands of pixels long. Prime's rain
+ * (CEnvFxManagerGrid::RenderRainParticles: GX_LINES in a grid around the
+ * camera) has both every frame. GX clips to the near plane and its guard
+ * band; this does the same in clip space, to the near plane and twice the
+ * viewport (Liang-Barsky). GX's clip z runs from -w at the near plane to 0
+ * at the far one (C_MTXPerspective: w = -z). Perspective only, one position
+ * matrix for the batch; the other attributes are interpolated with the
+ * position (colours per byte, the rest as floats). Triangles go out as
+ * they are. */
+#define LINE_GUARD 2.0f
+#define CLIP_MAX_STRIDE 256
+#define CLIP_PLANES 5
+static uint32_t s_st_lines, s_st_line_drop, s_st_line_clip;
+
+/* the vertex's distances inside the near plane and the four guard planes */
+static void clip_dist(const uint8_t* v, const XgxLayout* l, const float (*m)[4], float guard, float d[CLIP_PLANES]) {
+    const float(*p)[4] = g_xgx.proj;
+    const float* x = (const float*)(v + l->off_pos);
+    const float vx = m[0][0] * x[0] + m[0][1] * x[1] + m[0][2] * x[2] + m[0][3];
+    const float vy = m[1][0] * x[0] + m[1][1] * x[1] + m[1][2] * x[2] + m[1][3];
+    const float vz = m[2][0] * x[0] + m[2][1] * x[1] + m[2][2] * x[2] + m[2][3];
+    const float cx = p[0][0] * vx + p[0][2] * vz, cy = p[1][1] * vy + p[1][2] * vz;
+    const float cz = p[2][2] * vz + p[2][3], cw = -vz;
+    d[0] = cz + cw;
+    d[1] = guard * cw + cx;
+    d[2] = guard * cw - cx;
+    d[3] = guard * cw + cy;
+    d[4] = guard * cw - cy;
+}
+
+static void lerp_vertex(uint8_t* dst, const uint8_t* a, const uint8_t* b, float t, const XgxLayout* l) {
+    uint32_t w;
+    for (w = 0; w < l->stride / 4; w++) {
+        int32_t off = (int32_t)(w * 4);
+        if (off == l->off_col[0] || off == l->off_col[1]) {
+            int k;
+            for (k = 0; k < 4; k++) dst[off + k] = (uint8_t)(a[off + k] + (b[off + k] - a[off + k]) * t + 0.5f);
+        } else {
+            const float fa = *(const float*)(a + off), fb = *(const float*)(b + off);
+            *(float*)(dst + off) = fa + (fb - fa) * t;
+        }
+    }
+}
+
+/* the batch's position matrix, or 0 when it can't be clipped here */
+static const float (*clip_mtx(void))[4] {
+    const XgxLayout* l = &B.plan.layout;
+    if (g_xgx.proj_ortho || l->off_mtx >= 0 || l->off_pos < 0 || l->stride > CLIP_MAX_STRIDE) return 0;
+    return g_xgx.posmtx[(g_xgx.cur_posmtx / 3) % XGX_NUM_POSMTX];
+}
+
+static void clip_lines(void) {
+    const XgxLayout* l = &B.plan.layout;
+    const uint32_t s = l->stride;
+    const float(*m)[4] = clip_mtx();
+    uint8_t* base = B.base;
+    uint8_t tmp[2][CLIP_MAX_STRIDE];
+    uint32_t i, out = 0;
+    if (!m) return;
+    for (i = 0; i + 1 < B.done; i += 2) {
+        uint8_t* v[2] = { base + i * s, base + (i + 1) * s };
+        float d[2][CLIP_PLANES], t0 = 0.0f, t1 = 1.0f;
+        int q;
+        clip_dist(v[0], l, m, LINE_GUARD, d[0]);
+        clip_dist(v[1], l, m, LINE_GUARD, d[1]);
+        s_st_lines++;
+        for (q = 0; q < CLIP_PLANES && t0 < t1; q++) {
+            const float a = d[0][q], b = d[1][q];
+            if (a < 0.0f && b < 0.0f) t0 = t1 = 1.0f;   /* wholly outside */
+            else if (a < 0.0f) t0 = fmaxf(t0, a / (a - b));
+            else if (b < 0.0f) t1 = fminf(t1, a / (a - b));
+        }
+        if (t0 >= t1) {
+            s_st_line_drop++;
+            continue;
+        }
+        if (t0 > 0.0f || t1 < 1.0f) {
+            s_st_line_clip++;
+            lerp_vertex(tmp[0], v[0], v[1], t0, l);
+            lerp_vertex(tmp[1], v[0], v[1], t1, l);
+            memcpy(base + out * s, tmp[0], s);
+            memcpy(base + (out + 1) * s, tmp[1], s);
+        } else if (out != i) {
+            memmove(base + out * s, v[0], 2 * s);
+        }
+        out += 2;
+    }
+    B.done = B.expected = out;
+}
+
 static void draw_batch(void) {
-    uint32_t s = B.plan.layout.stride, n = out_count(B.prim, B.done);
+    uint32_t s, n;
     uint8_t* v;
+    if (B.prim == XGX_LINES) clip_lines();
+    s = B.plan.layout.stride;
+    n = out_count(B.prim, B.done);
     B.pending = 0;
     if (!n || !(v = (uint8_t*)xgx_vtx_alloc(n, s))) return;
     copy_prim(v, B.base, B.prim, B.done, s);
@@ -828,37 +925,31 @@ void GXTexCoord1f32(f32 s) {
     }
     imm_tex(s, 0);
 }
-void GXTexCoord1u16(u16 s) { imm_tex(tq(s), 0); }
-/* The FIFO only sees bytes: a 16-bit write where the vertex expects a
- * 16-bit colour (RGB565, RGBA4) is that colour. Prime's rain
- * (CEnvFxManagerGrid::RenderRainParticles) declares POS + CLR0 RGBA4 and
- * writes each streak end's colour with GXTexCoord1s16 (alpha 10, then 0);
- * taken as a texture coordinate, every rain batch ended short and no rain
- * drew. */
-static int color16_next(void) {
+/* The FIFO only sees bytes: a 16-bit write is the next two bytes of the
+ * vertex, whatever the call's name says. Prime writes them through
+ * GXTexCoord1s16 where the vertex holds something else: the rain
+ * (CEnvFxManagerGrid::RenderRainParticles) a CLR0 RGBA4 per streak end
+ * (alpha 10, then 0), the particle quads (CElementGen) a TEX0 of two S8s
+ * with one fraction bit (0x0202: s and t 1.0). Taken as one coordinate,
+ * the rain ended every batch short and drew nothing, and every particle's
+ * t was 0: its texture's top row stretched over it, in stripes (the
+ * landing cinematic, round hw1's "sky texture issues on ship entry"). */
+static int put16(uint16_t v) {
     const Slot* sl = cur_slot();
-    return sl && sl->type == GX_DIRECT && (sl->attr == GX_VA_CLR0 || sl->attr == GX_VA_CLR1) &&
-           color_size(sl->fmt.type) == 2;
+    uint8_t b[2];
+    if (!sl || sl->type != GX_DIRECT || sl->dsize != 2) return 0;
+    b[0] = (uint8_t)(v >> 8);
+    b[1] = (uint8_t)v;
+    store(sl, b, 1, B.cur);
+    B.cursor++;
+    after_attr();
+    return 1;
+}
+void GXTexCoord1u16(u16 s) {
+    if (!put16(s)) imm_tex(tq(s), 0);
 }
 void GXTexCoord1s16(s16 s) {
-    const Slot* sl = cur_slot();
-    if (sl && sl->type == GX_DIRECT && sl->attr == GX_VA_CLR0 && sl->fmt.type == GX_RGBA4) {
-        /* the rain's streak colours: RGBA4 straight into the vertex */
-        uint8_t* o = B.cur + sl->dst;
-        const uint32_t v = (u16)s;
-        o[0] = (uint8_t)(((v >> 12) & 15) * 17);
-        o[1] = (uint8_t)(((v >> 8) & 15) * 17);
-        o[2] = (uint8_t)(((v >> 4) & 15) * 17);
-        o[3] = (uint8_t)((v & 15) * 17);
-        B.cursor++;
-        after_attr();
-        return;
-    }
-    if (color16_next()) {
-        GXColor1u16((u16)s);
-        return;
-    }
-    imm_tex(tq(s), 0);
+    if (!put16((u16)s)) imm_tex(tq(s), 0);
 }
 void GXTexCoord1u8(u8 s) { imm_tex(tq(s), 0); }
 void GXTexCoord1s8(s8 s) { imm_tex(tq(s), 0); }
@@ -2150,6 +2241,8 @@ void gx_vtx_frame_end(void) {
             for (i = 0; i < FLUSH_WHO; i++)
                 if (s_begin_n[i]) n += snprintf(line + n, sizeof line - (size_t)n, " %08x:%u", s_begin_who[i], s_begin_n[i]);
             xhw_logf("[DLC] immediate batches begun from:%s", n ? line : " -");
+            xhw_logf("[DLC] lines %u: %u outside the view, %u clipped", s_st_lines, s_st_line_drop, s_st_line_clip);
+            s_st_lines = s_st_line_drop = s_st_line_clip = 0;
             memset(s_begin_n, 0, sizeof s_begin_n);
             memset(s_begin_who, 0, sizeof s_begin_who);
         }
