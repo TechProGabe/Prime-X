@@ -8,7 +8,6 @@
  *    (big-endian disc data, or native when the game built them).
  * Both decode each attribute by the current vertex descriptor and the VAT
  * of the batch's vertex format, into a vertex slot the back end handed out. */
-#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -410,20 +409,39 @@ static int list_prim(uint32_t prim, uint32_t n) {
 #define CLIP_PLANES 5
 static uint32_t s_st_lines, s_st_line_drop, s_st_line_clip;
 
-/* the vertex's distances inside the near plane and the four guard planes */
-static void clip_dist(const uint8_t* v, const XgxLayout* l, const float (*m)[4], float guard, float d[CLIP_PLANES]) {
+/* The clip-space rows for the batch, once: cx, cy, cw and the near plane's
+ * distance cz + cw, from the projection times the position matrix. 0 when
+ * the batch can't be clipped here. */
+static int clip_rows(float r[4][4]) {
+    const XgxLayout* l = &B.plan.layout;
     const float(*p)[4] = g_xgx.proj;
+    const float(*m)[4];
+    int k;
+    if (g_xgx.proj_ortho || l->off_mtx >= 0 || l->off_pos < 0 || l->stride > CLIP_MAX_STRIDE) return 0;
+    m = g_xgx.posmtx[(g_xgx.cur_posmtx / 3) % XGX_NUM_POSMTX];
+    for (k = 0; k < 4; k++) {   /* GX's perspective: cx = p00 x + p02 z, cy = p11 y + p12 z, cz = p22 z + p23, cw = -z */
+        const float mz = m[2][k], t = k == 3 ? 1.0f : 0.0f;
+        r[0][k] = p[0][0] * m[0][k] + p[0][2] * mz;
+        r[1][k] = p[1][1] * m[1][k] + p[1][2] * mz;
+        r[2][k] = -mz;
+        r[3][k] = p[2][2] * mz + p[2][3] * t - mz;
+    }
+    return 1;
+}
+
+/* the vertex's distances inside the planes (near, then the guard band's
+ * four) and its outcode, a bit per plane it is outside */
+static inline uint32_t clip_dist(const uint8_t* v, const XgxLayout* l, const float r[4][4], float d[CLIP_PLANES]) {
     const float* x = (const float*)(v + l->off_pos);
-    const float vx = m[0][0] * x[0] + m[0][1] * x[1] + m[0][2] * x[2] + m[0][3];
-    const float vy = m[1][0] * x[0] + m[1][1] * x[1] + m[1][2] * x[2] + m[1][3];
-    const float vz = m[2][0] * x[0] + m[2][1] * x[1] + m[2][2] * x[2] + m[2][3];
-    const float cx = p[0][0] * vx + p[0][2] * vz, cy = p[1][1] * vy + p[1][2] * vz;
-    const float cz = p[2][2] * vz + p[2][3], cw = -vz;
-    d[0] = cz + cw;
-    d[1] = guard * cw + cx;
-    d[2] = guard * cw - cx;
-    d[3] = guard * cw + cy;
-    d[4] = guard * cw - cy;
+    const float cx = r[0][0] * x[0] + r[0][1] * x[1] + r[0][2] * x[2] + r[0][3];
+    const float cy = r[1][0] * x[0] + r[1][1] * x[1] + r[1][2] * x[2] + r[1][3];
+    const float gw = LINE_GUARD * (r[2][0] * x[0] + r[2][1] * x[1] + r[2][2] * x[2] + r[2][3]);
+    d[0] = r[3][0] * x[0] + r[3][1] * x[1] + r[3][2] * x[2] + r[3][3];
+    d[1] = gw + cx;
+    d[2] = gw - cx;
+    d[3] = gw + cy;
+    d[4] = gw - cy;
+    return (d[0] < 0.0f) | (d[1] < 0.0f) << 1 | (d[2] < 0.0f) << 2 | (d[3] < 0.0f) << 3 | (d[4] < 0.0f) << 4;
 }
 
 static void lerp_vertex(uint8_t* dst, const uint8_t* a, const uint8_t* b, float t, const XgxLayout* l) {
@@ -440,49 +458,54 @@ static void lerp_vertex(uint8_t* dst, const uint8_t* a, const uint8_t* b, float 
     }
 }
 
-/* the batch's position matrix, or 0 when it can't be clipped here */
-static const float (*clip_mtx(void))[4] {
-    const XgxLayout* l = &B.plan.layout;
-    if (g_xgx.proj_ortho || l->off_mtx >= 0 || l->off_pos < 0 || l->stride > CLIP_MAX_STRIDE) return 0;
-    return g_xgx.posmtx[(g_xgx.cur_posmtx / 3) % XGX_NUM_POSMTX];
-}
-
+/* Most lines are wholly inside (drawn as they are) or wholly outside one
+ * plane (dropped), told apart by their ends' outcodes; only the rest get
+ * Liang-Barsky's divisions. */
 static void clip_lines(void) {
     const XgxLayout* l = &B.plan.layout;
     const uint32_t s = l->stride;
-    const float(*m)[4] = clip_mtx();
+    float r[4][4];
     uint8_t* base = B.base;
     uint8_t tmp[2][CLIP_MAX_STRIDE];
     uint32_t i, out = 0;
-    if (!m) return;
+    if (!clip_rows(r)) return;
     for (i = 0; i + 1 < B.done; i += 2) {
-        uint8_t* v[2] = { base + i * s, base + (i + 1) * s };
-        float d[2][CLIP_PLANES], t0 = 0.0f, t1 = 1.0f;
-        int q;
-        clip_dist(v[0], l, m, LINE_GUARD, d[0]);
-        clip_dist(v[1], l, m, LINE_GUARD, d[1]);
-        s_st_lines++;
-        for (q = 0; q < CLIP_PLANES && t0 < t1; q++) {
-            const float a = d[0][q], b = d[1][q];
-            if (a < 0.0f && b < 0.0f) t0 = t1 = 1.0f;   /* wholly outside */
-            else if (a < 0.0f) t0 = fmaxf(t0, a / (a - b));
-            else if (b < 0.0f) t1 = fminf(t1, a / (a - b));
-        }
-        if (t0 >= t1) {
+        uint8_t* v0 = base + i * s;
+        uint8_t* v1 = v0 + s;
+        float d0[CLIP_PLANES], d1[CLIP_PLANES];
+        const uint32_t o0 = clip_dist(v0, l, r, d0), o1 = clip_dist(v1, l, r, d1);
+        if (o0 & o1) {   /* both outside one plane */
             s_st_line_drop++;
             continue;
         }
-        if (t0 > 0.0f || t1 < 1.0f) {
+        if (o0 | o1) {
+            float t0 = 0.0f, t1 = 1.0f;
+            int q;
+            for (q = 0; q < CLIP_PLANES; q++) {
+                const float a = d0[q], b = d1[q];
+                if (a < 0.0f) {
+                    const float t = a / (a - b);
+                    if (t > t0) t0 = t;
+                } else if (b < 0.0f) {
+                    const float t = a / (a - b);
+                    if (t < t1) t1 = t;
+                }
+            }
+            if (t0 >= t1) {
+                s_st_line_drop++;
+                continue;
+            }
             s_st_line_clip++;
-            lerp_vertex(tmp[0], v[0], v[1], t0, l);
-            lerp_vertex(tmp[1], v[0], v[1], t1, l);
+            lerp_vertex(tmp[0], v0, v1, t0, l);
+            lerp_vertex(tmp[1], v0, v1, t1, l);
             memcpy(base + out * s, tmp[0], s);
             memcpy(base + (out + 1) * s, tmp[1], s);
         } else if (out != i) {
-            memmove(base + out * s, v[0], 2 * s);
+            memcpy(base + out * s, v0, 2 * s);   /* out < i: the ranges don't meet */
         }
         out += 2;
     }
+    s_st_lines += B.done / 2;
     B.done = B.expected = out;
 }
 
@@ -2287,6 +2310,16 @@ int gx_dl_culled(const void* list, u32 nbytes, const float mtx[3][4]) {
         static GxCullPlanes s_planes;
         return gx_cull_box(gx_cull_planes(&s_planes, g_xgx.proj, gx_proj_gen), e->bmin, e->bmax, mtx);
     }
+}
+
+/* port_xbox_gx.h: the same test for a box the game knows before it draws
+ * (Prime's rain and snow grids, CEnvFxManagerGrid::Render), through the
+ * current position matrix */
+int GXPortBoxCulled(const float bmin[3], const float bmax[3]) {
+    static GxCullPlanes s_planes;
+    if (g_xgx.proj_ortho) return 0;
+    return gx_cull_box(gx_cull_planes(&s_planes, g_xgx.proj, gx_proj_gen), bmin, bmax,
+                       (const float(*)[4])g_xgx.posmtx[(g_xgx.cur_posmtx / 3) % XGX_NUM_POSMTX]);
 }
 
 void GXCallDisplayList(const void* list, u32 nbytes) {

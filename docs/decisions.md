@@ -153,6 +153,7 @@ One line per edit to `src/`, `include/`, `extern/musyx` or
 | `src/Kyoto/Animation/DolphinCSkinRules.cpp` | `BuildBoneRange` positions and plain normals in SSE1, the three rows at once | speed (2.3% in xemu); same operations in the same order, no FMA: the same bits |
 | `src/MetroidPrime/CMainFlow.cpp` | `env PX_ALL_ITEMS=1` with `MP_BOOT_WORLD` gives every item (test builds) | rendering the visors, beams and suits in xemu |
 | `src/GuiSys/CGuiObject.cpp`, `include/GuiSys/CGuiObject.hpp` | moving one widget recomputes its own subtree, not every later sibling's too (`RecalculateSubtree`) | speed: n^2 matrix products a frame for the HUD (3.5% of the Landing Site in xemu); same results |
+| `src/MetroidPrime/CEnvFxManager.cpp` | `CEnvFxManagerGrid::Render` skips a rain/snow grid whose box is wholly outside the view (`GXPortBoxCulled`, `port_xbox_gx.h`) | speed: every particle is a vertex call each frame, about half of them off screen; the GPU would clip them all anyway |
 
 Imported unchanged but added to the game build (MetroidPrimePort compiles
 them as game code): `src/platform/port_raster_font.cpp`,

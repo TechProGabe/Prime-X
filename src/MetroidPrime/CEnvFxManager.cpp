@@ -44,6 +44,9 @@
 
 #include <vector>
 #endif
+#ifdef TARGET_XBOX
+#include "port_xbox_gx.h" // PORT_XBOX: GXPortBoxCulled
+#endif
 
 static const float gkReal32Max = FLT_MAX;
 static float g_SnowForces[256][2];
@@ -203,6 +206,21 @@ void CEnvFxManagerGrid::Render(const CTransform4f& xf, const CTransform4f& invXf
     float gridY = fixed8_8_to_real(x4_position.GetY());
     CTransform4f gridXf = xf * CTransform4f::Translate(gridX, gridY, 0.f);
     gpRender->SetModelMatrix(gridXf);
+#ifdef TARGET_XBOX
+    // PORT_XBOX: a grid wholly outside the view draws nothing, but its
+    // particles cost a vertex call each (the rain: ~20% of the CPU in the
+    // Landing Site, about half of it off screen). Its box: the grid's cell,
+    // the particles' 0..64 height plus the rain's streak, with a margin for
+    // the snow's drift.
+    {
+      const float bmin[3] = {-4.f, -4.f, -4.f};
+      const float bmax[3] = {fixed8_8_to_real(xc_extent.GetX()) + 4.f,
+                             fixed8_8_to_real(xc_extent.GetY()) + 4.f, 72.f};
+      if (GXPortBoxCulled(bmin, bmax)) {
+        return;
+      }
+    }
+#endif
 
     if (fxType == kEFX_Snow || fxType == kEFX_Rain) {
       CVector3f localUp = invXf * (x14_block.second * CVector3f::Up());
