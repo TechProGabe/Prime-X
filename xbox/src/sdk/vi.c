@@ -35,7 +35,12 @@ static u64 sim_period_ns(void) { return 1000000000ull / 60; }
 unsigned xsdk_frame_count(void) { return s_retrace; }
 
 void VIInit(void) {}
-void VIConfigure(const GXRenderModeObj* rm) { (void)rm; }
+/* MetroidPrimePort's widescreen widens the framebuffer (fbWidth 854 at
+ * 16:9, CGraphics::PortResizeFrameBuffer): the back end maps that EFB to the
+ * screen (xgx_set_efb_width) */
+void VIConfigure(const GXRenderModeObj* rm) {
+    if (rm) xgx_set_efb_width(rm->fbWidth);
+}
 void VIConfigurePan(u16 x, u16 y, u16 w, u16 h) { (void)x; (void)y; (void)w; (void)h; }
 void VIFlush(void) {}
 u32 VIGetRetraceCount(void) { return s_retrace; }
