@@ -72,6 +72,8 @@ typedef struct {
     uint32_t wrap_s, wrap_t;        /* GXTexWrapMode */
     uint32_t min_filter, mag_filter;/* GXTexFilter */
     float lod_bias;
+    uint32_t pal;                   /* P8: SET_TEXTURE_PALETTE value of the TLUT in use
+                                       (xgx_tex_palette); 0: the texture's own */
 } XgxMap;
 
 typedef struct {
@@ -228,6 +230,10 @@ enum {
  * to finish with textures already destroyed, if any are pending). */
 uint32_t xgx_tex_create(uint32_t w, uint32_t h, uint32_t levels, uint32_t fmt, const void* data);
 void xgx_tex_destroy(uint32_t tex);   /* deferred until the GPU is done */
+/* a P8 texture's palette as a SET_TEXTURE_PALETTE value, 0 if none: a 1x1 P8
+ * texture made only for its palette serves as a palette any P8 texture can
+ * draw with (XgxMap.pal) */
+uint32_t xgx_tex_palette(uint32_t tex);
 uint32_t xgx_tex_bytes(uint32_t tex); /* pool bytes a live texture holds, 0 otherwise */
 uint32_t xgx_tex_pool_free_kb(void);
 uint32_t xgx_tex_pool_kb(void);

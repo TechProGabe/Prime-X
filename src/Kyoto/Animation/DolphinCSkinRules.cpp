@@ -17,6 +17,9 @@
 #include <string.h>
 #include <thread>
 #include <vector>
+#ifdef TARGET_XBOX
+#include <xmmintrin.h> // PORT_XBOX: SSE1 skinning (BuildBoneRange)
+#endif
 #endif
 
 static int StreamFloatToShort(CInputStream& in) {
@@ -172,6 +175,29 @@ static void BuildBoneRange(const CVirtualBone* bones, int first, int end, int of
                            float* normals, int vecs) {
   const uchar* src = srcPoints + offset * 12;
   float* out = points + offset * 3;
+#ifdef TARGET_XBOX
+  // PORT_XBOX: the three rows at once in SSE (the Pentium III's SSE1). Per
+  // row the same products and sums in the same order, single precision,
+  // no FMA: the same bits as the scalar loop below, ~2.3% of the Landing
+  // Site's CPU in xemu.
+  for (int b = first; b < end; ++b) {
+    const CTransform4f& xf = bones[b].GetTransform();
+    const __m128 c0 = _mm_setr_ps(xf.Get00(), xf.Get10(), xf.Get20(), 0.f);
+    const __m128 c1 = _mm_setr_ps(xf.Get01(), xf.Get11(), xf.Get21(), 0.f);
+    const __m128 c2 = _mm_setr_ps(xf.Get02(), xf.Get12(), xf.Get22(), 0.f);
+    const __m128 c3 = _mm_setr_ps(xf.Get03(), xf.Get13(), xf.Get23(), 0.f);
+    const int count = bones[b].GetNumIndices();
+    for (int i = 0; i < count; ++i, src += 12, out += 3) {
+      const __m128 x = _mm_set1_ps(LoadBigFloat(src));
+      const __m128 y = _mm_set1_ps(LoadBigFloat(src + 4));
+      const __m128 z = _mm_set1_ps(LoadBigFloat(src + 8));
+      const __m128 r =
+          _mm_add_ps(_mm_add_ps(_mm_add_ps(_mm_mul_ps(c0, x), _mm_mul_ps(c1, y)), _mm_mul_ps(c2, z)), c3);
+      _mm_storel_pi(reinterpret_cast< __m64* >(out), r);
+      _mm_store_ss(out + 2, _mm_movehl_ps(r, r));
+    }
+  }
+#else
   for (int b = first; b < end; ++b) {
     const CTransform4f& xf = bones[b].GetTransform();
     const float m00 = xf.Get00(), m01 = xf.Get01(), m02 = xf.Get02(), m03 = xf.Get03();
@@ -185,9 +211,31 @@ static void BuildBoneRange(const CVirtualBone* bones, int first, int end, int of
       out[2] = m20 * x + m21 * y + m22 * z + m23;
     }
   }
+#endif
 
   src = srcNormals + offset * 12 * vecs;
   out = normals + offset * 3 * vecs;
+#ifdef TARGET_XBOX
+  // PORT_XBOX: the normals likewise (x*m00 + y*m01 + z*m02, per row)
+  if (vecs == 1) {
+    for (int b = first; b < end; ++b) {
+      const CMatrix3f& rot = bones[b].GetRotation();
+      const __m128 c0 = _mm_setr_ps(rot.Get00(), rot.Get10(), rot.Get20(), 0.f);
+      const __m128 c1 = _mm_setr_ps(rot.Get01(), rot.Get11(), rot.Get21(), 0.f);
+      const __m128 c2 = _mm_setr_ps(rot.Get02(), rot.Get12(), rot.Get22(), 0.f);
+      const int count = bones[b].GetNumIndices();
+      for (int i = 0; i < count; ++i, src += 12, out += 3) {
+        const __m128 x = _mm_set1_ps(LoadBigFloat(src));
+        const __m128 y = _mm_set1_ps(LoadBigFloat(src + 4));
+        const __m128 z = _mm_set1_ps(LoadBigFloat(src + 8));
+        const __m128 r = _mm_add_ps(_mm_add_ps(_mm_mul_ps(x, c0), _mm_mul_ps(y, c1)), _mm_mul_ps(z, c2));
+        _mm_storel_pi(reinterpret_cast< __m64* >(out), r);
+        _mm_store_ss(out + 2, _mm_movehl_ps(r, r));
+      }
+    }
+    return;
+  }
+#endif
   for (int b = first; b < end; ++b) {
     const CMatrix3f& rot = bones[b].GetRotation();
     const float m00 = rot.Get00(), m01 = rot.Get01(), m02 = rot.Get02();

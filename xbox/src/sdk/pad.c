@@ -58,6 +58,14 @@ static void stick(int16_t x, int16_t y, float deadzone, s8* ox, s8* oy) {
     *oy = (s8)(fy > 127 ? 127 : fy < -127 ? -127 : lroundf(fy));
 }
 
+/* A menu is on screen: the game's menus call PortPointerMenu::Begin each
+ * frame (port_overrides.cpp), which lands here. Then the Xbox B button is
+ * the GameCube's B, back, whatever it does in play (the default layout puts
+ * GameCube B on Xbox X, by position; the user, round hw4: "use B in menus"). */
+static unsigned s_menu_frame = 0x80000000u;
+void xsdk_pad_menu_seen(void) { s_menu_frame = xsdk_frame_count(); }
+static int menu_up(void) { return xsdk_frame_count() - s_menu_frame <= 2; }
+
 static u16 map_buttons(uint32_t b, const xsdk_port_settings* ps) {
     u16 out = 0;
     int i;
@@ -109,7 +117,10 @@ u32 PADRead(PADStatus* status) {
             motors |= 0x80000000u >> i;
             continue;
         }
-        s->button = map_buttons(p.buttons, ps);
+        if (menu_up() && (p.buttons & XHW_BTN_B))
+            s->button = (u16)(map_buttons(p.buttons & ~XHW_BTN_B, ps) | PAD_BUTTON_B);
+        else
+            s->button = map_buttons(p.buttons, ps);
         stick(p.lx, p.ly, ps->stick_deadzone, &s->stickX, &s->stickY);
         stick(p.rx, p.ry, ps->cstick_deadzone, &s->substickX, &s->substickY);
         if (ps->trigger_z == XSDK_TRIGGER_Z_LEFT) {   /* a Z button: no analog L, no L click */

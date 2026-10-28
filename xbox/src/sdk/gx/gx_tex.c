@@ -685,7 +685,7 @@ static uint32_t magenta_tex(void) {
  * call here (-ffreestanding), on every bind. TexObj and XgxMap have no
  * padding, so their bytes are their words. */
 _Static_assert(sizeof(TexObj) == sizeof(void*) + 24, "TexObj: no padding");
-_Static_assert(sizeof(XgxMap) == 32, "XgxMap: 8 words, no padding");
+_Static_assert(sizeof(XgxMap) == 36, "XgxMap: 9 words, no padding");
 static inline int words_same(const void* a, const void* b, uint32_t n) {
     const uint32_t *x = (const uint32_t*)a, *y = (const uint32_t*)b;
     uint32_t i;
@@ -695,6 +695,82 @@ static inline int words_same(const void* a, const void* b, uint32_t n) {
 }
 
 static const TlutObj* tlut_of(const TexObj* o) { return o->is_ci && o->tlut < TLUT_SLOTS ? &s_tlut[o->tlut] : NULL; }
+
+/* ---- palettes apart from their texels ----
+ * A C4/C8 texture is uploaded once as P8 indices; the palette it draws with
+ * is the TLUT in its slot at the draw, set per unit (XgxMap.pal). Prime's
+ * text loads one font texture and then a palette per run of text (fill and
+ * outline colours: the menus' drop shadows are the same glyphs in darker
+ * colours), without loading the texture again: baked into the upload, every
+ * run drew with the palette of the first, and the front end's shadows came
+ * out as bright as the text (round hw1's "doubled" menu text). Each
+ * distinct TLUT (address, format, size; contents checked once a frame) gets
+ * a 1x1 P8 texture made for its palette. */
+#define PAL_MAX 48
+typedef struct {
+    const uint8_t* data;
+    uint32_t hash, tex, pal, checked, last;
+    uint16_t entries;
+    uint8_t fmt;
+} PalEntry;
+static PalEntry s_pal[PAL_MAX];
+static int s_npal;
+
+/* the texels go up once and the palette is chosen per draw (POT C4/C8: P8) */
+static int ci_separate(const TexObj* o) {
+    return o->is_ci && (o->fmt == GX_TF_C4 || o->fmt == GX_TF_C8) && !(o->w & (o->w - 1)) && !(o->h & (o->h - 1));
+}
+
+static uint32_t palette_make(const TlutObj* tl) {
+    static uint8_t buf[4 + XGX_TEX_PALETTE_BYTES];   /* one index, then the palette (as upload_now lays it out) */
+    uint32_t i, pal[256];
+    for (i = 0; i < 256; i++) pal[i] = tlut_color(tl, i);
+    buf[0] = 0;
+    memcpy(buf + native_size(XGX_TEX_P8, 1, 1), pal, sizeof pal);
+    return xgx_tex_create(1, 1, 1, XGX_TEX_P8, buf);
+}
+
+static uint32_t palette_for(const TlutObj* tl) {
+    uint32_t n = tl->entries && tl->entries < 256 ? tl->entries : 256;
+    PalEntry* p = NULL;
+    int i;
+    for (i = 0; i < s_npal; i++)
+        if (s_pal[i].data == tl->data && s_pal[i].fmt == (uint8_t)tl->fmt && s_pal[i].entries == n) {
+            p = &s_pal[i];
+            break;
+        }
+    if (p && p->checked != s_frame) {   /* rewritten in place: a new palette */
+        uint32_t h = hash_bytes(tl->data, n * 2);
+        p->checked = s_frame;
+        if (h != p->hash || !xgx_tex_palette(p->tex)) {
+            xgx_tex_destroy(p->tex);
+            p->tex = 0;
+            p->hash = h;
+        }
+    }
+    if (!p) {
+        if (s_npal < PAL_MAX) {
+            p = &s_pal[s_npal++];
+        } else {   /* the least recently used */
+            p = &s_pal[0];
+            for (i = 1; i < PAL_MAX; i++)
+                if (s_pal[i].last < p->last) p = &s_pal[i];
+            xgx_tex_destroy(p->tex);
+        }
+        memset(p, 0, sizeof *p);
+        p->data = tl->data;
+        p->fmt = (uint8_t)tl->fmt;
+        p->entries = (uint16_t)n;
+        p->hash = hash_bytes(tl->data, n * 2);
+        p->checked = s_frame;
+    }
+    if (!p->tex) {
+        p->tex = palette_make(tl);
+        p->pal = xgx_tex_palette(p->tex);
+    }
+    p->last = s_frame;
+    return p->tex ? p->pal : 0;
+}
 
 /* the same object again, already looked up and validated this frame:
  * nothing changes (s_bound is cleared whenever an entry is dropped) */
@@ -725,6 +801,7 @@ static int obj_valid(const TexObj* o) { return o && o->magic == TEXOBJ_MAGIC && 
  * or upload, bind. */
 static void bind_new(uint32_t map, const TexObj* o, const TlutObj* tl) {
     uint32_t levels = 1, bytes = 0, hash, thash = 0;
+    int sep;
     Entry* e;
     XgxMap* m = &g_xgx.map[map];
     MapBind* b = &s_bound[map];
@@ -742,7 +819,8 @@ static void bind_new(uint32_t map, const TexObj* o, const TlutObj* tl) {
 #endif
     /* the GX size (never 0: w and h are) only when the texels are hashed or
      * uploaded, not for a lookup that finds a texture already checked */
-    e = find(o->data, o->w, o->h, key_fmt(o), (uint8_t)levels, tl ? tl->data : NULL);
+    sep = tl && ci_separate(o);
+    e = find(o->data, o->w, o->h, key_fmt(o), (uint8_t)levels, tl && !sep ? tl->data : NULL);
     if (e && e->efb && s_frame - e->last_used > TEX_IDLE_FRAMES && (e->w != o->w || e->h != o->h)) {
         drop(e);   /* an idle copy's memory, now a texture of another size */
         e = NULL;
@@ -753,7 +831,7 @@ static void bind_new(uint32_t map, const TexObj* o, const TlutObj* tl) {
         bytes = GXGetTexBufferSize(o->w, o->h, o->fmt, o->mipmap, (u8)levels);
         hash = quick ? quick_hash(o->data, bytes) : hash_bytes(o->data, bytes);
         texels = hash != (quick ? c->qhash : c->hash);
-        if (tl) thash = hash_bytes(tl->data, (tl->entries ? tl->entries : 256) * 2);
+        if (tl && !sep) thash = hash_bytes(tl->data, (tl->entries ? tl->entries : 256) * 2);
         if (texels || thash != c->tlut_hash) {
             if (texels) s_st_chg_data++;
             else s_st_chg_tlut++;
@@ -801,10 +879,10 @@ static void bind_new(uint32_t map, const TexObj* o, const TlutObj* tl) {
         e->h = o->h;
         e->fmt = key_fmt(o);
         e->levels = (uint8_t)levels;
-        e->tlut_data = tl ? tl->data : NULL;
+        e->tlut_data = tl && !sep ? tl->data : NULL;
         c->hash = hash_bytes(o->data, bytes);
         c->qhash = quick_hash(o->data, bytes);
-        c->tlut_hash = tl ? hash_bytes(tl->data, (tl->entries ? tl->entries : 256) * 2) : 0;
+        c->tlut_hash = tl && !sep ? hash_bytes(tl->data, (tl->entries ? tl->entries : 256) * 2) : 0;
         e->tex = tex;
         e->checked = s_frame;
     }
@@ -823,6 +901,7 @@ static void bind_new(uint32_t map, const TexObj* o, const TlutObj* tl) {
         nm.min_filter = o->min_f;
         nm.mag_filter = o->mag_f;
         nm.lod_bias = o->lod_bias;
+        nm.pal = sep ? palette_for(tl) : 0;
         if (!words_same(m, &nm, sizeof nm / 4)) {
             *m = nm;
             g_xgx.dirty |= XGX_DIRTY_MAPS;
@@ -1030,9 +1109,19 @@ void GXInitTlutObj(GXTlutObj* obj, const void* data, GXTlutFmt fmt, u16 entries)
 }
 
 void GXLoadTlut(const GXTlutObj* obj, u32 idx) {
+    uint32_t m;
     if (idx < TLUT_SLOTS && memcmp(&s_tlut[idx], obj, sizeof s_tlut[idx]) == 0) return;
     gx_vtx_flush();
-    if (idx < TLUT_SLOTS) s_tlut[idx] = *(const TlutObj*)obj;
+    if (idx >= TLUT_SLOTS) return;
+    s_tlut[idx] = *(const TlutObj*)obj;
+    /* a CI texture already bound with this slot draws with the new palette
+     * from here on, as on the GameCube (the game doesn't load the texture
+     * again: CTextRenderBuffer switches palettes between runs of text) */
+    for (m = 0; m < XGX_MAX_MAPS; m++) {
+        MapBind* b = &s_bound[m];
+        if (b->tex && b->frame == s_frame && b->obj.is_ci && b->obj.tlut == idx && g_xgx.map[m].tex == b->tex)
+            bind_new(m, &b->obj, &s_tlut[idx]);
+    }
 }
 
 void GXInvalidateTexAll(void) {

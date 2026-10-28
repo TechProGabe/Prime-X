@@ -171,7 +171,6 @@ bool PortPointer::Enabled() { PX_STUB("PortPointer::Enabled"); return px_stub_va
 bool PortPointer::MapSwapFingers() { PX_STUB("PortPointer::MapSwapFingers"); return px_stub_value< bool >(); }
 bool PortPointer::TouchIsLast() { PX_STUB("PortPointer::TouchIsLast"); return px_stub_value< bool >(); }
 bool PortPointer::WindowToGui(std::type_identity_t< float > a0, std::type_identity_t< float > a1, std::type_identity_t< float& > a2, std::type_identity_t< float& > a3) { PX_STUB("PortPointer::WindowToGui"); return px_stub_value< bool >(); }
-bool PortPointerMenu::Begin() { PX_STUB("PortPointerMenu::Begin"); return px_stub_value< bool >(); }
 bool PortPointerMenu::Slider(std::type_identity_t< CGuiSliderGroup* > a0) { PX_STUB("PortPointerMenu::Slider"); return px_stub_value< bool >(); }
 bool PortPointerMenu::TakeBack() { PX_STUB("PortPointerMenu::TakeBack"); return px_stub_value< bool >(); }
 bool PortPointerMenu::TakeClick() { PX_STUB("PortPointerMenu::TakeClick"); return px_stub_value< bool >(); }

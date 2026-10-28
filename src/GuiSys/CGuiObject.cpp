@@ -41,7 +41,11 @@ void CGuiObject::MoveInWorld(const CVector3f& offset) {
     GetParent()->RotateW2O(offset);
   }
   x4_localXF.AddTranslation(offset);
+#ifdef TARGET_XBOX
+  RecalculateSubtree(); // PORT_XBOX: only this subtree moved
+#else
   RecalculateTransforms();
+#endif
 }
 
 void CGuiObject::DrawWithWorldTransform(const CGuiWidgetDrawParms& parms, const CTransform4f& xf) {
@@ -63,7 +67,11 @@ void CGuiObject::RotateReset() {
   const CVector3f tmpPos = x4_localXF.GetTranslation();
   x4_localXF = CTransform4f::Identity();
   x4_localXF.SetTranslation(tmpPos);
+#ifdef TARGET_XBOX
+  RecalculateSubtree(); // PORT_XBOX: only this subtree moved
+#else
   RecalculateTransforms();
+#endif
 }
 
 CVector3f CGuiObject::RotateO2P(const CVector3f& vec) const {
@@ -83,7 +91,11 @@ CVector3f CGuiObject::RotateTranslateW2O(const CVector3f& vec) const {
 
 void CGuiObject::MultiplyO2P(const CTransform4f& xf) {
   x4_localXF = xf * x4_localXF;
+#ifdef TARGET_XBOX
+  RecalculateSubtree(); // PORT_XBOX: only this subtree moved
+#else
   RecalculateTransforms();
+#endif
 }
 
 void CGuiObject::AddChildObject(CGuiObject* child, const bool makeWorldLocal, const bool atEnd) {
@@ -151,9 +163,33 @@ void CGuiObject::RecalculateTransforms() {
   }
 }
 
+#ifdef TARGET_XBOX
+// PORT_XBOX: RecalculateTransforms also redoes every later sibling and its
+// subtree, so a frame that moves each of n widgets in turn does n^2/2 matrix
+// products (3.5% of the Landing Site's CPU in xemu, the HUD's frames).
+// Moving one object changes only its own and its children's world
+// transforms: the siblings' parent and locals are unchanged, so their
+// recomputed transforms would be the same numbers. AddChildObject and the
+// explicit calls keep the full walk.
+void CGuiObject::RecalculateSubtree() {
+  if (x64_parent) {
+    x34_worldXF = x64_parent->x34_worldXF * x4_localXF;
+  } else {
+    x34_worldXF = x4_localXF;
+  }
+  if (x68_child) {
+    x68_child->RecalculateTransforms();
+  }
+}
+#endif
+
 void CGuiObject::SetLocalTransform(const CTransform4f& xf) {
   x4_localXF = xf;
+#ifdef TARGET_XBOX
+  RecalculateSubtree(); // PORT_XBOX: only this subtree moved
+#else
   RecalculateTransforms();
+#endif
 }
 
 void CGuiObject::SetO2WTransform(const CTransform4f& worldXf) {

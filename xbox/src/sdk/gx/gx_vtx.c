@@ -32,9 +32,18 @@ static const uint8_t k_order[] = {
 typedef struct {
     uint8_t attr;       /* GX_VA_* (GX_VA_NRM also stands for NBT) */
     uint8_t type;       /* GX_DIRECT / INDEX8 / INDEX16 */
+    uint8_t kind;       /* SK_*: store()'s fast path for this format (plan_kinds) */
+    uint8_t dsize;      /* bytes of its data (direct in a list, or an array entry) */
     int32_t dst;        /* byte offset in the canonical vertex, -1: consumed only */
+    float scale;        /* fixed-point scale of an S16/U16/S8 kind */
     GxAttrFmt fmt;
 } Slot;
+
+/* store()'s common formats, decided once per plan: the display-list decoder
+ * spent most of its time in the generic per-element switches (Prime's
+ * skinned models, ~90 lists a frame on the Landing Site, are decoded on
+ * every call). Anything else goes through store(). */
+enum { SK_GENERIC = 0, SK_NONE, SK_F32_3, SK_F32_2, SK_S16_3, SK_S16_2, SK_U16_2, SK_S8_3, SK_RGBA8, SK_MTX };
 
 typedef struct {
     Slot slot[N_ORDER];
@@ -57,9 +66,12 @@ static struct {
     int npos_carry;
     float tc_carry[2];    /* GXTexCoord1f32 components not yet a whole ST pair */
     int ntc_carry;
+    uint32_t seg_prim;    /* a strip or fan being built to become a list (seg_list) */
+    uint32_t seg_start;   /* where its vertices start (after a waiting list it joined) */
 } B;
 
 static void sig_recompute(void);
+static void plan_kinds(Plan* p, int vtxfmt);
 void gx_vtx_reset(void) {
     memset(&B, 0, sizeof B);
     sig_recompute();
@@ -99,6 +111,7 @@ static void make_plan(Plan* p, int vtxfmt) {
         }
     }
     l->stride = (uint32_t)off;
+    plan_kinds(p, vtxfmt);
 }
 
 /* ---- element decoding ---- */
@@ -131,6 +144,40 @@ static int data_size(const Slot* s) {
     if (s->attr <= GX_VA_TEX7MTXIDX) return 1;
     if (s->attr == GX_VA_CLR0 || s->attr == GX_VA_CLR1) return color_size(s->fmt.type);
     return comp_count(s) * elem_size(s->fmt.type);
+}
+
+static void plan_kinds(Plan* p, int vtxfmt) {
+    int i;
+    (void)vtxfmt;
+    for (i = 0; i < p->n; i++) {
+        Slot* s = &p->slot[i];
+        uint8_t t = s->fmt.type, k = SK_GENERIC;
+        s->dsize = (uint8_t)data_size(s);
+        s->scale = 1.0f;
+        if (s->dst < 0) {
+            k = SK_NONE;
+        } else if (s->attr == GX_VA_PNMTXIDX) {
+            k = SK_MTX;
+        } else if (s->attr == GX_VA_CLR0 || s->attr == GX_VA_CLR1) {
+            if (t == GX_RGBA8) k = SK_RGBA8;
+        } else if (s->attr == GX_VA_POS) {
+            if (s->fmt.cnt == GX_POS_XYZ) {
+                s->scale = 1.0f / (float)(1u << (s->fmt.frac & 31));
+                k = t == GX_F32 ? SK_F32_3 : t == GX_S16 ? SK_S16_3 : t == GX_S8 ? SK_S8_3 : SK_GENERIC;
+            }
+        } else if (s->attr == GX_VA_NRM) {
+            if (s->fmt.cnt == GX_NRM_XYZ) {   /* fixed fractions: S8 1.6, S16 1.14 */
+                k = t == GX_F32 ? SK_F32_3 : t == GX_S16 ? SK_S16_3 : t == GX_S8 ? SK_S8_3 : SK_GENERIC;
+                s->scale = t == GX_S8 ? 1.0f / 64 : 1.0f / 16384;
+            }
+        } else if (s->attr >= GX_VA_TEX0 && s->attr <= GX_VA_TEX7) {
+            if (s->fmt.cnt == GX_TEX_ST) {
+                s->scale = 1.0f / (float)(1u << (s->fmt.frac & 31));
+                k = t == GX_F32 ? SK_F32_2 : t == GX_S16 ? SK_S16_2 : t == GX_U16 ? SK_U16_2 : SK_GENERIC;
+            }
+        }
+        s->kind = k;
+    }
 }
 
 static float read_elem(const uint8_t* p, uint8_t type, float scale, int be) {
@@ -207,6 +254,52 @@ static void store(const Slot* s, const uint8_t* p, int be, uint8_t* v) {
         /* constant sizes: inline moves (xbuiltin.h) */
         if (s->attr == GX_VA_POS || s->attr == GX_VA_NRM) memcpy(v + s->dst, out, 12);
         else memcpy(v + s->dst, out, 8);
+    }
+}
+
+/* store() for the plan's common kinds; the same values store() makes */
+static inline void store_fast(const Slot* s, const uint8_t* p, int be, uint8_t* v) {
+    float* o;
+    int i;
+    switch (s->kind) {
+        case SK_NONE: return;
+        case SK_F32_3:
+            o = (float*)(v + s->dst);
+            if (be) { o[0] = gx_bef(p); o[1] = gx_bef(p + 4); o[2] = gx_bef(p + 8); }
+            else memcpy(o, p, 12);
+            return;
+        case SK_F32_2:
+            o = (float*)(v + s->dst);
+            if (be) { o[0] = gx_bef(p); o[1] = gx_bef(p + 4); }
+            else memcpy(o, p, 8);
+            return;
+        case SK_S16_3:
+            o = (float*)(v + s->dst);
+            for (i = 0; i < 3; i++) o[i] = (int16_t)(be ? gx_be16(p + 2 * i) : *(const uint16_t*)(p + 2 * i)) * s->scale;
+            return;
+        case SK_S16_2:
+            o = (float*)(v + s->dst);
+            for (i = 0; i < 2; i++) o[i] = (int16_t)(be ? gx_be16(p + 2 * i) : *(const uint16_t*)(p + 2 * i)) * s->scale;
+            return;
+        case SK_U16_2:
+            o = (float*)(v + s->dst);
+            for (i = 0; i < 2; i++) o[i] = (be ? gx_be16(p + 2 * i) : *(const uint16_t*)(p + 2 * i)) * s->scale;
+            return;
+        case SK_S8_3:
+            o = (float*)(v + s->dst);
+            for (i = 0; i < 3; i++) o[i] = (int8_t)p[i] * s->scale;
+            return;
+        case SK_RGBA8:
+            memcpy(v + s->dst, p, 4);
+            return;
+        case SK_MTX: {
+            float f = (float)p[0];
+            memcpy(v + s->dst, &f, 4);
+            return;
+        }
+        default:
+            store(s, p, be, v);
+            return;
     }
 }
 
@@ -309,19 +402,67 @@ static void draw_batch(void) {
     g_xgx.dirty = 0;
 }
 
+/* A short strip or fan (a glyph, a billboard, a HUD quad: the game draws
+ * these one GXBegin each) is built as it comes and turned into the list
+ * primitive at its end (seg_list), so the next one can join it: one draw
+ * instead of hundreds. Long ones are drawn as they are. */
+#define SEG_MAX 64u
+static uint32_t seg_list_prim(uint32_t prim, uint32_t n) {
+    if (n > SEG_MAX) return 0;
+    if (prim == XGX_TRISTRIP || prim == XGX_TRIFAN) return n >= 3 ? XGX_TRIANGLES : 0;
+    if (prim == XGX_LINESTRIP) return n >= 2 ? XGX_LINES : 0;
+    return 0;
+}
+
+/* the segment's vertices (B.seg_start on) rewritten as its list primitive */
+static void seg_list(void) {
+    static uint8_t tmp[SEG_MAX * 128];   /* the widest vertex is ~100 bytes */
+    uint32_t s = B.plan.layout.stride, m = B.done - B.seg_start, i, out = 0;
+    uint8_t* d;
+    if (m * s > sizeof tmp) {   /* can't happen: drop it rather than misdraw */
+        B.done = B.expected = B.seg_start;
+        B.seg_prim = 0;
+        return;
+    }
+    memcpy(tmp, B.base + B.seg_start * s, m * s);
+    d = B.base + B.seg_start * s;
+    if (B.seg_prim == XGX_TRISTRIP) {
+        for (i = 0; i + 2 < m; i++, d += 3 * s, out += 3) {   /* every other one turned, as GX winds them */
+            memcpy(d, tmp + (i + (i & 1)) * s, s);
+            memcpy(d + s, tmp + (i + 1 - (i & 1)) * s, s);
+            memcpy(d + 2 * s, tmp + (i + 2) * s, s);
+        }
+    } else if (B.seg_prim == XGX_TRIFAN) {
+        for (i = 1; i + 1 < m; i++, d += 3 * s, out += 3) {   /* 0 i i+1 */
+            memcpy(d, tmp, s);
+            memcpy(d + s, tmp + i * s, 2 * s);
+        }
+    } else {                                                    /* LINESTRIP: i i+1 */
+        for (i = 0; i + 1 < m; i++, d += 2 * s, out += 2) memcpy(d, tmp + i * s, 2 * s);
+    }
+    B.done = B.expected = B.seg_start + out;
+    B.prim = seg_list_prim(B.seg_prim, m);
+    B.seg_prim = 0;
+}
+
 static void begin_batch(uint32_t prim, int vtxfmt, uint32_t n) {
     Plan plan;
-    uint32_t s;
+    uint32_t s, list = seg_list_prim(prim, n);
     make_plan(&plan, vtxfmt);
     s = plan.layout.stride;
     s_st_imm_batches++;
     if (B.pending) {
-        if (prim == B.prim && n && out_count(prim, B.done + n) <= JOIN_MAX &&
+        /* a strip or fan joins a waiting list of what it will become; room
+         * for its list form (at most 3 vertices for each) */
+        if ((prim == B.prim || list == B.prim) && n &&
+            out_count(prim, B.done + (list ? 3 * n : n)) <= JOIN_MAX &&
             memcmp(&plan.layout, &B.plan.layout, sizeof plan.layout) == 0 &&
-            stage_reserve((B.done + n) * s)) {
+            stage_reserve((B.done + (list ? 3 * n : n)) * s)) {
             B.base = s_stage;
             B.plan = plan;   /* same layout; the slots may read other formats */
             B.vtxfmt = vtxfmt;
+            B.seg_prim = list ? prim : 0;
+            B.seg_start = B.done;
             B.expected = B.done + n;
             B.cursor = 0;
             B.cur = B.base + B.done * s;
@@ -338,10 +479,12 @@ static void begin_batch(uint32_t prim, int vtxfmt, uint32_t n) {
     B.plan = plan;
     B.prim = prim;
     B.vtxfmt = vtxfmt;
+    B.seg_prim = list ? prim : 0;
+    B.seg_start = 0;
     B.expected = n;
     B.done = 0;
     B.cursor = 0;
-    B.base = n && stage_reserve(n * s) ? s_stage : NULL;
+    B.base = n && stage_reserve((list ? 3 * n : n) * s) ? s_stage : NULL;
     B.cur = B.base;
     B.open = 1;
     B.npos_carry = 0;
@@ -352,6 +495,16 @@ static void begin_batch(uint32_t prim, int vtxfmt, uint32_t n) {
 static void end_batch(void) {
     B.open = 0;
     if (B.base && B.done < B.expected) s_st_imm_short++;
+    if (B.seg_prim) {
+        /* what arrived (all of it, or a short one's whole vertices) as the
+         * list; fewer than one primitive's worth draws nothing, as before */
+        if (B.base && B.done >= B.seg_start && seg_list_prim(B.seg_prim, B.done - B.seg_start)) {
+            seg_list();
+        } else {
+            B.done = B.expected = B.seg_start;
+            B.seg_prim = 0;
+        }
+    }
     if (!B.base || B.done == 0) return;
     if (B.done == B.expected && list_prim(B.prim, B.done)) B.pending = 1;
     else draw_batch();
@@ -387,7 +540,22 @@ __attribute__((noinline)) void gx_vtx_flush(void) {
     }
 }
 
-void GXBegin(GXPrimitive type, GXVtxFmt vtxfmt, u16 nverts) {
+/* who begins immediate batches, for the [DLC] line (the game's GXBegin
+ * callers: particles, billboards, the HUD) */
+static uint32_t s_begin_who[FLUSH_WHO], s_begin_n[FLUSH_WHO];
+
+__attribute__((noinline)) void GXBegin(GXPrimitive type, GXVtxFmt vtxfmt, u16 nverts) {
+    uint32_t who = (uint32_t)(uintptr_t)__builtin_return_address(0);
+    int i, low = 0;
+    for (i = 0; i < FLUSH_WHO; i++) {
+        if (s_begin_who[i] == who) break;
+        if (s_begin_n[i] < s_begin_n[low]) low = i;
+    }
+    if (i < FLUSH_WHO) s_begin_n[i]++;
+    else {
+        s_begin_who[low] = who;
+        s_begin_n[low] = 1;
+    }
     if (B.open) end_batch();
     begin_batch((uint32_t)type, vtxfmt, nverts);
 }
@@ -402,6 +570,7 @@ static const Slot* next_slot(int want_mtx, uint8_t attr) {
     Plan* p = &B.plan;
     int i;
     if (!B.open || !B.base || B.done >= B.expected) return NULL;
+    if (B.cursor < p->n && !want_mtx && p->slot[B.cursor].attr == attr) return &p->slot[B.cursor++];
     for (i = B.cursor; i < p->n; i++) {
         const Slot* s = &p->slot[i];
         if (want_mtx ? s->attr <= GX_VA_TEX7MTXIDX : s->attr == attr) {
@@ -417,7 +586,10 @@ static void after_attr(void) {
         B.done++;
         B.cursor = 0;
         B.cur += B.plan.layout.stride;
-        if (B.done < B.expected) memset(B.cur, 0, B.plan.layout.stride);
+        if (B.done < B.expected) {
+            uint32_t w, words = B.plan.layout.stride / 4;
+            for (w = 0; w < words; w++) ((uint32_t*)B.cur)[w] = 0;
+        }
     }
 }
 
@@ -441,7 +613,17 @@ static void imm_index(uint8_t attr, uint32_t idx) {
     after_attr();
 }
 
-static float q(int v, uint8_t attr) { return (float)v / (float)(1u << g_gx.vat[B.vtxfmt][attr].frac); }
+/* 2^-frac: the same value the division gave (a power of two), without one
+ * per component */
+static const float k_frac_scale[32] = {
+    1.f, 1.f / (1u << 1), 1.f / (1u << 2), 1.f / (1u << 3), 1.f / (1u << 4), 1.f / (1u << 5), 1.f / (1u << 6),
+    1.f / (1u << 7), 1.f / (1u << 8), 1.f / (1u << 9), 1.f / (1u << 10), 1.f / (1u << 11), 1.f / (1u << 12),
+    1.f / (1u << 13), 1.f / (1u << 14), 1.f / (1u << 15), 1.f / (1u << 16), 1.f / (1u << 17), 1.f / (1u << 18),
+    1.f / (1u << 19), 1.f / (1u << 20), 1.f / (1u << 21), 1.f / (1u << 22), 1.f / (1u << 23), 1.f / (1u << 24),
+    1.f / (1u << 25), 1.f / (1u << 26), 1.f / (1u << 27), 1.f / (1u << 28), 1.f / (1u << 29), 1.f / (1u << 30),
+    1.f / (1u << 31)
+};
+static float q(int v, uint8_t attr) { return (float)v * k_frac_scale[g_gx.vat[B.vtxfmt][attr].frac & 31]; }
 
 void GXPosition3f32(f32 x, f32 y, f32 z) { float f[3] = { x, y, z }; imm_floats(GX_VA_POS, f, 3); }
 void GXPosition3u16(u16 x, u16 y, u16 z) { float f[3] = { q(x, GX_VA_POS), q(y, GX_VA_POS), q(z, GX_VA_POS) }; imm_floats(GX_VA_POS, f, 3); }
@@ -582,7 +764,24 @@ void GXTexCoord1f32(f32 s) {
     imm_tex(s, 0);
 }
 void GXTexCoord1u16(u16 s) { imm_tex(tq(s), 0); }
-void GXTexCoord1s16(s16 s) { imm_tex(tq(s), 0); }
+/* The FIFO only sees bytes: a 16-bit write where the vertex expects a
+ * 16-bit colour (RGB565, RGBA4) is that colour. Prime's rain
+ * (CEnvFxManagerGrid::RenderRainParticles) declares POS + CLR0 RGBA4 and
+ * writes each streak end's colour with GXTexCoord1s16 (alpha 10, then 0);
+ * taken as a texture coordinate, every rain batch ended short and no rain
+ * drew. */
+static int color16_next(void) {
+    const Slot* sl = cur_slot();
+    return sl && sl->type == GX_DIRECT && (sl->attr == GX_VA_CLR0 || sl->attr == GX_VA_CLR1) &&
+           color_size(sl->fmt.type) == 2;
+}
+void GXTexCoord1s16(s16 s) {
+    if (color16_next()) {
+        GXColor1u16((u16)s);
+        return;
+    }
+    imm_tex(tq(s), 0);
+}
 void GXTexCoord1u8(u8 s) { imm_tex(tq(s), 0); }
 void GXTexCoord1s8(s8 s) { imm_tex(tq(s), 0); }
 void GXTexCoord1x16(u16 i) {
@@ -766,15 +965,26 @@ static uint8_t array_attr(const Slot* s) {
  * lists fetch from them again). */
 static uint32_t decode_verts(const uint8_t* dl, uint32_t at, const Plan* p, uint32_t n, uint8_t* out,
                              IdxRange* r, uint16_t* idx_out) {
-    uint32_t v;
+    /* each indexed slot's array, looked up once for the batch */
+    const uint8_t* base[N_ORDER];
+    uint32_t stride[N_ORDER], words = p->layout.stride / 4, v;
+    uint8_t be[N_ORDER];
+    int i;
+    for (i = 0; i < p->n; i++) {
+        const Slot* s = &p->slot[i];
+        uint8_t a = s->attr == GX_VA_NRM && g_gx.desc[GX_VA_NRM] == GX_NONE ? GX_VA_NBT : s->attr;
+        base[i] = s->type == GX_DIRECT ? NULL : g_gx.array[a];
+        stride[i] = g_gx.array_stride[a];
+        be[i] = !g_gx.array_le[a];
+    }
     for (v = 0; v < n; v++, out += p->layout.stride) {
-        int i;
-        memset(out, 0, p->layout.stride);
+        uint32_t w;
+        for (w = 0; w < words; w++) ((uint32_t*)out)[w] = 0;   /* the canonical stride is whole words */
         for (i = 0; i < p->n; i++) {
             const Slot* s = &p->slot[i];
             if (s->type == GX_DIRECT) {
-                store(s, dl + at, 1, out);
-                at += (uint32_t)data_size(s);
+                store_fast(s, dl + at, 1, out);
+                at += s->dsize;
             } else {
                 int k, idx_count = s->attr == GX_VA_NRM && s->fmt.cnt == GX_NRM_NBT3 ? 3 : 1;
                 for (k = 0; k < idx_count; k++) {
@@ -782,7 +992,7 @@ static uint32_t decode_verts(const uint8_t* dl, uint32_t at, const Plan* p, uint
                     at += s->type == GX_INDEX8 ? 1 : 2;
                     if (k) continue;
                     if (idx_out && s->dst >= 0) *idx_out++ = (uint16_t)idx;
-                    fetch_indexed(s, idx, out);
+                    if (base[i]) store_fast(s, base[i] + idx * stride[i], be[i], out);
                     if (r) {
                         uint8_t a = array_attr(s);
                         if (idx < r->lo[a]) r->lo[a] = idx;
@@ -822,8 +1032,9 @@ static void call_display_list(const void* list, u32 nbytes) {
                 B.open = 0;
                 return;
             }
-            at = decode_verts(dl, at, &B.plan, n, B.base, NULL, NULL);
-            B.done = n;
+            /* after the vertices of a batch it joined, if it joined one */
+            at = decode_verts(dl, at, &B.plan, n, B.cur, NULL, NULL);
+            B.done = B.expected;
             end_batch();
             continue;
         }
@@ -1804,6 +2015,12 @@ void gx_vtx_frame_end(void) {
             xhw_logf("[DLC] waiting batches drawn from:%s", n ? line : " -");
             memset(s_flush_n, 0, sizeof s_flush_n);
             memset(s_flush_who, 0, sizeof s_flush_who);
+            n = 0;
+            for (i = 0; i < FLUSH_WHO; i++)
+                if (s_begin_n[i]) n += snprintf(line + n, sizeof line - (size_t)n, " %08x:%u", s_begin_who[i], s_begin_n[i]);
+            xhw_logf("[DLC] immediate batches begun from:%s", n ? line : " -");
+            memset(s_begin_n, 0, sizeof s_begin_n);
+            memset(s_begin_who, 0, sizeof s_begin_who);
         }
 #if XGX_CENSUS
         cen_report();

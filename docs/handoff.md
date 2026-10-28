@@ -60,6 +60,30 @@ frame" `hang.log` during the check. hw3 confirmed: the music plays from the
 XBE, the check passes in ~65 s, the splash costs 19 ms a frame at 25 fps
 (7.5 in xemu). **No more console rounds until the user says.**
 
+## Session 2026-10-27 (evening): FPS, Options, GX fixes
+
+- **Draw batching**: short strips, fans and line strips (every text glyph,
+  billboards, map surfaces) become lists and join (`gx_vtx.c` `seg_list`).
+  Landing Site in xemu: 2900-4300 draws a frame -> ~500, dlist 19-27 ms ->
+  5-6, xemu fps 11-14 -> 18-19. LTO + PGO on top: 20-24.
+- **ThinLTO + PGO + link order** (`docs/pgo.md`): `XBOX_LTO=1`,
+  `XBOX_PGO=xbox/prime.profdata` (first profile: Tallon, Frigate, Phendrana;
+  Chozo and Magmoor run out of memory instrumented), `xbox/order.txt`.
+- **Builtins**: game code gets `-fhosted -fbuiltin -fno-math-errno` (nxdk's
+  wrapper made `fabsf`/`sqrtf`/small `memcpy` calls).
+- **Menu text fixed**: CI textures keep their texels once and draw with
+  the TLUT loaded last (per-unit palette, `gx_tex.c` `palette_for`); the
+  game switches palettes per run of text without reloading the font.
+- **Rain**: `RenderRainParticles` writes its RGBA4 colour with
+  `GXTexCoord1s16`; taken as a texcoord, every rain batch ended short and no
+  rain drew (`gx_vtx.c` `color16_next`).
+- **GUI**: `CGuiObject` recomputes only the moved subtree (was n^2).
+- **Options rows** on the pause screen (`docs/ui.md`); still to do: the
+  title-screen Options, Skip Cutscenes, **button remap page** (the user:
+  "button mapping will be expected"), restart prompt for the video row.
+- The PC crashed once under 3 xemus + a 16-job build (WHEA machine check,
+  CPU core 0): at most 2 xemus, builds at `-j8`, not both at once.
+
 ## Next
 
 The user (after hw2): FPS first, then the port's settings menu (Options

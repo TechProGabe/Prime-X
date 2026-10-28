@@ -251,12 +251,36 @@ measuring kit first (`[PERF]`, `[NV2A]`, the profiler, console rounds,
 `simh`), then work the biggest costs per room until the targets hold.
 
 **ThinLTO + PGO from the start of this phase** (the user, 2026-10-27:
-"this needs PGO LTO"): Melee-X's `XBOX_LTO=1` (`tools/xbox/thinlto_link.py`)
-and `XBOX_PGO=gen|<profdata>` (`xhw_pgo.c`, `tools/xbox/pgo_train.sh`,
-`pgo_raw.py`) ported to the one-triple build, the profile trained on the
+"this needs PGO LTO"): `XBOX_LTO=1` (ThinLTO in lld-link; Melee-X's
+hand-distributed `thinlto_link.py` isn't needed on one triple) and
+`XBOX_PGO=gen|<profdata>` (`xhw_pgo.c`, `tools/xbox/pgo_train.sh`,
+`pgo_raw.py`) ported to the one-triple build (`docs/pgo.md`), the profile trained on the
 benchmark rooms (`docs/performance.md`) by autopad scenarios, so every
 measurement in this phase is of the build that ships. Round hw1 (red) found
 the game CPU-bound with the GPU idle: Tallon ~10 fps, Chozo's Main Plaza ~5.
+
+**Compiler optimizations: what to expect** (the user, 2026-10-27: "add
+compiler optimizations to plan expectations"). Each is measured by itself on
+a console round before the next; the gains below are expectations to check,
+from Melee-X's history and the usual range for branchy game code on a
+Pentium III (16 KB L1 code cache, 128 KB L2), not promises.
+
+| step | what | expected | state |
+|---|---|---|---|
+| builtins back | nxdk's wrapper passes `-ffreestanding -fno-builtin`: in game code `fabsf`, `sqrtf`, `floorf` and fixed-size `memcpy`/`memset`/`memcmp` were library calls (`fabsf` alone ~1% of the Landing Site's samples). `-fhosted -fbuiltin -fno-math-errno` after the wrapper's flags makes them `andps`, `sqrtss` and inline moves; results don't change (both are correctly rounded) | 3-6% of game CPU | in progress |
+| ThinLTO | cross-module inlining of the decomp's many small accessors (`rstl`, `CVector3f`, `CTransform4f`, `CGX` state) | 5-10% | built (`docs/pgo.md`) |
+| PGO | branch layout, hot/cold splitting, inlining by measured counts; trained in xemu on the benchmark rooms | 10-20% | first profile (Tallon, Frigate, Phendrana) |
+| import limit with PGO | lld's default import limit grows `.text` 1.75 MB; 30 with the profile keeps it at +0.3 MB | keeps memory | default |
+| profile-ordered link | hot functions packed together (`xbox/order.txt` from the PGO counts, `/order`): fewer L2 and TLB misses with 5 MB of code | ~10% (Melee-X +13%) | next |
+| frame pointers | already omitted at `-O2` on this triple (checked) | - | done |
+| `-fno-strict-aliasing`, `-fwrapv`, `-ffp-contract=off` | kept: the decomp's type punning, and Gekko-like float results | - | kept |
+| SSE intrinsics by hand | `CTransform4f`/`CMatrix4f` products, skinning (`BuildBoneRange`), particle updates; SSE1 only | per hot spot, measured | later levers (`docs/performance.md`) |
+| identical code folding | stays off (`-opt:noicf`): the game compares function pointers | - | off |
+
+Together the compiler steps should be worth roughly 25-40% of CPU time; the
+rest of the gap to 60 fps (Tallon was ~10 fps on hw1) has to come from the
+levers in `docs/performance.md` (draw batching, GPU skinning, the
+immediate-mode path), which is why they run in parallel with these.
 
 **Gate 6:** on the red and gold consoles, every benchmark room holds 60 fps
 at 480p (4:3 and 16:9) and at least 30 at 720p, with the game at full speed,

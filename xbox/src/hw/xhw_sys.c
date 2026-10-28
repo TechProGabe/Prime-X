@@ -573,6 +573,11 @@ uint32_t xhw_mem_hold_upper(void) {
     static const uint32_t sizes[] = { 4096u * 1024, 1024u * 1024, 64u * 1024, 4096u };
     uint32_t held = 0, i;
     if (!xhw_mem_has_upper()) return 0;
+#if defined(XHW_PGO) && XHW_PGO
+    /* the instrumented build (PGO training in xemu, docs/pgo.md) is ~4 MB
+     * bigger and its counters must not change what loads: it gets the 128 */
+    return 0;
+#endif
     for (i = 0; i < sizeof sizes / sizeof sizes[0]; i++)
         while (MmAllocateContiguousMemoryEx(sizes[i], 0x04000000u, 0x07FFFFFFu, 0, PAGE_READWRITE)) held += sizes[i];
     return held / 1024;

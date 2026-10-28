@@ -26,7 +26,11 @@ public:
   void SetLocalTransform(const CTransform4f& xf);
   void SetO2PTransform(const CTransform4f& xf) {
     x4_localXF = xf;
+#ifdef TARGET_XBOX
+    RecalculateSubtree(); // PORT_XBOX: siblings can't have moved (CGuiObject.cpp)
+#else
     RecalculateTransforms();
+#endif
   }
   void SetO2WTransform(const CTransform4f& xf);
 
@@ -39,6 +43,10 @@ public:
   CVector3f RotateTranslateW2O(const CVector3f& vec) const;
   void MultiplyO2P(const CTransform4f& xf);
   void RecalculateTransforms();
+#ifdef TARGET_XBOX
+  // PORT_XBOX: this object and its children only (CGuiObject.cpp)
+  void RecalculateSubtree();
+#endif
 
   void AddChildObject(CGuiObject* child, bool makeWorldLocal, bool atEnd);
 

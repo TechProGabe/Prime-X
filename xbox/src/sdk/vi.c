@@ -69,6 +69,14 @@ void xsdk_frame_boundary(void) {
 
     /* the flip itself happens at GXCopyDisp (gx_copy.c) */
     xsdk_widescreen_update();
+#if XHW_PGO
+    {
+        /* an XBOX_PGO=gen build: the counters so far every 30 s of frames
+         * (cumulative; tools/xbox/pgo_raw.py takes the last whole dump) */
+        static u32 s_pgo_frames;
+        if (++s_pgo_frames % 1800 == 0) xhw_pgo_dump("30 s");
+    }
+#endif
 
     /* 60.000 Hz regardless of the output: 50 Hz PAL 480i consoles too */
     now = xhw_time_ns();

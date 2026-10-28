@@ -24,12 +24,14 @@ enum { XSDK_TRIGGER_Z_OFF = 0, XSDK_TRIGGER_Z_LEFT, XSDK_TRIGGER_Z_RIGHT };
 typedef struct {
     int video_720p;          /* 1: use 720p when the dashboard allows it (experimental) */
     int progressive;         /* 1: 480p when the dashboard allows it; 0: 480i */
-    int widescreen;          /* 1: 16:9 at 480 when the dashboard says widescreen */
+    int widescreen;          /* at 480: 1 as the dashboard says, 0 always 4:3, 2 always 16:9 (720p is 16:9) */
     int fps;                 /* 1: frame-rate counter on screen */
     int shots;               /* 1: BACK takes a screenshot (shotNN.bmp in the save folder) */
     int led;                 /* 1: front LED effects (KOs, the last seconds, GAME!) */
     float rumble;            /* 0..1 */
     int cstick_1p;           /* 1: the C-stick attacks in 1P modes too (training...), not the camera (GitHub #13) */
+    int hud_wide;            /* 1: at 16:9 the HUD spreads to the screen's edges (PortDebug::HudWide) */
+    int fov;                 /* first-person field of view, degrees (55: the GameCube's) */
     xsdk_port_settings port[4];
 } xsdk_settings;
 

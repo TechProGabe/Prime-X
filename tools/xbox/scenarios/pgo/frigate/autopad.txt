@@ -1,0 +1,82 @@
+# pgo/frigate: the Space Pirate Frigate (the opening: pirates, sparks, metal); PGO training (tools/xbox/pgo_train.sh, docs/pgo.md)
+# walks, turns, fires, jumps, morphs and scans until two [PGOC] dumps (3600 frames)
+env PX_DISC_CHECK=quick
+env MP_BOOT_WORLD=158EFE17
+1500 SU for 60
+1520 A
+1540 X
+1562 SL for 25
+1590 A for 40
+1635 SR for 25
+1665 B
+1700 SD for 30
+1735 B
+1760 UP
+1800 UP
+1820 R for 30
+1855 SU for 40
+1900 SU for 60
+1920 A
+1940 X
+1962 SL for 25
+1990 A for 40
+2035 SR for 25
+2065 B
+2100 SD for 30
+2135 B
+2160 UP
+2200 UP
+2220 R for 30
+2255 SU for 40
+2300 SU for 60
+2320 A
+2340 X
+2362 SL for 25
+2390 A for 40
+2435 SR for 25
+2465 B
+2500 SD for 30
+2535 B
+2560 UP
+2600 UP
+2620 R for 30
+2655 SU for 40
+2700 SU for 60
+2720 A
+2740 X
+2762 SL for 25
+2790 A for 40
+2835 SR for 25
+2865 B
+2900 SD for 30
+2935 B
+2960 UP
+3000 UP
+3020 R for 30
+3055 SU for 40
+3100 SU for 60
+3120 A
+3140 X
+3162 SL for 25
+3190 A for 40
+3235 SR for 25
+3265 B
+3300 SD for 30
+3335 B
+3360 UP
+3400 UP
+3420 R for 30
+3455 SU for 40
+3500 SU for 60
+3520 A
+3540 X
+3562 SL for 25
+3590 A for 40
+3635 SR for 25
+3665 B
+3700 SD for 30
+3735 B
+3760 UP
+3800 UP
+3820 R for 30
+3855 SU for 40

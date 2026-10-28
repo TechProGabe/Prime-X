@@ -50,6 +50,15 @@
 #include "MetroidPrime/DefaultWorld.hpp"
 #include "MetroidPrime/Player/CGameState.hpp"
 #include "MetroidPrime/SOptionsFrontEndFrame.hpp"
+#ifdef TARGET_XBOX
+#include "port_xbox_options.h" // PORT_XBOX: "Port Options"
+// PORT_XBOX: the main menu's "Metroid Fusion Connection Bonuses" row needs a
+// GBA and its link cable, which an Xbox can't have: the row is "Port
+// Options" instead (the user: reachable without a New Game slot)
+#define PX_GBA_ROW_TEXT L"Port Options"
+#else
+#define PX_GBA_ROW_TEXT gpStringTable->GetString(0x25)
+#endif
 #include "MetroidPrime/Tweaks/CTweakGame.hpp"
 
 #include "MetroidPrime/SFX/FrontEnd.h"
@@ -729,7 +738,7 @@ void CFrontEndUI::SFrontEndFrame::FinishedLoading() {
       static_cast< CGuiTableGroup* >(x14_loadedFrme->FindWidget("tablegroup_mainmenu"));
 
   x1c_gbaPair = SGuiTextPair(x14_loadedFrme, "textpane_gba");
-  x1c_gbaPair.SetPairText(gpStringTable->GetString(0x25));
+  x1c_gbaPair.SetPairText(PX_GBA_ROW_TEXT);
 
   x24_cheatPair = SGuiTextPair(x14_loadedFrme, "textpane_cheats");
   x24_cheatPair.SetPairText(gpStringTable->GetString(0x60));
@@ -1262,15 +1271,13 @@ void CFrontEndUI::SNewFileSelectFrame::ClearFrameContents() {
 
   StartTextAnimating(x28_textpane_erase.x0_textPane,
                      rstl::wstring_l(gpStringTable->GetString(0x26)), 60.f);
-  StartTextAnimating(x38_textpane_gba.x0_textPane, rstl::wstring_l(gpStringTable->GetString(0x25)),
-                     60.f);
+  StartTextAnimating(x38_textpane_gba.x0_textPane, rstl::wstring_l(PX_GBA_ROW_TEXT), 60.f);
   StartTextAnimating(x30_textpane_cheats.x0_textPane,
                      rstl::wstring_l(gpStringTable->GetString(0x60)), 60.f);
 
   StartTextAnimating(x28_textpane_erase.x4_textPaneB,
                      rstl::wstring_l(gpStringTable->GetString(0x26)), 60.f);
-  StartTextAnimating(x38_textpane_gba.x4_textPaneB, rstl::wstring_l(gpStringTable->GetString(0x25)),
-                     60.f);
+  StartTextAnimating(x38_textpane_gba.x4_textPaneB, rstl::wstring_l(PX_GBA_ROW_TEXT), 60.f);
   StartTextAnimating(x30_textpane_cheats.x4_textPaneB,
                      rstl::wstring_l(gpStringTable->GetString(0x60)), 60.f);
 
@@ -1379,7 +1386,16 @@ void CFrontEndUI::SNewFileSelectFrame::ActivateNewGamePopup() {
   } else {
     x48_textpane_popupadvance.SetPairText(rstl::wstring_l(gpStringTable->GetString(0x43)));
     x50_textpane_popupcancel.SetPairText(rstl::wstring_l(gpStringTable->GetString(0x5e)));
+#ifdef TARGET_XBOX
+    // PORT_XBOX: Start | Options | Port Options, in the slot (and with the
+    // separator) the game gives Hard once Normal is beaten
+    x58_textpane_popupextra.SetPairText(rstl::wstring_l(L"Port Options"));
+    x40_tablegroup_popup->GetWorkerWidget(2)->SetIsSelectable(true);
+    x40_tablegroup_popup->GetWorkerWidget(2)->SetVisibility(true, kTM_Children);
+    x44_model_dash7->SetVisibility(true, kTM_Children);
+#else
     x44_model_dash7->SetVisibility(false, kTM_Children);
+#endif
   }
   x60_textpane_cancel->TextSupport().SetText(rstl::wstring_l(gpStringTable->GetString(0x52)));
 }
@@ -1491,6 +1507,15 @@ void CFrontEndUI::SNewFileSelectFrame::DoPopupAdvance(CGuiTableGroup* caller) {
       gpGameState->SetHardMode(x40_tablegroup_popup->GetUserSelection() == 0);
       x4_saveUI->StartGame(fileSelection);
     } else {
+#ifdef TARGET_XBOX
+      // PORT_XBOX: Options or Port Options: the same frame, other tables
+      PortXboxOptions::SetFrontEndPort(x40_tablegroup_popup->GetUserSelection() == 2);
+      if (x40_tablegroup_popup->GetUserSelection() == 2) {
+        PlayAdvanceSfx();
+        xc_action = kA_GameOptions;
+        return;
+      }
+#endif
       if (x40_tablegroup_popup->GetUserSelection() == 1) {
         PlayAdvanceSfx();
         xc_action = kA_GameOptions;
@@ -2572,6 +2597,16 @@ void CFrontEndUI::ProcessUserInput(const CFinalInput& padInput, CArchitectureQue
         if (xf0_optionsFrme.get() == nullptr) {
           if (xe0_frontendCardFrme.get() == nullptr) {
             SFrontEndFrame::EAction action = xe8_frontendNoCardFrme->ProcessUserInput(input);
+#ifdef TARGET_XBOX
+            if (action == SFrontEndFrame::kEA_FusionBonus) { // PORT_XBOX: the row is Port Options
+              PortXboxOptions::SetFrontEndPort(true);
+              xf0_optionsFrme = rs_new SOptionsFrontEndFrame();
+              return;
+            }
+            if (action == SFrontEndFrame::kEA_GameOptions) {
+              PortXboxOptions::SetFrontEndPort(false);
+            }
+#endif
             if (action == SFrontEndFrame::kEA_FusionBonus) {
               StartStateTransition(kS_FusionBonus);
               return;
@@ -2588,6 +2623,13 @@ void CFrontEndUI::ProcessUserInput(const CFinalInput& padInput, CArchitectureQue
             }
           } else {
             SNewFileSelectFrame::EAction action = xe0_frontendCardFrme->ProcessUserInput(input);
+#ifdef TARGET_XBOX
+            if (action == SNewFileSelectFrame::kA_FusionBonus) { // PORT_XBOX: the row is Port Options
+              PortXboxOptions::SetFrontEndPort(true);
+              xf0_optionsFrme = rs_new SOptionsFrontEndFrame();
+              return;
+            }
+#endif
             if (action == SNewFileSelectFrame::kA_FusionBonus) {
               StartStateTransition(kS_FusionBonus);
               return;
