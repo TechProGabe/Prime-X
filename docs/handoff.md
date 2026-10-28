@@ -3,13 +3,34 @@
 Update this at the end of every session: what was done, what's next,
 what's broken, anything the next agent would otherwise rediscover.
 
-## Where it stands (2026-10-27, first build session)
+## Where it stands now (2026-10-28, overnight)
 
-**The game boots in xemu to the title screen** (front-end THP movie, logo,
-attract loop) and START reaches the file select (a card file is created).
-Nothing is committed yet: all of it is in the working tree on `dev`.
+The game plays through every world in xemu (`tools/xbox/room_sweep.sh`:
+14 rooms, no failure) and on the red console (round hw4: the Landing Site
+at ~27-41 fps, up from hw1's ~10). Everything is committed and pushed on
+`dev`. Ship builds are `XBOX_LTO=1 XBOX_PGO=xbox/prime.profdata`
+(`docs/pgo.md`). Done overnight, newest first:
 
-Done this session:
+- The picture's aspect follows the game's EFB (`VIConfigure` ->
+  `xgx_set_efb_width`): no more 9% squeeze and side bars at 480, full 16:9
+  at 720p, letterboxed 16:9 on a 4:3 screen. 720p tested in xemu (slot 3,
+  `docs/testing.md` "720p in xemu").
+- Display-list cache: entries keyed by the arrays' layout too (the Frigate's
+  skinned lists stopped going volatile); lists spill into the texture
+  pool's free space (Main Plaza 7 -> ~29 fps in xemu).
+- Movie decode twice as fast (integer IDCT, whole-tile copies): the front
+  end 12 -> 26 fps in xemu.
+- Skip Cutscenes (MetroidPrimePort's patches), Fusion Suit, descriptions
+  under the pause screen's Prime-X rows, B is back in menus, Port Options on
+  the main menu (the Fusion bonuses row), three-choice rows only.
+- Streamed music (the AI path) mixed into MusyX's output.
+- Test hooks: `env PX_ALL_ITEMS=1`, `PX_SKIPPABLE=1`, `PX_WIDESCREEN=0|1|2`.
+- Console round hw5 (a profile of five scenes) is prepared, not run.
+
+## The first build session (2026-10-27)
+
+Then: the game booted in xemu to the title screen and the file select.
+Done that session:
 
 - Phase 0.1: `tools/xbox/msys/build.sh`, `xbox/build.sh`, Docker files and
   Melee-X's tools copied and renamed (`PX_` knobs, title `50580001`). MSYS2
@@ -142,18 +163,14 @@ Open, in rough order:
 5. The title screen's Options frame draws no slider (moot for Port
    Options, which has none now).
 
-1. Performance (phase 6): profile the Landing Site and Main Plaza in xemu
-   (instruction counts) and with the sampling profiler; the display-list
-   path (gx_vtx.c) and the game's per-frame work first.
-2. The console-only bugs above (white wash, missing arm cannon).
-3. Memory (plan 0.6): game `new` still uses the host heap; 13.6 MB free at
-   the title. Route `rs_new` into `CGameAllocator`/MEM1, measure.
-4. Disc validation (`docs/boot-safety.md`): only the header ID and revision
-   are checked so far (`dvd.c`).
-5. Attract movies show every other line black (interlaced THP fields?).
-6. Streamed music: `AIPortPoll` is a stub (no `CStaticAudioPlayer` music).
-   MusyX SFX go to the AC97 through the SDL3 shim (`px_sdl3.cpp`).
-7. "PRESS START" text not seen on the title shots yet: check GUI text draws.
+6. Memory: Main Plaza leaves ~2.6 MB free in xemu (the game's `new` heap
+   ~15.7 MB, MEM1+ARAM ~14.9 MB committed, image 9 MB, GPU pools 12.8 MB);
+   no room ran out in any sweep. Plan 0.6 (route `rs_new` into MEM1) is
+   still open; the texture pool (8 MB, ~4 MB free there) is the easiest to
+   give back if a room runs short.
+
+(The first session's list is done: profiling, disc validation, the
+interlaced movies, streamed music, the title's text.)
 
 ## Working notes
 
