@@ -54,6 +54,39 @@ rooms at 480i, the Landing Site 37-46, up from hw1's ~10). Everything is committ
 - Test hooks: `env PX_ALL_ITEMS=1`, `PX_SKIPPABLE=1`, `PX_WIDESCREEN=0|1|2`.
 - Console round hw5 (a profile of five scenes) is prepared, not run.
 
+## Focus for the next session: the user's free play after hw5
+
+The user played the ship build (`F:\Applications\Prime-X`, LTO + PGO,
+`7f1dfb3` + the watchdog fix) on red, 2026-10-28. Logs:
+`C:\xemu\hw\prime\logs-hw5play` (`boot.log`, `lastexit.txt`; map:
+`C:\xemu\hw\prime\stage-hw5\ship\prime_x.map`). In this order:
+
+1. **Out of memory** (`[FATAL] Out of memory`, retrace 6798, ~215 s in):
+   `xhw_commit` couldn't commit another chunk of the lazily committed game
+   heap (MEM1+ARAM 13632 KB committed) with ~2.1 MB free, as the game
+   left the ship and started loading. Free memory: 17.3 MB in the Landing
+   Site at first, 2.8 MB at 145 s, 2.1 MB from 175 s. Find what grew
+   (the `[BEAT]` free column fell in steps; match them to `[TEX]`/`[DLC]`
+   pool lines and loads), then plan 0.6 (route `rs_new` into MEM1) and/or
+   give back GPU pool memory (the texture pool had 2.5-3.4 MB free). Never
+   seen in xemu: reproduce with the same path (Landing Site, walk into the
+   ship, save, walk out) in xemu with `mem_limit` as on the console.
+2. **Inside the ship: 12-14 fps**, display lists 40-50 ms a frame, 210
+   draws but 81k vertices, and 7 lists gone volatile ("no dynamic form",
+   4 rebuilds each, `[DLC] volatile:` lines): decoded on every call. The
+   ship's interior (or Samus at the save station) needs a dynamic form or
+   a bigger budget.
+3. **The visor fog when walking into the ship is too strong** (the user).
+   New since the particle texcoord fix: the steam and condensation
+   particles now draw their whole textures. Check how much of it the
+   GameCube shows (Dolphin) and whether our alpha or blend is too strong
+   (the same question as the landing cinematic's white frames, below).
+4. **Port Options, the Widescreen HUD row ("Edges")**: its value is drawn
+   wrong in the centre of the row (the user: "messed up in center"). Look
+   at the triple label (`CPauseScreenFrame.cpp`, `port_xbox_options.cpp`)
+   for that row at 4:3 and 16:9.
+5. The landing cinematic's white frames (below).
+
 ## Console round hw5 (red, 2026-10-28)
 
 Chain `tools/xbox/scenarios/hw5` (five profiler builds, ThinLTO + PGO with
@@ -188,7 +221,7 @@ decode (THPDec's double-precision FMA on an SSE1 CPU, plain float now).
 The user (2026-10-27, night): keep going without check-ins; FPS, texture
 issues, the planned features; no console rounds until they say.
 
-Open, in rough order:
+Open, in rough order (after the focus list at the top):
 1. FPS: the console runs the Landing Site at ~27-41 (sim 17-25 ms, display
    lists 4-8 ms). A console profile (`-DXHW_PROF=1`) is the next thing a
    round should bring back. Levers left: skinned models' display lists
