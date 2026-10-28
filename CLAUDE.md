@@ -5,16 +5,18 @@ to be built with nxdk and LLVM 21. Not an emulator: the decompiled game
 (PrimeDecomp via MetroidPrimePort) is compiled for the Pentium III and drawn
 on the NV2A by Melee-X's GX layer.
 
-**State: planning done, no code yet.** The work is laid out as phases with
-gates in `docs/plan.md`. Start with `docs/handoff.md` (where things stand,
-what to do first), then `docs/plan.md`, `docs/decisions.md`,
-`docs/sources.md`.
+**State: in development.** The game boots and plays in xemu and on the red
+console (round hw5: ~35-45 fps at 480 in most rooms). The work is laid out
+as phases with gates in `docs/plan.md`; `docs/roadmap.md` says how far each
+got. Start with `docs/handoff.md` (where things stand, what to do next),
+then `docs/plan.md`, `docs/decisions.md`, `docs/sources.md`.
 
 ## Read first
 
 | doc | why |
 |---|---|
 | `docs/handoff.md` | current state and the next task; update it at the end of every session |
+| `docs/roadmap.md` | each phase's gate and how far it got, known issues, console history |
 | `docs/plan.md` | phases 0-7, each with tasks and a gate |
 | `docs/decisions.md` | what the user decided and why; scope; edits to imported code |
 | `docs/sources.md` | every reference repo, its pinned commit, what is taken from it |

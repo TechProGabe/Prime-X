@@ -98,6 +98,14 @@ draws now: `GXTexCoord1s16` was its colour), `BuildBoneRange` 2.3%,
 Console (round hw4, Landing Site in rain): hw1 ~10 fps; plain build with
 the batching ~24-31; ThinLTO + PGO ~27-41.
 
+Console (round hw5, profiler builds, ThinLTO + PGO, 480i): front end 32-45,
+Landing Site 37-46, Main Plaza 21-46, Frigate 26-43, Phendrana 36-43. The
+console's profile of the Landing Site: `GXCallDisplayList` 13%, `memcpy`
+10%, the rain's immediate-mode vertices ~11%, `CEnvFxManager::Update`
+3.5% (the rain's simulation, on the CPU), `BuildBoneRange` 3.3%. Main
+Plaza: display lists 13%, `xgx_draw` 8%. Next: the skinned models' display
+lists (decoded on every call), the memcpy callers, and the rain.
+
 The front end (title, file select) runs over a 640x480 THP movie: its
 decode was 60% of a frame (float AAN IDCT with a double-precision FMA on an
 SSE1 CPU) and the planes' GX-tile conversion 18%. An integer IDCT
