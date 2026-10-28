@@ -961,9 +961,23 @@ static int put16(uint16_t v) {
     const Slot* sl = cur_slot();
     uint8_t b[2];
     if (!sl || sl->type != GX_DIRECT || sl->dsize != 2) return 0;
-    b[0] = (uint8_t)(v >> 8);
-    b[1] = (uint8_t)v;
-    store(sl, b, 1, B.cur);
+    if (sl->dst < 0) {
+    } else if (sl->attr == GX_VA_CLR0 && sl->fmt.type == GX_RGBA4) {   /* the rain's colours, every streak end */
+        uint8_t* o = B.cur + sl->dst;
+        o[0] = (uint8_t)((v >> 12 & 15) * 17);
+        o[1] = (uint8_t)((v >> 8 & 15) * 17);
+        o[2] = (uint8_t)((v >> 4 & 15) * 17);
+        o[3] = (uint8_t)((v & 15) * 17);
+    } else if (sl->attr >= GX_VA_TEX0 && sl->fmt.type == GX_S8 && sl->fmt.cnt == GX_TEX_ST) {   /* the particles' corners */
+        const float sc = 1.0f / (float)(1u << sl->fmt.frac);
+        float* o = (float*)(B.cur + sl->dst);
+        o[0] = (float)(int8_t)(v >> 8) * sc;
+        o[1] = (float)(int8_t)v * sc;
+    } else {
+        b[0] = (uint8_t)(v >> 8);
+        b[1] = (uint8_t)v;
+        store(sl, b, 1, B.cur);
+    }
     B.cursor++;
     after_attr();
     return 1;

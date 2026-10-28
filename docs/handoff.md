@@ -19,6 +19,15 @@ at ~27-41 fps, up from hw1's ~10). Everything is committed and pushed on
   `put16`; it also covers the rain's RGBA4 colour, `color16_next` before).
   This was the landing cinematic's "washed out white with vertical streaks"
   (round hw1): the ship's steam clouds, close to the camera.
+- The landing's remaining white frames are single frames (shots 2, 7, 23
+  of a 20-frame-step run, `/c/xemu/px/white.log`) whose last draw is an
+  untextured full-screen additive quad after the letterbox: a camera-filter
+  flash, most likely the storm's lightning. Compare with Dolphin.
+- Rain and snow grids wholly off screen are skipped
+  (`CEnvFxManagerGrid::Render`, `GXPortBoxCulled`); the line clipper sorts
+  by outcode first; `put16` decodes the RGBA4 colours and S8 texcoord pairs
+  inline. Landing Site in xemu ~27 -> ~30 fps (LTO + PGO). The PGO profile
+  predates these: retrain before a release (`docs/pgo.md`).
 - **Lines clipped on the CPU** to the near plane and a 2x guard band
   (`gx_vtx.c` `clip_lines`): the rain lines with an end behind or just in
   front of the camera came out flipped or ~300,000 px long.
