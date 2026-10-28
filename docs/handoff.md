@@ -88,6 +88,16 @@ The user played the ship build (`F:\Applications\Prime-X`, LTO + PGO,
 4. **Widescreen HUD row**: "Centred" ran over the two-value widget's
    divider; the values are "Inner / Edges" now.
 
+**On red now (2026-10-28, hw6)**: the ship build (LTO + the old PGO
+profile, `7bdef5e`) in the console's Prime-X folder; stage
+`/c/xemu/hw/prime/stage-vhw6`, map `/c/xemu/hw/prime/prime_x.hw6.map`,
+console FTP 192.168.158.113. Pull the user's logs with
+`PX_HW=/c/xemu/hw/prime PX_FTP_HOST=192.168.158.113 python
+tools/xbox/console.py pull hw6`. Also since hw5: the rain in one call
+(`GXPortRainLines`, xemu +7%), the title Options' slider draws (the alpha
+fix). PGO retraining was stopped: rerun `tools/xbox/pgo_train.sh tallon
+frigate phendrana magmoor chozo` with two slots.
+
 Dolphin 2609 is unpacked at `C:\xemu\dolphin\Dolphin-x64` (portable,
 the user allowed it); no reference frames taken yet: the interesting
 scenes (Tallon, the ship) need a save there, and saves here live in
