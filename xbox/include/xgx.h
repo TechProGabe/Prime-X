@@ -234,6 +234,7 @@ void xgx_tex_destroy(uint32_t tex);   /* deferred until the GPU is done */
  * texture made only for its palette serves as a palette any P8 texture can
  * draw with (XgxMap.pal) */
 uint32_t xgx_tex_palette(uint32_t tex);
+int xgx_vbuf_spilled(const void* p);   /* a cached display list's buffer in the texture pool */
 uint32_t xgx_tex_bytes(uint32_t tex); /* pool bytes a live texture holds, 0 otherwise */
 uint32_t xgx_tex_pool_free_kb(void);
 uint32_t xgx_tex_pool_kb(void);

@@ -107,8 +107,30 @@ decode (THPDec's double-precision FMA on an SSE1 CPU, plain float now).
 
 ## Next
 
-The user (after hw2): FPS first, then the port's settings menu (Options
-rows, `docs/ui.md`), and the front-end menu's doubled text.
+The user (2026-10-27, night): keep going without check-ins; FPS, texture
+issues, the planned features; no console rounds until they say.
+
+Open, in rough order:
+1. FPS: the console runs the Landing Site at ~27-41 (sim 17-25 ms, display
+   lists 4-8 ms). A console profile (`-DXHW_PROF=1`) is the next thing a
+   round should bring back. Levers left: skinned models' display lists
+   decoded every call (the dynamic budget is full), GPU or further SSE
+   skinning, the rain's immediate-mode path, CFishCloud.
+2. Thermal and X-ray visors don't switch in the Landing Site with `env
+   PX_ALL_ITEMS=1` (D-pad Right/Down); Scan and Combat do. Likely the room's
+   command filter (`ControlMapper::SetCommandFiltered`, set by its scripts
+   for items Samus can't have yet), not the port: try a later room
+   (Phendrana's, Chozo's) before suspecting the pad.
+3. Rendering to compare against Dolphin: Main Plaza after taking damage
+   (`/c/xemu/px/scen-plaza`, shot 2: the whole screen yellow, energy 74;
+   probably the hit flash caught mid-way), the arm cannon's grey-white look
+   in bright rooms (the user's "gun white sometimes"), Magmoor's second room
+   (`/c/xemu/px/scen-mag`, shot 2: the gun grey, big translucent blue
+   panels; maybe the elevator's glass), the visors once they switch.
+4. The audio start-up freeze after a chained launch (round hw4 r4c): the
+   flushed `[AUDIO] step:` lines will say where next time.
+5. The title screen's Options frame draws no slider (moot for Port
+   Options, which has none now).
 
 1. Performance (phase 6): profile the Landing Site and Main Plaza in xemu
    (instruction counts) and with the sampling profiler; the display-list
