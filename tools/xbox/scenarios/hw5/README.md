@@ -1,6 +1,5 @@
-# hw5: the console profile round (prepared 2026-10-28, not run yet)
+# hw5: the console profile round (2026-10-28)
 
-The user said no console rounds until they say: this is ready for then.
 Five chained profiler builds (`XBOX_LTO=1 XBOX_PGO=xbox/prime.profdata
 XBOX_CFLAGS="-DXHW_AUTOPAD=1 -DXHW_PROF=1"`), one folder each under
 `F:\Applications\`, the last back to the dashboard. The sampling profiler's
@@ -11,7 +10,7 @@ XBOX_CFLAGS="-DXHW_AUTOPAD=1 -DXHW_PROF=1"`), one folder each under
 | folder | what |
 |---|---|
 | `Prime-X-r5a` | the front end: title movie, main menu, Port Options |
-| `Prime-X-r5b` | Landing Site in rain (round hw4: ~27-41 fps) |
+| `Prime-X-r5b` | Landing Site in rain (round hw4: ~27-41 fps); shots every 100 frames through the landing cinematic (hw1's white streaks: particle texcoords, fixed 2026-10-28) |
 | `Prime-X-r5c` | Chozo Ruins' Main Plaza (hw1 ~5 fps; display lists now spill into the texture pool) |
 | `Prime-X-r5d` | the Frigate's opening (the heaviest scene in xemu) |
 | `Prime-X-r5e` | Phendrana Drifts |
@@ -20,3 +19,7 @@ What it answers: where the console's ~15-25 ms of "sim" goes (xemu's CPU
 is faster than the Pentium III and its proportions differ), and whether
 the audio start-up freeze after a chained launch (round hw4 r4c) recurs:
 the `[AUDIO] step:` lines say where.
+
+The plain `Prime-X` folder gets the ship build (ThinLTO + PGO, no script)
+for free play: particles now draw their whole textures (steam, mist,
+fire), so rooms look busier than in hw4.

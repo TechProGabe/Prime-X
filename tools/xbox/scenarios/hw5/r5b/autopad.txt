@@ -1,6 +1,15 @@
 # r5b: Tallon Overworld, Landing Site (rain); profiler build (-DXHW_PROF=1, ThinLTO + PGO)
 env MP_BOOT_WORLD=39F2DE28
 env PX_NEXT_XBE=F:\Applications\Prime-X-r5c\default.xbe
+500 SHOT
+600 SHOT
+700 SHOT
+800 SHOT
+900 SHOT
+1000 SHOT
+1100 SHOT
+1200 SHOT
+1300 SHOT
 1500 SHOT
 2150 SHOT
 2200 SU for 60
