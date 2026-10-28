@@ -13,6 +13,8 @@
 
 #include <dolphin/pad.h>
 
+#include <stdlib.h>
+
 #include "xgx.h"
 #include "xhw.h"
 extern "C" {
@@ -119,6 +121,8 @@ const wchar_t* Title(int option) {
     return L"Screen Capture";
   case kXO_FusionSuit:
     return L"Fusion Suit";
+  case kXO_SkipCutscenes:
+    return L"Skip Cutscenes";
   default:
     return IsBind(option) ? kButtonNames[option - kXO_BindFirst] : L"";
   }
@@ -252,6 +256,8 @@ int Get(int option) {
     return st.shots ? 1 : 0;
   case kXO_FusionSuit:
     return gpGameState != nullptr && gpGameState->SystemState().GetHasFusion() ? 1 : 0;
+  case kXO_SkipCutscenes:
+    return st.skip_cutscenes ? 1 : 0;
   default:
     return 0;
   }
@@ -317,6 +323,10 @@ void Set(int option, int value) {
     st.shots = value > 0;
     xhw_pad_set_shots(st.shots);
     break;
+  case kXO_SkipCutscenes:
+    st.skip_cutscenes = value > 0;
+    PortDebug::SetSkippableCutscenes(st.skip_cutscenes != 0);
+    break;
   case kXO_FusionSuit:
     // What the Fusion bonuses screen does once a GBA has linked: the
     // system state (saved with the game's options) and the game about to
@@ -338,6 +348,9 @@ void Set(int option, int value) {
 
 void RestoreDefaults(int category) {
   switch (category) {
+  case 0:
+    Set(kXO_SkipCutscenes, 0);
+    break;
   case 1:
     Set(kXO_Widescreen, 0);
     Set(kXO_WidescreenHud, 0);
@@ -367,6 +380,13 @@ void RestoreDefaults(int category) {
 void ApplyAtBoot() {
   ApplyAspect();
   PortDebug::SetHudWide(g_xsdk_settings.hud_wide != 0);
+  PortDebug::SetSkippableCutscenes(g_xsdk_settings.skip_cutscenes != 0);
+#if XHW_TEST_BUILD
+  // test builds: "env PX_SKIPPABLE=1" in autopad.txt, over settings.ini
+  if (getenv("PX_SKIPPABLE")) {
+    PortDebug::SetSkippableCutscenes(true);
+  }
+#endif
   ApplyFov();
   xhw_logf("[OPTIONS] at boot: aspect %s, HUD %s, FOV %d", PortDebug::AspectMode() == PortDebug::kAspect_16_9 ? "16:9" : "4:3",
            g_xsdk_settings.hud_wide ? "edge to edge" : "centred", g_xsdk_settings.fov);
@@ -380,8 +400,8 @@ void SetFrontEndPort(bool port) { sFrontEndPort = port; }
 bool FrontEndPort() { return sFrontEndPort; }
 
 const wchar_t* FrontEndCategory(int category) {
-  static const wchar_t* const kNames[] = {L"Video", L"Controller", L"System"};
-  return category >= 0 && category < 3 ? kNames[category] : nullptr;
+  static const wchar_t* const kNames[] = {L"Video", L"Controller", L"Gameplay", L"System"};
+  return category >= 0 && category < 4 ? kNames[category] : nullptr;
 }
 
 void Save() {

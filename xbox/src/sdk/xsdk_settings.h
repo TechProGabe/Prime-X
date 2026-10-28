@@ -32,6 +32,7 @@ typedef struct {
     int cstick_1p;           /* 1: the C-stick attacks in 1P modes too (training...), not the camera (GitHub #13) */
     int hud_wide;            /* 1: at 16:9 the HUD spreads to the screen's edges (PortDebug::HudWide) */
     int fov;                 /* first-person field of view, degrees (55: the GameCube's) */
+    int skip_cutscenes;      /* 1: every cutscene can be skipped (PortSkipCutscenes) */
     xsdk_port_settings port[4];
 } xsdk_settings;
 

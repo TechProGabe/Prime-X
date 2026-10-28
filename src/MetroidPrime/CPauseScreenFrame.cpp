@@ -189,6 +189,14 @@ static SOptionCategory skGameOptions[] = {
 // retail rows on the pause screen. What they do is in
 // xbox/src/port/port_xbox_options.cpp; the right table scrolls as on the PC.
 #define PORT_OPTION(opt) static_cast< EGameOption >(opt)
+static const SGameOption skPortVisorOptions[] = {
+    {kGO_VisorOpacity, 21, 0.f, 255.f, 1.f, kOT_Float},
+    {kGO_HelmetOpacity, 22, 0.f, 255.f, 1.f, kOT_Float},
+    {kGO_HUDLag, 23, 0.f, 1.f, 1.f, kOT_DoubleEnum},
+    {kGO_HintSystem, 24, 0.f, 1.f, 1.f, kOT_DoubleEnum},
+    {PORT_OPTION(PortXboxOptions::kXO_SkipCutscenes), -1, 0.f, 1.f, 1.f, kOT_DoubleEnum},
+    {kGO_RestoreDefaults, 35, 0.f, 1.f, 1.f, kOT_RestoreDefaults},
+};
 static const SGameOption skPortDisplayOptions[] = {
     {kGO_ScreenBrightness, 25, 0.f, 8.f, 1.f, kOT_Float},
     {kGO_ScreenOffsetX, 26, -30.f, 30.f, 1.f, kOT_Float},
@@ -224,7 +232,7 @@ static const SGameOption skPortControllerOptions[] = {
     {kGO_RestoreDefaults, 35, 0.f, 1.f, 1.f, kOT_RestoreDefaults},
 };
 static SOptionCategory skPauseOptions[] = {
-    {5, skVisorOptions},            {10, skPortDisplayOptions}, {4, skSoundOptions},
+    {6, skPortVisorOptions},        {10, skPortDisplayOptions}, {4, skSoundOptions},
     {19, skPortControllerOptions}, {0, nullptr},
 };
 
@@ -253,13 +261,16 @@ static const SGameOption skFrontControllerOptions[] = {
     {PORT_OPTION(PortXboxOptions::kXO_CStickDeadZone), -1, 0.f, 2.f, 1.f, kOT_TripleEnum},
     {PORT_OPTION(PortXboxOptions::kXO_TriggerClick), -1, 0.f, 2.f, 1.f, kOT_TripleEnum},
 };
+static const SGameOption skFrontGameplayOptions[] = {
+    {PORT_OPTION(PortXboxOptions::kXO_SkipCutscenes), -1, 0.f, 1.f, 1.f, kOT_DoubleEnum},
+};
 static const SGameOption skFrontSystemOptions[] = {
     {PORT_OPTION(PortXboxOptions::kXO_Screenshots), -1, 0.f, 1.f, 1.f, kOT_DoubleEnum},
     {PORT_OPTION(PortXboxOptions::kXO_FusionSuit), -1, 0.f, 1.f, 1.f, kOT_DoubleEnum},
 };
 static SOptionCategory skFrontPortOptions[] = {
-    {5, skFrontVideoOptions}, {4, skFrontControllerOptions}, {2, skFrontSystemOptions},
-    {0, nullptr},             {0, nullptr},
+    {5, skFrontVideoOptions},    {4, skFrontControllerOptions}, {1, skFrontGameplayOptions},
+    {2, skFrontSystemOptions}, {0, nullptr},
 };
 
 static const SOptionCategory& GetOptionCategory(int category, bool frontEnd) {

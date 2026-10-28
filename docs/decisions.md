@@ -105,6 +105,15 @@ combiners; ThinLTO + PGO for releases.
 - **L + R + Y at boot forces the full disc check** (round hw2): a debug
   combo, any build, no on-screen hint (`docs/boot-safety.md`).
 
+- **Skip Cutscenes** (Port Options > Gameplay, pause > Visor): MetroidPrimePort's
+  randomprime-derived patches, imported unchanged (`xbox/src/port/port_skip_cutscenes_ops.cpp`,
+  `port_skip_streams.cpp`, `port_skip_cutscenes_data.inc` at the pinned commit)
+  with an Xbox `port_skip_cutscenes.cpp` that keeps only the plain path (no
+  randomizer, no Archipelago). A room's script is patched as it loads; one that
+  doesn't match its stream is left alone (`[SKIP]` in the log).
+- **Streamed music**: the AI DMA path as MetroidPrimePort drives it
+  (`prime_sdk.c`), mixed into MusyX's output (`px_sdl3.cpp`).
+
 Not carried over: `disc_lower` and the `DISC_STRUCT` lowering. Melee keeps
 disc data big-endian in memory and melee-pc marks those structs; Prime reads
 almost everything through `CInputStream`, which MetroidPrimePort makes read

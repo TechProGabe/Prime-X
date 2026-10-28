@@ -217,11 +217,6 @@ bool PortSaveState::Tick(std::type_identity_t< CStateManager& > a0) { PX_STUB("P
 bool PortShell::Defer(std::type_identity_t< PortShell::Type > a0, std::type_identity_t< CAABox const& > a1, std::type_identity_t< std::function<void __cdecl(void)> > a2) { PX_STUB("PortShell::Defer"); return px_stub_value< bool >(); }
 bool PortShell::DrawNow(std::type_identity_t< PortShell::Type > a0, std::type_identity_t< CAABox const& > a1, std::type_identity_t< std::function<void __cdecl(void)> const& > a2) { PX_STUB("PortShell::DrawNow"); return px_stub_value< bool >(); }
 bool PortShell::Enabled() { PX_STUB("PortShell::Enabled"); return px_stub_value< bool >(); }
-bool PortSkipCutscenes::Active() { PX_STUB("PortSkipCutscenes::Active"); return px_stub_value< bool >(); }
-bool PortSkipCutscenes::Forced() { PX_STUB("PortSkipCutscenes::Forced"); return px_stub_value< bool >(); }
-bool PortSkipCutscenes::IsPickupDependency(std::type_identity_t< unsigned int > a0) { PX_STUB("PortSkipCutscenes::IsPickupDependency"); return px_stub_value< bool >(); }
-bool PortSkipCutscenes::PatchArea(std::type_identity_t< unsigned int > a0, std::type_identity_t< unsigned char const* > a1, std::type_identity_t< unsigned int > a2, std::type_identity_t< std::vector<unsigned char, std::allocator<unsigned char>>& > a3) { PX_STUB("PortSkipCutscenes::PatchArea"); return px_stub_value< bool >(); }
-bool PortSkipCutscenes::PickupPlacementFor(std::type_identity_t< unsigned int > a0, std::type_identity_t< PortSkipCutscenes::PickupPlacement& > a1) { PX_STUB("PortSkipCutscenes::PickupPlacementFor"); return px_stub_value< bool >(); }
 bool PortThirdPerson::Active() { PX_STUB("PortThirdPerson::Active"); return px_stub_value< bool >(); }
 bool PortThirdPerson::AimPoint(std::type_identity_t< CVector3f& > a0) { PX_STUB("PortThirdPerson::AimPoint"); return px_stub_value< bool >(); }
 bool PortThirdPersonBody::CannonPosition(std::type_identity_t< CPlayer const& > a0, std::type_identity_t< CVector3f& > a1) { PX_STUB("PortThirdPersonBody::CannonPosition"); return px_stub_value< bool >(); }

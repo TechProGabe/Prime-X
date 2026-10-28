@@ -6,3 +6,9 @@ PortFontAccent::Decode
 PortFontAccent::Encode
 PortFontAccent::MarkFor
 PortPointerMenu::Begin
+PortSkipCutscenes::Active
+PortSkipCutscenes::Forced
+PortSkipCutscenes::IsPickupDependency
+PortSkipCutscenes::PatchArea
+PortSkipCutscenes::PickupPlacementFor
+PortDebug::SkippableCutscenes

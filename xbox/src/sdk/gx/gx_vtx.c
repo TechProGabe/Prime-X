@@ -593,6 +593,17 @@ static void after_attr(void) {
     }
 }
 
+/* The immediate-mode calls' fast path: the vertex's next slot when it is
+ * `attr`, direct, of store_fast kind `kind` (what the call writes); else
+ * NULL and the call takes the general path. The rain alone made ~10000 of
+ * these calls a frame (the Landing Site's profile: ~12% in them). */
+static inline const Slot* fast_slot(uint8_t attr, uint8_t kind) {
+    const Slot* s;
+    if (!B.open || !B.base || B.done >= B.expected || B.cursor >= B.plan.n) return NULL;
+    s = &B.plan.slot[B.cursor];
+    return s->attr == attr && s->type == GX_DIRECT && s->kind == kind ? s : NULL;
+}
+
 static void imm_floats(uint8_t attr, const float* f, int n) {
     const Slot* s = next_slot(0, attr);
     if (!s) return;
@@ -625,9 +636,39 @@ static const float k_frac_scale[32] = {
 };
 static float q(int v, uint8_t attr) { return (float)v * k_frac_scale[g_gx.vat[B.vtxfmt][attr].frac & 31]; }
 
-void GXPosition3f32(f32 x, f32 y, f32 z) { float f[3] = { x, y, z }; imm_floats(GX_VA_POS, f, 3); }
+void GXPosition3f32(f32 x, f32 y, f32 z) {
+    const Slot* s = fast_slot(GX_VA_POS, SK_F32_3);
+    if (s) {
+        float* o = (float*)(B.cur + s->dst);
+        o[0] = x;
+        o[1] = y;
+        o[2] = z;
+        B.cursor++;
+        after_attr();
+        return;
+    }
+    {
+        float f[3] = { x, y, z };
+        imm_floats(GX_VA_POS, f, 3);
+    }
+}
 void GXPosition3u16(u16 x, u16 y, u16 z) { float f[3] = { q(x, GX_VA_POS), q(y, GX_VA_POS), q(z, GX_VA_POS) }; imm_floats(GX_VA_POS, f, 3); }
-void GXPosition3s16(s16 x, s16 y, s16 z) { float f[3] = { q(x, GX_VA_POS), q(y, GX_VA_POS), q(z, GX_VA_POS) }; imm_floats(GX_VA_POS, f, 3); }
+void GXPosition3s16(s16 x, s16 y, s16 z) {
+    const Slot* s = fast_slot(GX_VA_POS, SK_S16_3);
+    if (s) {
+        float* o = (float*)(B.cur + s->dst);
+        o[0] = x * s->scale;
+        o[1] = y * s->scale;
+        o[2] = z * s->scale;
+        B.cursor++;
+        after_attr();
+        return;
+    }
+    {
+        float f[3] = { q(x, GX_VA_POS), q(y, GX_VA_POS), q(z, GX_VA_POS) };
+        imm_floats(GX_VA_POS, f, 3);
+    }
+}
 void GXPosition3u8(u8 x, u8 y, u8 z) { float f[3] = { q(x, GX_VA_POS), q(y, GX_VA_POS), q(z, GX_VA_POS) }; imm_floats(GX_VA_POS, f, 3); }
 void GXPosition3s8(s8 x, s8 y, s8 z) { float f[3] = { q(x, GX_VA_POS), q(y, GX_VA_POS), q(z, GX_VA_POS) }; imm_floats(GX_VA_POS, f, 3); }
 /* The GX FIFO takes components as a stream, so code that writes an XYZ
@@ -689,7 +730,20 @@ static void imm_color(uint8_t r, uint8_t g, uint8_t b, uint8_t a) {
     after_attr();
 }
 
-void GXColor4u8(u8 r, u8 g, u8 b, u8 a) { imm_color(r, g, b, a); }
+void GXColor4u8(u8 r, u8 g, u8 b, u8 a) {
+    const Slot* s = fast_slot(GX_VA_CLR0, SK_RGBA8);
+    if (s) {
+        uint8_t* o = B.cur + s->dst;
+        o[0] = r;
+        o[1] = g;
+        o[2] = b;
+        o[3] = a;
+        B.cursor++;
+        after_attr();
+        return;
+    }
+    imm_color(r, g, b, a);
+}
 void GXColor3u8(u8 r, u8 g, u8 b) { imm_color(r, g, b, 255); }
 void GXColor1u32(u32 c) { imm_color((u8)(c >> 24), (u8)(c >> 16), (u8)(c >> 8), (u8)c); }
 void GXColor1u16(u16 c) {
@@ -725,7 +779,18 @@ static float tq(int v) {
     return (float)v;
 }
 
-void GXTexCoord2f32(f32 s, f32 t) { imm_tex(s, t); }
+void GXTexCoord2f32(f32 s, f32 t) {
+    const Slot* sl = B.open && B.base && B.done < B.expected && B.cursor < B.plan.n ? &B.plan.slot[B.cursor] : NULL;
+    if (sl && sl->attr >= GX_VA_TEX0 && sl->attr <= GX_VA_TEX7 && sl->type == GX_DIRECT && sl->kind == SK_F32_2) {
+        float* o = (float*)(B.cur + sl->dst);
+        o[0] = s;
+        o[1] = t;
+        B.cursor++;
+        after_attr();
+        return;
+    }
+    imm_tex(s, t);
+}
 void GXTexCoord2u16(u16 s, u16 t) { imm_tex(tq(s), tq(t)); }
 void GXTexCoord2s16(s16 s, s16 t) { imm_tex(tq(s), tq(t)); }
 void GXTexCoord2u8(u8 s, u8 t) { imm_tex(tq(s), tq(t)); }
@@ -776,6 +841,19 @@ static int color16_next(void) {
            color_size(sl->fmt.type) == 2;
 }
 void GXTexCoord1s16(s16 s) {
+    const Slot* sl = cur_slot();
+    if (sl && sl->type == GX_DIRECT && sl->attr == GX_VA_CLR0 && sl->fmt.type == GX_RGBA4) {
+        /* the rain's streak colours: RGBA4 straight into the vertex */
+        uint8_t* o = B.cur + sl->dst;
+        const uint32_t v = (u16)s;
+        o[0] = (uint8_t)(((v >> 12) & 15) * 17);
+        o[1] = (uint8_t)(((v >> 8) & 15) * 17);
+        o[2] = (uint8_t)(((v >> 4) & 15) * 17);
+        o[3] = (uint8_t)((v & 15) * 17);
+        B.cursor++;
+        after_attr();
+        return;
+    }
     if (color16_next()) {
         GXColor1u16((u16)s);
         return;
