@@ -141,7 +141,8 @@ void xgx_set_efb_width(uint32_t w) {
     s_efb_w = (int)w;
     xgx_set_content_aspect((float)w / (float)XGX_EFB_H);
     s_draw_force = XGX_DIRTY_ALL;
-    xhw_logf("[NV2A] EFB %ux%u (aspect %.3f), content %dx%d at %d", w, XGX_EFB_H, (double)w / XGX_EFB_H, s_cw, s_ch, s_cx);
+    xhw_logf("[NV2A] EFB %ux%u (aspect %u/1000), content %dx%d at %d", w, XGX_EFB_H, w * 1000u / XGX_EFB_H, s_cw, s_ch,
+             s_cx);   /* the log's printf has no floats */
 }
 
 uint32_t xgx_efb_width(void) { return (uint32_t)s_efb_w; }
