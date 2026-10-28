@@ -116,11 +116,9 @@ Open, in rough order:
    round should bring back. Levers left: skinned models' display lists
    decoded every call (the dynamic budget is full), GPU or further SSE
    skinning, the rain's immediate-mode path, CFishCloud.
-2. Thermal and X-ray visors don't switch in the Landing Site with `env
-   PX_ALL_ITEMS=1` (D-pad Right/Down); Scan and Combat do. Likely the room's
-   command filter (`ControlMapper::SetCommandFiltered`, set by its scripts
-   for items Samus can't have yet), not the port: try a later room
-   (Phendrana's, Chozo's) before suspecting the pad.
+2. Visors: X-ray (D-pad Right) and thermal (Down) switch and render in
+   Phendrana with `env PX_ALL_ITEMS=1` (`/c/xemu/px/scen-visor2`); the
+   Landing Site's scripts filter them (game logic). Compare with Dolphin.
 3. Rendering to compare against Dolphin: Main Plaza after taking damage
    (`/c/xemu/px/scen-plaza`, shot 2: the whole screen yellow, energy 74;
    probably the hit flash caught mid-way), the arm cannon's grey-white look
