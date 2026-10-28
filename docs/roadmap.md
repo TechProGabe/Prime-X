@@ -44,6 +44,13 @@ line under it says how far it got.
 
 ## Known issues
 
+- **Out of memory on red** after walking into the ship and out again
+  (free play after hw5, ~215 s): the game heap couldn't grow with ~2 MB
+  free. Top of the next session (`docs/handoff.md`).
+- Inside the gunship: 12-14 fps on red (display lists 40-50 ms, lists gone
+  volatile).
+- The visor fog when walking into the ship is too strong (the user).
+- Port Options' Widescreen HUD row draws its value wrong in the centre.
 - The Landing Site's landing cinematic shows washed-out white frames
   (4 of 9 shots on red in hw5): a full-screen additive camera filter the
   game draws; lightning or a blending fault, being traced.
