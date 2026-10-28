@@ -66,6 +66,14 @@ GXFifoObj* GXInit(void* base, u32 size) {
         g_xgx.swap[i][2] = (uint8_t)(i ? i - 1 : 2);
         g_xgx.swap[i][3] = 3;
     }
+    /* GXInit's channels: all four (colour and alpha, 0 and 1) take the
+     * material from the vertex, ambient from the register; material
+     * white, ambient black. Prime's CGX only ever sets GX_COLOR0 and
+     * GX_COLOR1, so its alphas stay as GXInit left them: from the vertex.
+     * Zeroed (from the register, white), every vertex-alpha fade drew at
+     * full strength: the visor's steam, the camera filters' flashes. */
+    for (i = 0; i < 4; i++) g_xgx.chan[i].mat_src = GX_SRC_VTX;
+    for (i = 0; i < 2; i++) memset(g_xgx.mat[i], 0xFF, 4);
     g_xgx.ntev = 1;
     g_xgx.nchans = 1;
     g_xgx.alpha_comp0 = g_xgx.alpha_comp1 = GX_ALWAYS;
