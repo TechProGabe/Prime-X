@@ -555,6 +555,16 @@ static void convert_level(const uint8_t* src, uint32_t fmt, uint32_t xfmt, uint3
             }
         return;
     }
+    if ((fmt == GX_TF_I8 || fmt == GX_TF_C8) && !(w & 7) && !(h & 3)) {
+        /* whole 8x4 tiles, a row of 8 bytes at a time: the movie planes
+         * (640x480 Y, 320x240 U and V, new every frame) went texel by texel
+         * through the switch below, 18% of the title screen's frame */
+        const uint8_t* t = src;
+        for (by = 0; by < h; by += 4)
+            for (bx = 0; bx < w; bx += 8, t += 32)
+                for (y = 0; y < 4; y++) memcpy(out + (by + y) * w + bx, t + y * 8, 8);
+        return;
+    }
     {
         int bw, bh, bpp;
         block_dims(fmt, &bw, &bh, &bpp);

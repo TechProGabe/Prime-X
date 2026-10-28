@@ -39,6 +39,8 @@ console put it next to `default.xbe`. Its `env` lines set what the game's
 | `env MP_BOOT_WORLD=<MLVL>[:<MREA>]` | no logos or front end: a new game starts in that world (its default room without an MREA). Logged as `[TEST] boot world` |
 | `env MP_FAST_BOOT=1` | skip the boot logos |
 | `env MP_SKIP_CUTSCENES=1`, `env MP_CUTSCENE_SPEED=4` | skip or speed up cinematics |
+| `env PX_ALL_ITEMS=1` | with `MP_BOOT_WORLD`: every item (visors, beams, suits, 250 missiles, 14 tanks) |
+| `env PX_SKIPPABLE=1` | Port Options' Skip Cutscenes on, over settings.ini |
 | `env MP_INVULNERABLE=1` | no damage |
 | `env PX_LOCKSTEP=1` | one simulation tick per frame (comparable screenshots) |
 

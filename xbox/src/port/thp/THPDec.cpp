@@ -57,6 +57,9 @@ bool read_segment(aurora::ByteReader& reader, const u8*& data, size_t& size) noe
 
 struct QuantizationTable {
   std::array<float, 64> values{};
+#ifdef TARGET_XBOX
+  std::array<s32, 64> ivalues{}; // the same AAN-scaled values, times 4 (inverse_dct_int)
+#endif
   bool valid = false;
 };
 
@@ -111,6 +114,9 @@ s32 parse_quantization_tables(const u8* data, size_t size, DecodeContext& contex
         const size_t index = row * 8 + column;
         table.values[index] =
             static_cast<float>(static_cast<double>(natural[index]) * kAanScale[row] * kAanScale[column]);
+#ifdef TARGET_XBOX
+        table.ivalues[index] = static_cast<s32>(static_cast<double>(table.values[index]) * 4.0 + 0.5);
+#endif
       }
     }
     table.valid = true;
@@ -628,6 +634,88 @@ std::array<u8, 64> inverse_dct(const std::array<s16, 64>& coefficients,
   return output;
 }
 
+#ifdef TARGET_XBOX
+// Port (Prime-X): an integer AAN IDCT, libjpeg's jidctfst arrangement (8-bit
+// constants, two extra bits from the quantisation table), for the Pentium
+// III, where the float version above held the title screen's movie (and so
+// the front end) at ~17 fps: its decode was 60% of a frame. Same output
+// convention as above (value / 8 plus 128, clamped); results differ
+// from the float path by a step or so, invisible in a movie frame.
+constexpr s32 kFix1_082392200 = 277;
+constexpr s32 kFix1_414213562 = 362;
+constexpr s32 kFix1_847759065 = 473;
+constexpr s32 kFix2_613125930 = 669;
+inline s32 mul8(s32 v, s32 c) noexcept { return (v * c) >> 8; }
+
+std::array<u8, 64> inverse_dct_int(const std::array<s16, 64>& in, const QuantizationTable& quant) noexcept {
+  s32 ws[64];
+  const s32* q = quant.ivalues.data();
+  // columns (dequantised; scaled by 4 from the table)
+  for (int c = 0; c < 8; ++c) {
+    const s16* x = &in[c];
+    if (!(x[8] | x[16] | x[24] | x[32] | x[40] | x[48] | x[56])) {
+      const s32 dc = x[0] * q[c];
+      for (int r = 0; r < 8; ++r) ws[r * 8 + c] = dc;
+      continue;
+    }
+    s32 t0 = x[0] * q[c], t1 = x[16] * q[16 + c], t2 = x[32] * q[32 + c], t3 = x[48] * q[48 + c];
+    s32 t10 = t0 + t2, t11 = t0 - t2, t13 = t1 + t3, t12 = mul8(t1 - t3, kFix1_414213562) - t13;
+    t0 = t10 + t13;
+    t3 = t10 - t13;
+    t1 = t11 + t12;
+    t2 = t11 - t12;
+    s32 t4 = x[8] * q[8 + c], t5 = x[24] * q[24 + c], t6 = x[40] * q[40 + c], t7 = x[56] * q[56 + c];
+    const s32 z13 = t6 + t5, z10 = t6 - t5, z11 = t4 + t7, z12 = t4 - t7;
+    t7 = z11 + z13;
+    t11 = mul8(z11 - z13, kFix1_414213562);
+    const s32 z5 = mul8(z10 + z12, kFix1_847759065);
+    t10 = mul8(z12, kFix1_082392200) - z5;
+    t12 = mul8(z10, -kFix2_613125930) + z5;
+    t6 = t12 - t7;
+    t5 = t11 - t6;
+    t4 = t10 + t5;
+    ws[0 * 8 + c] = t0 + t7;
+    ws[7 * 8 + c] = t0 - t7;
+    ws[1 * 8 + c] = t1 + t6;
+    ws[6 * 8 + c] = t1 - t6;
+    ws[2 * 8 + c] = t2 + t5;
+    ws[5 * 8 + c] = t2 - t5;
+    ws[4 * 8 + c] = t3 + t4;
+    ws[3 * 8 + c] = t3 - t4;
+  }
+  // rows, then / 8 (and the table's 4): >> 5, rounded, plus the level
+  // shift (the float path's kOutputBias), clamped
+  std::array<u8, 64> out;
+  auto put = [](s32 v) -> u8 {
+    v = ((v + 16) >> 5) + 128;
+    return static_cast<u8>(v < 0 ? 0 : v > 255 ? 255 : v);
+  };
+  for (int r = 0; r < 8; ++r) {
+    const s32* w = &ws[r * 8];
+    u8* o = &out[r * 8];
+    s32 t10 = w[0] + w[4], t11 = w[0] - w[4], t13 = w[2] + w[6];
+    s32 t12 = mul8(w[2] - w[6], kFix1_414213562) - t13;
+    s32 t0 = t10 + t13, t3 = t10 - t13, t1 = t11 + t12, t2 = t11 - t12;
+    const s32 z13 = w[5] + w[3], z10 = w[5] - w[3], z11 = w[1] + w[7], z12 = w[1] - w[7];
+    s32 t7 = z11 + z13;
+    t11 = mul8(z11 - z13, kFix1_414213562);
+    const s32 z5 = mul8(z10 + z12, kFix1_847759065);
+    t10 = mul8(z12, kFix1_082392200) - z5;
+    t12 = mul8(z10, -kFix2_613125930) + z5;
+    const s32 t6 = t12 - t7, t5 = t11 - t6, t4 = t10 + t5;
+    o[0] = put(t0 + t7);
+    o[7] = put(t0 - t7);
+    o[1] = put(t1 + t6);
+    o[6] = put(t1 - t6);
+    o[2] = put(t2 + t5);
+    o[5] = put(t2 - t5);
+    o[4] = put(t3 + t4);
+    o[3] = put(t3 - t4);
+  }
+  return out;
+}
+#endif
+
 void write_block(u8* output, u16 width, u16 height, u16 blockX, u16 blockY, const std::array<u8, 64>& pixels) noexcept {
   if (blockX >= width) {
     return;
@@ -652,7 +740,11 @@ bool decode_and_write_block(BitReader& reader, DecodeContext& context, size_t co
   if (!quantization.valid) {
     return false;
   }
+#ifdef TARGET_XBOX
+  write_block(output, width, height, x, y, inverse_dct_int(coefficients, quantization));
+#else
   write_block(output, width, height, x, y, inverse_dct(coefficients, quantization));
+#endif
   return true;
 }
 

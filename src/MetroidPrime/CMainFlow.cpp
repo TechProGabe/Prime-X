@@ -1,4 +1,5 @@
 #include "MetroidPrime/CMainFlow.hpp"
+#include <stdlib.h>
 
 #include "MetroidPrime/CArchMsgParmInt32.hpp"
 #include "MetroidPrime/CArchitectureMessage.hpp"
@@ -126,6 +127,24 @@ void CMainFlow::SetGameState(EClientFlowStates state, CArchitectureQueue& queue)
       worldState.SetAreaId(TAreaId(0));
       worldState.SetDesiredAreaAssetId(bootArea != 0 ? static_cast< CAssetId >(bootArea)
                                                      : kInvalidAssetId);
+#ifdef TARGET_XBOX
+      // PORT_XBOX: test builds' "env PX_ALL_ITEMS=1" (autopad.txt): every
+      // item, so the visors, beams and suits can be rendered in xemu
+      // (docs/testing.md)
+      if (getenv("PX_ALL_ITEMS") != nullptr) {
+        CPlayerState& ps = *gpGameState->PlayerState();
+        for (int i = 0; i < CPlayerState::kIT_Max; ++i) {
+          const CPlayerState::EItemType t = static_cast< CPlayerState::EItemType >(i);
+          const int n = t == CPlayerState::kIT_Missiles     ? 250
+                        : t == CPlayerState::kIT_PowerBombs  ? 8
+                        : t == CPlayerState::kIT_EnergyTanks ? 14
+                                                             : 1;
+          ps.InitializePowerUp(t, n);
+          ps.IncrPickUp(t, n);
+        }
+        fprintf(stderr, "[boot-world] every item (PX_ALL_ITEMS)\n");
+      }
+#endif
       gpGameState->WriteBackupBuf();
       fprintf(stderr, "[boot-world] new game in world %08X area %08X\n", bootWorld, bootArea);
       SetGameState(kCFS_Game, queue);
