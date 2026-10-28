@@ -2816,6 +2816,13 @@ static void trace_draw(uint32_t prim, uint32_t count, const XgxState* st, int ap
                      rgb565_to_888((uint16_t)(p[2] | p[3] << 8)), p[4], p[5], p[6], p[7]);
         }
     }
+    for (i = 0; i < st->nind && i < 4; i++) {   /* indirect stages: their map and what it holds */
+        uint32_t im = st->ind_order[i][1];
+        const XgxMap* m = im < XGX_MAX_MAPS ? &st->map[im] : NULL;
+        const Tex* x = m && m->tex && m->tex < MAX_TEX && s_tex[m->tex].used ? &s_tex[m->tex] : NULL;
+        xhw_logf("[DRAW]  ind%u tc %u map %u tex %ux%u fmt %02x rect %u scale %u/%u", i, st->ind_order[i][0], im,
+                 x ? x->w : 0, x ? x->h : 0, x ? x->nvfmt : 0, x ? x->rect : 0, st->ind_scale[i][0], st->ind_scale[i][1]);
+    }
     xhw_logf("[DRAW]  k %02x%02x%02x%02x %02x%02x%02x%02x swap %u%u%u%u %u%u%u%u stage swap %u/%u", st->konst[0][0],
              st->konst[0][1], st->konst[0][2], st->konst[0][3], st->konst[1][0], st->konst[1][1], st->konst[1][2],
              st->konst[1][3], st->swap[0][0], st->swap[0][1], st->swap[0][2], st->swap[0][3], st->swap[1][0],
