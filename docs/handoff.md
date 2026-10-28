@@ -229,3 +229,7 @@ Added 2026-10-27 (this session):
   (`docs/performance.md`).
 - "Steady 30" at 720p vs uncapped, once judder can be measured.
 - Front LED effects: worth doing for Prime, or just off.
+- Dolphin on this PC for reference frames (rendering checks in phase 3 are
+  judged against Dolphin, which isn't installed): may I install it?
+- Console round hw5 (`tools/xbox/scenarios/hw5`, the console profile) when
+  the user allows a round.
