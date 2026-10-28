@@ -177,7 +177,8 @@ static int pix_y(float y) { return s_cy + (int)floorf(y * (float)s_ch / XGX_EFB_
 #define TEX_POOL_480 ((uint32_t)XGX_TEX_POOL_KB * 1024)
 #define TEX_POOL_720 ((uint32_t)XGX_TEX_POOL_KB * 1024)
 #else
-#define TEX_POOL_480 (8u * 1024 * 1024)
+#define TEX_POOL_480 (7u * 1024 * 1024)   /* Prime: never more than ~5.5 MB of 8 in use in play, and
+                                               the game's heap ran short (round hw6) */
 #define TEX_POOL_720 (6u * 1024 * 1024)
 #endif
 #define TEX_POOL_MIN (4u * 1024 * 1024)
