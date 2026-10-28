@@ -1505,7 +1505,12 @@ static int dlc_evict_one(uint32_t frame, const DlEntry* keep) {
  * descriptor), and one entry per list flipping between them rebuilt on every
  * call until it went volatile (~100 lists, decoded on every call). */
 static uint32_t fmt_key(uint32_t fmts) {
-    uint32_t h = mix32(s_desc_sum), f;
+    /* the indexed arrays' strides and byte orders too (not their bases):
+     * Prime draws a skinned model from its CPU workspace (native order) and
+     * the same list from the disc's arrays (big-endian) in one frame; under
+     * one key each draw rebuilt the other's entry until it went volatile
+     * (the Frigate: 58 lists decoded on every call) */
+    uint32_t h = mix32(s_desc_sum ^ s_arrs_sum * 0x9E3779B1u), f;
     for (f = 0; f < 8; f++)
         if (fmts & (1u << f)) h = mix32(h + s_vat_sum[f]);
     return h;

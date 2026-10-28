@@ -101,6 +101,15 @@ lists back before it drops a texture (`nv2a.c` `xgx_vbuf_alloc`,
 `gx_dlc_evict_spilled`). Main Plaza in xemu: display lists ~3 ms, game
 ~20 ms, 7 -> ~29 fps.
 
+The Frigate's opening: 58 skinned lists went volatile (decoded on every
+call) because the same list is drawn from the CPU-skinned workspace and
+from the disc's arrays in one frame, and the cache key ignored the arrays'
+strides and byte orders. With them in the key (`fmt_key`): 7 volatile,
+display lists ~10.5 -> ~8.3 ms in xemu. Still the heaviest scene measured
+(2000+ draws, game ~35 ms in xemu); the dynamic-list budget (1 MB, full)
+is the next limit, and memory is tight for raising it (Main Plaza: ~2.6 MB
+free).
+
 ## Levers, roughly in the order to try them
 
 | lever | where | note |
