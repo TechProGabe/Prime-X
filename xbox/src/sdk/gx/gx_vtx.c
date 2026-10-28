@@ -2352,6 +2352,56 @@ int GXPortBoxCulled(const float bmin[3], const float bmax[3]) {
                        (const float(*)[4])g_xgx.posmtx[(g_xgx.cur_posmtx / 3) % XGX_NUM_POSMTX]);
 }
 
+/* port_xbox_gx.h: the rain's streaks in one call, where the open batch is
+ * exactly a direct S16 position then a direct RGBA4 colour (vertex format
+ * 6 as CEnvFxManagerGrid::RenderRainParticles sets it): what its two
+ * GXPosition3s16 and two GXTexCoord1s16 calls a particle write, ~10% of a
+ * rainy frame on the console in calls (round hw5's profile). */
+int GXPortRainLines(const short* xyz, unsigned n, short dz, unsigned short c0, unsigned short c1) {
+    const Slot *ps, *cs;
+    uint8_t col[2][4];
+    uint32_t i, s;
+    float sc;
+    if (!B.open || !B.base || B.cursor != 0 || B.plan.n != 2 || B.done > B.expected ||
+        B.expected - B.done < 2 * n)
+        return 0;
+    ps = &B.plan.slot[0];
+    cs = &B.plan.slot[1];
+    if (ps->attr != GX_VA_POS || ps->type != GX_DIRECT || ps->kind != SK_S16_3 || ps->dst < 0) return 0;
+    if (cs->attr != GX_VA_CLR0 || cs->type != GX_DIRECT || cs->dsize != 2 || cs->fmt.type != GX_RGBA4 ||
+        cs->dst < 0)
+        return 0;
+    for (i = 0; i < 2; i++) {   /* put16's RGBA4 decode */
+        uint16_t v = i ? c1 : c0;
+        col[i][0] = (uint8_t)((v >> 12 & 15) * 17);
+        col[i][1] = (uint8_t)((v >> 8 & 15) * 17);
+        col[i][2] = (uint8_t)((v >> 4 & 15) * 17);
+        col[i][3] = (uint8_t)((v & 15) * 17);
+    }
+    s = B.plan.layout.stride;
+    sc = ps->scale;
+    for (i = 0; i < n; i++, xyz += 3) {
+        uint8_t* v = B.cur;
+        float* o = (float*)(v + ps->dst);
+        if (i) memset(v, 0, s);   /* the first was cleared when the batch began */
+        o[0] = xyz[0] * sc;
+        o[1] = xyz[1] * sc;
+        o[2] = xyz[2] * sc;
+        memcpy(v + cs->dst, col[0], 4);
+        v += s;
+        memset(v, 0, s);
+        o = (float*)(v + ps->dst);
+        o[0] = xyz[0] * sc;
+        o[1] = xyz[1] * sc;
+        o[2] = (s16)(xyz[2] + dz) * sc;   /* the game's short sum, as the call's s16 took it */
+        memcpy(v + cs->dst, col[1], 4);
+        B.cur = v + s;
+    }
+    B.done += 2 * n;
+    if (n && B.done < B.expected) memset(B.cur, 0, s);   /* after_attr's clear of the next vertex */
+    return 1;
+}
+
 void GXCallDisplayList(const void* list, u32 nbytes) {
     int pf = xhw_perf_enter(XHW_PERF_DLIST);
     gx_vtx_flush();
