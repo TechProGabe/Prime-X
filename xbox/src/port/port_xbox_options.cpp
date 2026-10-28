@@ -136,7 +136,7 @@ const wchar_t* Description(int option) {
   case kXO_Widescreen:
     return L"Auto follows the dashboard. 720p is always 16:9.";
   case kXO_WidescreenHud:
-    return L"Edges spreads the HUD to the sides of a 16:9 screen.";
+    return L"Inner keeps the HUD in the middle; Edges spreads it to the sides of a 16:9 screen.";
   case kXO_Fov:
     return L"How wide Samus sees. 55 is the GameCube's.";
   case kXO_FpsCounter:
@@ -236,7 +236,7 @@ const wchar_t* ValueLabel(int option, int cell) {
   // two-choice rows whose Off / On wouldn't say what they do (the user,
   // round hw4: "what does on or off mean")
   static const wchar_t* const kFps[] = {L"Hide", L"Show"};
-  static const wchar_t* const kHud[] = {L"Centred", L"Edges"};
+  static const wchar_t* const kHud[] = {L"Inner", L"Edges"};
   static const wchar_t* const kDisc[] = {L"No", L"Yes"};
   if (cell < 2) {
     if (option == kXO_FpsCounter) {

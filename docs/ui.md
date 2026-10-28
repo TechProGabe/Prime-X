@@ -94,7 +94,7 @@ from Melee and Animal Crossing, all the typical stuff in settings", and
 | category | row | values | settings.ini |
 |---|---|---|---|
 | Display | Widescreen | Auto / 4:3 / 16:9, live (720p is always 16:9) | `[video] widescreen` 1 / 0 / 2 |
-| Display | Widescreen HUD | Centred / Edges | `[game] hud_wide` |
+| Display | Widescreen HUD | Inner / Edges ("Centred" overlapped the divider, round hw5) | `[game] hud_wide` |
 | Display | Field of View | 55 (retail) / 65 / 75 | `[game] fov` |
 | Display | FPS Counter | Hide / Show (the counter in the corner) | `[video] fps` |
 | Display | Video Mode | 480i / 480p / 720p, each only where the dashboard allows it | `[video] 720p`, `progressive` |
