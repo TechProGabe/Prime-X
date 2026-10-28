@@ -155,9 +155,12 @@ Open, in rough order:
 3c. Morph Ball (`env PX_ALL_ITEMS=1`, Phendrana): transforms and rolls; the
    transition frame has a fine crosshatch over the whole screen (the
    game's blur through an EFB copy?). The heat haze over Magmoor's rooms is
-   drawn without its indirect warp (two indirect stages want four texture
-   units; one of them is an EFB copy `ind_tex` can't take). Compare both
-   with Dolphin.
+   drawn without its indirect warp: its two indirect maps are 512x256
+   A8R8G8B8 (EFB copies, new each frame), past `ind_tex`'s 64K-texel limit;
+   converting them would read ~1 MB of uncached pool memory a frame, ~5-10
+   ms on the console, for a subtle effect. A GPU-side conversion (render
+   the copy into the BUMPENVMAP layout) would make it cheap. Compare with
+   Dolphin.
 4. The audio start-up freeze after a chained launch (round hw4 r4c): the
    flushed `[AUDIO] step:` lines will say where next time.
 5. The title screen's Options frame draws no slider (moot for Port
