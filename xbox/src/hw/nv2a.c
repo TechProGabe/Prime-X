@@ -2793,8 +2793,10 @@ static void trace_draw(uint32_t prim, uint32_t count, const XgxState* st, int ap
         for (v = 0; v < count && v < 4 && l->off_tc[0] >= 0; v++) {   /* the first vertices' position and tc0, x1000 */
             const float* p = (const float*)(s_draw_base + v * l->stride + l->off_pos);
             const float* t = (const float*)(s_draw_base + v * l->stride + l->off_tc[0]);
-            xhw_logf("[DRAW]  v%u pos %d %d %d tc0 %d %d", v, (int)(p[0] * 1000), (int)(p[1] * 1000),
-                     (int)(p[2] * 1000), (int)(t[0] * 1000), (int)(t[1] * 1000));
+            const uint8_t* c = l->off_col[0] >= 0 ? s_draw_base + v * l->stride + l->off_col[0] : NULL;
+            xhw_logf("[DRAW]  v%u pos %d %d %d tc0 %d %d col %02x%02x%02x%02x", v, (int)(p[0] * 1000),
+                     (int)(p[1] * 1000), (int)(p[2] * 1000), (int)(t[0] * 1000), (int)(t[1] * 1000), c ? c[0] : 0,
+                     c ? c[1] : 0, c ? c[2] : 0, c ? c[3] : 0);
         }
     }
     for (s = 0; s < st->ntev && s < XGX_MAX_TEV; s++) {
@@ -2820,6 +2822,18 @@ static void trace_draw(uint32_t prim, uint32_t count, const XgxState* st, int ap
             xhw_logf("[DRAW]  s%u texels: average c0 %02x%02x%02x, centre block c0 %06x c1 %06x idx %02x%02x%02x%02x", s,
                      sum[0] / nb, sum[1] / nb, sum[2] / nb, rgb565_to_888((uint16_t)(p[0] | p[1] << 8)),
                      rgb565_to_888((uint16_t)(p[2] | p[3] << 8)), p[4], p[5], p[6], p[7]);
+        } else if (x && x->mem && x->nvfmt == nv_format(XGX_TEX_ARGB8)) {
+            /* level 0 (swizzled; the order doesn't matter for these): average ARGB, alpha's range */
+            uint32_t n = x->w * x->h, k, sum[4] = { 0, 0, 0, 0 }, amin = 255, amax = 0;
+            const uint32_t* p = (const uint32_t*)x->mem;
+            for (k = 0; k < n; k++) {
+                const uint32_t c = p[k], a = c >> 24;
+                sum[0] += a; sum[1] += c >> 16 & 255; sum[2] += c >> 8 & 255; sum[3] += c & 255;
+                if (a < amin) amin = a;
+                if (a > amax) amax = a;
+            }
+            xhw_logf("[DRAW]  s%u texels: average argb %02x%02x%02x%02x, alpha %02x-%02x", s, sum[0] / n, sum[1] / n,
+                     sum[2] / n, sum[3] / n, amin, amax);
         }
     }
     for (i = 0; i < st->nind && i < 4; i++) {   /* indirect stages: their map and what it holds */

@@ -23,7 +23,11 @@ at ~27-41 fps, up from hw1's ~10). Everything is committed and pushed on
   (`gx_vtx.c` `clip_lines`): the rain lines with an end behind or just in
   front of the camera came out flipped or ~300,000 px long.
 - Trace builds (`-DXGX_DEBUG_TRACE=1`) print each traced draw's first four
-  vertices (position, tc0).
+  vertices (position, tc0, colour) and A8R8G8B8 textures' average and alpha
+  range.
+- Every particle draws its whole texture now, so rooms look busier than
+  before (steam, mist, sparks): compare with Dolphin before calling any of
+  it a bug.
 
 - The picture's aspect follows the game's EFB (`VIConfigure` ->
   `xgx_set_efb_width`): no more 9% squeeze and side bars at 480, full 16:9
@@ -167,9 +171,12 @@ Open, in rough order:
    heat-haze overlay is an indirect warp of an EFB copy, drawn without the
    warp (3c).
 3c. Morph Ball (`env PX_ALL_ITEMS=1`, Phendrana): transforms and rolls; the
-   transition frame has a fine crosshatch over the whole screen (the
-   game's blur through an EFB copy? or the transition's particles, which
-   drew striped before 2026-10-28's texcoord fix: recheck first). The heat haze over Magmoor's rooms is
+   transition frame had a fine crosshatch over the whole screen; not seen
+   again after the particle texcoord fix (`/c/xemu/px/scen-morph`, shots
+   12 and 26 frames after B). Right after the boot spawn in Phendrana the
+   view is white for ~150 frames: the elevator's arrival steam (draw of 18
+   camera-space puffs at 13% alpha), invisible before the fix. Looks like
+   the real game's; confirm against Dolphin. The heat haze over Magmoor's rooms is
    drawn without its indirect warp: its two indirect maps are 512x256
    A8R8G8B8 (EFB copies, new each frame), past `ind_tex`'s 64K-texel limit;
    converting them would read ~1 MB of uncached pool memory a frame, ~5-10
