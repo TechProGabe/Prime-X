@@ -125,6 +125,18 @@ Open, in rough order:
    in bright rooms (the user's "gun white sometimes"), Magmoor's second room
    (`/c/xemu/px/scen-mag`, shot 2: the gun grey, big translucent blue
    panels; maybe the elevator's glass), the visors once they switch.
+3b. Magmoor's Lava Lake (`env MP_BOOT_WORLD=3EF8237C:A4719C6A`): the lava
+   shows as a block with vertical streaks. The draw (`-DXGX_DEBUG_TRACE=1`,
+   #373: 6 TEV stages, position texgens through sane texture matrices, one
+   emboss-bump texgen we don't support) looks right on paper; it may be a
+   lava fall. Needs a Dolphin frame of the same spot to judge. The heat-haze
+   overlay (#418) is an indirect warp of an EFB copy, drawn without the warp.
+3c. Morph Ball (`env PX_ALL_ITEMS=1`, Phendrana): transforms and rolls; the
+   transition frame has a fine crosshatch over the whole screen (the
+   game's blur through an EFB copy?). The heat haze over Magmoor's rooms is
+   drawn without its indirect warp (two indirect stages want four texture
+   units; one of them is an EFB copy `ind_tex` can't take). Compare both
+   with Dolphin.
 4. The audio start-up freeze after a chained launch (round hw4 r4c): the
    flushed `[AUDIO] step:` lines will say where next time.
 5. The title screen's Options frame draws no slider (moot for Port

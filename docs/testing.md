@@ -74,3 +74,19 @@ Pull logs before deploying: each boot rotates `boot.log`.
 - new game to the Frigate's first save station, save, power cycle, load;
 - each video mode and aspect once; FPS counter matches `[PERF]`;
 - L + R + Back + Black quits to the dashboard.
+
+## Room sweep
+
+`tools/xbox/room_sweep.sh [default.xbe]` boots fourteen rooms across every
+world in xemu (two at a time), takes two shots in each and lists any FATAL,
+THROW, texture drop or out-of-memory line; shots in
+`build-xbox/shots/sweep`. About 40 minutes. The first one (2026-10-28):
+nothing failed; every room rendered.
+
+## 720p in xemu
+
+Slot 3 (`PX_RUN_3`, `PX_XEMU_ARGS_3`) is an HD slot: HDTV AV pack and its
+own EEPROM with 480p, 720p and widescreen allowed
+(`tools/xbox/eeprom_video.py <copy of eeprom.bin>`). `env PX_VIDEO=720` in
+a scenario runs 1280x720 there.
+
