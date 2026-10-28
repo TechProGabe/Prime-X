@@ -83,6 +83,15 @@ draws now: `GXTexCoord1s16` was its colour), `BuildBoneRange` 2.3%,
 `pb_busy` 15% (xemu's GPU). Next: the decoder's fast path per format
 (`gx_vtx.c` `store_fast`, done), then GPU or SSE skinning.
 
+Console (round hw4, Landing Site in rain): hw1 ~10 fps; plain build with
+the batching ~24-31; ThinLTO + PGO ~27-41.
+
+The front end (title, file select) runs over a 640x480 THP movie: its
+decode was 60% of a frame (float AAN IDCT with a double-precision FMA on an
+SSE1 CPU) and the planes' GX-tile conversion 18%. An integer IDCT
+(libjpeg's jidctfst arrangement, `THPDec.cpp`) and whole-tile I8 copies
+(`gx_tex.c`) halved it in xemu: 68 -> 33 ms a frame (11.8 -> 26 fps).
+
 ## Levers, roughly in the order to try them
 
 | lever | where | note |
