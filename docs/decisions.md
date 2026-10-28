@@ -114,6 +114,17 @@ combiners; ThinLTO + PGO for releases.
 - **Streamed music**: the AI DMA path as MetroidPrimePort drives it
   (`prime_sdk.c`), mixed into MusyX's output (`px_sdl3.cpp`).
 
+- **The picture's aspect** (2026-10-28): the NV2A back end's content
+  aspect was Melee-X's 73:60, which squeezed Prime's 4:3 picture by 9%
+  (black side bars at 480) and its 16:9 into a 4:3-wide strip at 720p. The
+  back end now takes the game's EFB width from `VIConfigure` (640, or 854
+  when MetroidPrimePort's widescreen widens the framebuffer) and the aspect
+  from it (`xgx_set_efb_width`).
+- **720p in xemu**: slot 3 (`/c/xemu/px/slot3`) is an HD slot: HDTV AV pack
+  and an EEPROM copy with 480p, 720p and widescreen allowed
+  (`tools/xbox/eeprom_video.py`, from Melee-X); `env PX_VIDEO=720` in a
+  scenario then runs 1280x720.
+
 Not carried over: `disc_lower` and the `DISC_STRUCT` lowering. Melee keeps
 disc data big-endian in memory and melee-pc marks those structs; Prime reads
 almost everything through `CInputStream`, which MetroidPrimePort makes read

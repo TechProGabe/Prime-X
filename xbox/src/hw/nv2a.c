@@ -108,8 +108,12 @@ static float s_ztex_g = -1.0f;
 
 static uint32_t s_draw_force = XGX_DIRTY_ALL;   /* groups xgx_draw must rebuild regardless of dirty bits */
 static float s_display_aspect = 4.0f / 3.0f;
-static float s_content_aspect = 73.0f / 60.0f;
+/* the picture's aspect: Melee-X's 73:60 squeezed Prime's 4:3 by 9% (the
+ * black side bars of every 480 shot) and its 16:9 into a 4:3 strip at 720p;
+ * Prime's is its EFB's (xgx_set_efb_width) */
+static float s_content_aspect = 4.0f / 3.0f;
 static int s_cx, s_cy, s_cw = 640, s_ch = 480;   /* content rect, framebuffer pixels */
+static int s_efb_w = XGX_EFB_W;                  /* the game's EFB width (xgx_set_efb_width) */
 
 static void update_content_rect(void) {
     float a = s_content_aspect < s_display_aspect ? s_content_aspect : s_display_aspect;
@@ -132,6 +136,16 @@ void xgx_set_content_aspect(float aspect) {
     s_draw_force = XGX_DIRTY_ALL;
 }
 
+void xgx_set_efb_width(uint32_t w) {
+    if (w < 16 || w > 4096 || (int)w == s_efb_w) return;
+    s_efb_w = (int)w;
+    xgx_set_content_aspect((float)w / (float)XGX_EFB_H);
+    s_draw_force = XGX_DIRTY_ALL;
+    xhw_logf("[NV2A] EFB %ux%u (aspect %.3f), content %dx%d at %d", w, XGX_EFB_H, (double)w / XGX_EFB_H, s_cw, s_ch, s_cx);
+}
+
+uint32_t xgx_efb_width(void) { return (uint32_t)s_efb_w; }
+
 void xgx_content_size(uint32_t* w, uint32_t* h) {
     float a = s_content_aspect < s_display_aspect ? s_content_aspect : s_display_aspect;
     *h = (uint32_t)s_fbh;
@@ -139,11 +153,11 @@ void xgx_content_size(uint32_t* w, uint32_t* h) {
 }
 
 /* logical (EFB) -> framebuffer, edges rounded so abutting rects stay abutting */
-static int map_x(float x) { return s_cx + (int)floorf(x * (float)s_cw / XGX_EFB_W + 0.5f); }
+static int map_x(float x) { return s_cx + (int)floorf(x * (float)s_cw / s_efb_w + 0.5f); }
 static int map_y(float y) { return s_cy + (int)floorf(y * (float)s_ch / XGX_EFB_H + 0.5f); }
 /* the framebuffer pixel that holds an EFB position (map_x/map_y round an edge
  * to the nearest pixel boundary; a sample point takes the pixel it is in) */
-static int pix_x(float x) { return s_cx + (int)floorf(x * (float)s_cw / XGX_EFB_W); }
+static int pix_x(float x) { return s_cx + (int)floorf(x * (float)s_cw / s_efb_w); }
 static int pix_y(float y) { return s_cy + (int)floorf(y * (float)s_ch / XGX_EFB_H); }
 
 /* ======================================================================
@@ -1930,7 +1944,7 @@ static float s_z16_ratio = XGX_Z16_DEPTH_RATIO;   /* test builds: "env PX_Z16_RA
 static void build_proj(const XgxState* st) {
     const float(*p)[4] = st->proj;
     float vx = (float)map_x(st->viewport[0]) , vy = (float)map_y(st->viewport[1]);
-    float vw = st->viewport[2] * (float)s_cw / XGX_EFB_W, vh = st->viewport[3] * (float)s_ch / XGX_EFB_H;
+    float vw = st->viewport[2] * (float)s_cw / s_efb_w, vh = st->viewport[3] * (float)s_ch / XGX_EFB_H;
     float vn = st->viewport[4], vf = st->viewport[5];
     float sx = vw * 0.5f, ox = vx + vw * 0.5f, sy = -vh * 0.5f, oy = vy + vh * 0.5f, g0 = 1.0f;
     int c;
@@ -3509,7 +3523,7 @@ static void efb_copy_gpu(const int32_t src[4], const Tex* t, int mode) {
     uint32_t pw = t->w, ph = t->h, fb = (uint32_t)pb_back_buffer() & 0x03FFFFFF, i;
     int c32 = t->nvfmt == nv_format(XGX_TEX_ARGB8);   /* the target's format (copy_argb8) */
     uint32_t bytes = c32 ? 4 : 2;
-    float u0 = s_cx + src[0] * (float)s_cw / XGX_EFB_W, u1 = u0 + src[2] * (float)s_cw / XGX_EFB_W;
+    float u0 = s_cx + src[0] * (float)s_cw / s_efb_w, u1 = u0 + src[2] * (float)s_cw / s_efb_w;
     float v0 = s_cy + src[1] * (float)s_ch / XGX_EFB_H, v1 = v0 + src[3] * (float)s_ch / XGX_EFB_H;
     /* nearest, unless the copy is smaller than its source (copy_dim) */
     uint32_t filt = (float)pw < u1 - u0 - 0.5f || (float)ph < v1 - v0 - 0.5f ? 2 : 1;

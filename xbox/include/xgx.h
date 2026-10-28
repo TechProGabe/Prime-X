@@ -285,6 +285,12 @@ void xgx_read_efb(const int32_t src[4], uint32_t dst_w, uint32_t dst_h, uint8_t*
  * maps onto (the content rect: the full screen, or pillarboxed). */
 void xgx_output_size(uint32_t* fb_w, uint32_t* fb_h);
 void xgx_set_content_aspect(float display_aspect);
+/* The game's EFB width in GX pixels: 640, or wider when MetroidPrimePort's
+ * widescreen resizes the framebuffer (854 at 16:9, VIConfigure). The EFB is
+ * XGX_EFB_H tall; its width/height is the picture's aspect, so this sets the
+ * content aspect too. */
+void xgx_set_efb_width(uint32_t w);
+uint32_t xgx_efb_width(void);
 void xgx_content_size(uint32_t* w, uint32_t* h);   /* in display-aspect pixels */
 
 #ifdef __cplusplus

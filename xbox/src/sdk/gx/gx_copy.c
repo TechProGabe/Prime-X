@@ -44,7 +44,7 @@ static void clear_rect(const int32_t r[4], int color, int depth) {
 }
 
 void GXCopyDisp(void* dest, GXBool clear) {
-    static const int32_t full[4] = { 0, 0, XGX_EFB_W, XGX_EFB_H };
+    const int32_t full[4] = { 0, 0, (int32_t)xgx_efb_width(), XGX_EFB_H };
     (void)dest;
     gx_vtx_flush();
     xgx_present(xsdk_vi_black());
