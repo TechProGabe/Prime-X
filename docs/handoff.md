@@ -92,6 +92,19 @@ XBE, the check passes in ~65 s, the splash costs 19 ms a frame at 25 fps
 - Port Options: Fusion Suit (System), B is back in menus, three-choice rows.
 - PGO retrained on the current code (Tallon, Frigate, Phendrana).
 
+## Console round hw4 (red, 2026-10-27, night)
+
+Chain `tools/xbox/scenarios/hw4`, logs `C:\xemu\hw\prime\logs-hw4chain`.
+Landing Site in rain: hw1 ~10 fps -> r4b plain ~24-31 -> r4a ThinLTO + PGO
+~27-41 (mostly mid-30s). Shots on the console render right (gun, HUD, rain,
+inventory Samus): the earlier "gun white" and sky glitches were likely the
+stale-palette bug. **r4c froze** during audio start-up after a chained
+launch (after `[AUDIO] found`, before `idle`; no hang.log): flushed
+`[AUDIO] step:` markers now say where next time. The user's free play: the
+menus work; the front end runs ~17 fps because of the background movie's
+decode (THPDec's double-precision FMA on an SSE1 CPU, plain float now).
+**No console rounds until the user says.**
+
 ## Next
 
 The user (after hw2): FPS first, then the port's settings menu (Options
