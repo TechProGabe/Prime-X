@@ -45,7 +45,7 @@
 #include <vector>
 #endif
 #ifdef TARGET_XBOX
-#include "port_xbox_gx.h" // PORT_XBOX: GXPortBoxCulled
+#include "port_xbox_gx.h" // PORT_XBOX: GXPortBoxCulled, GXPortRainLines
 #endif
 
 static const float gkReal32Max = FLT_MAX;
@@ -115,6 +115,14 @@ void CEnvFxManagerGrid::RenderRainParticles(const CTransform4f& camXf) {
   float absDot = CMath::AbsF(CVector3f::Dot(camXf.GetUp(), CVector3f::Up()));
   CGX::Begin(GX_LINES, GX_VTXFMT6, particleCount * 2);
   short zOffset = static_cast< short >(512.f * (1.f - absDot) + 256.f);
+#ifdef TARGET_XBOX
+  // PORT_XBOX: the same vertices in one call, not 4 a particle (port_xbox_gx.h)
+  if (particleCount > 0 &&
+      GXPortRainLines(&x1c_particles[0].x, static_cast< unsigned >(particleCount), zOffset, 10, 0)) {
+    CGX::End();
+    return;
+  }
+#endif
   for (int i = 0; i < particleCount; ++i) {
     CVectorFixed8_8 p = x1c_particles[i];
     GXPosition3s16(p.x, p.y, p.z);

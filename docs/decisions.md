@@ -161,6 +161,7 @@ One line per edit to `src/`, `include/`, `extern/musyx` or
 | `src/Kyoto/Alloc/CMemory.cpp` | `PortXboxHeapAlloc`/`Free`/`FreeBytes` for operator new (no throw, null when the heap is down or full); `HeapMutex` built in static storage | plan 0.6: game `new` in `CGameAllocator` as on the GameCube; the mutex's own `new` would recurse |
 | `src/Kyoto/Alloc/CGameAllocator.cpp` | no OOM callback or dump while operator new asks (`gPortXboxQuietOom`); a freed block decommits the whole 64 KB chunks inside it (`xhw_lazy_decommit`) | operator new falls back to malloc; freed load buffers stop costing Xbox RAM (round hw5's out of memory) |
 | `src/MetroidPrime/main.cpp` | the GX FIFO 128 KB, not 384 | our GX never reads it; image memory |
+| `src/MetroidPrime/CEnvFxManager.cpp` | `RenderRainParticles` writes its streaks with one `GXPortRainLines` call (`port_xbox_gx.h`), the four calls a particle as the fallback | speed: ~10% of a rainy frame on the console went to the per-vertex calls (round hw5); the same vertices |
 | `src/MetroidPrime/CEnvFxManager.cpp` | `CEnvFxManagerGrid::Render` skips a rain/snow grid whose box is wholly outside the view (`GXPortBoxCulled`, `port_xbox_gx.h`) | speed: every particle is a vertex call each frame, about half of them off screen; the GPU would clip them all anyway |
 
 Imported unchanged but added to the game build (MetroidPrimePort compiles
