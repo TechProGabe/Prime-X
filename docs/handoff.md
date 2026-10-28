@@ -3,13 +3,88 @@
 Update this at the end of every session: what was done, what's next,
 what's broken, anything the next agent would otherwise rediscover.
 
-## Where it stands now (2026-10-28, afternoon)
+## Where it stands now (2026-10-28, evening)
 
-The game plays through every world in xemu (`tools/xbox/room_sweep.sh`:
-14 rooms, no failure) and on the red console (round hw5: ~35-45 fps in most
-rooms at 480i, the Landing Site 37-46, up from hw1's ~10). Everything is committed and pushed on
-`dev`. Ship builds are `XBOX_LTO=1 XBOX_PGO=xbox/prime.profdata`
-(`docs/pgo.md`). Done overnight, newest first:
+The game plays through every world in xemu (room sweep: 14 rooms, no
+failure) and on the red console (~35-45 fps in most rooms at 480i). Red
+has round hw6's ship build (`7bdef5e`, LTO + PGO): it still ran out of
+memory in free play (290 s), and two bugs came back from it (below).
+Everything is committed and pushed on `dev`. Ship builds are `XBOX_LTO=1
+XBOX_PGO=xbox/prime.profdata` (`docs/pgo.md`); deploy with
+`tools/xbox/console.py` (stage folder `stage-v<name>`, console FTP
+192.168.158.113, `PX_HW=/c/xemu/hw/prime`).
+
+Done 2026-10-28 (afternoon and evening), newest first:
+
+- **Texture pool 8 -> 7 MB** at 480 (`1d7071c`): Main Plaza's lowest free
+  in xemu 5.2 -> 6.6 MB, nothing dropped. Not on the console yet.
+- **A failed commit logs its size** (`[MEM] out of memory committing`); one
+  in a page fault shows the Out of memory screen, not a crash. The display
+  lists' second MB of dynamic templates only while 6 MB is free.
+- **The rain's streaks in one call** (`GXPortRainLines`): xemu Landing Site
+  17.3 -> 18.5 fps.
+- **GXInit's lighting channels take the material from the vertex**
+  (`0b407ad`): ours were zeroed, so every vertex-alpha fade drew at full
+  strength. Fixed the landing cinematic's white frames, the visor steam in
+  the ship, Main Plaza's yellow hit flash, opaque steam and rain, and the
+  title Options' missing slider.
+- **Game `new` in `CGameAllocator`** (plan 0.6, `6d9f022`): one heap
+  instead of two, MEM1 reserved 32 MB (the game told 24), freed blocks
+  give their whole 64 KB chunks back. Main Plaza's lowest free in xemu
+  2.6 -> 4.7 MB (6.6 with the smaller texture pool).
+- Display-list dynamic budget doubled, with retries (the ship's save
+  station decoded 7 lists every call on the console).
+- The GX FIFO the game allocates, 384 -> 128 KB (never read here).
+- Port Options: the Widescreen HUD row reads "Inner / Edges".
+- Dolphin 2609 is at `C:\xemu\dolphin\Dolphin-x64` (portable); no
+  reference frames yet: the scenes worth comparing need a save there, and
+  our saves live in xemu's HDD.
+
+## Next session, in order
+
+1. **Out of memory on red** (hw6, `/c/xemu/hw/prime/logshw6/boot.log`):
+   at 290 s `xhw_commit` failed with 2.9 MB free (MEM1+ARAM 25.8 MB), so
+   one commit wanted more than was free. Put the current build on red and
+   play the same path (Landing Site, save in the ship, walk on); the log
+   now says the size. Levers left: triple buffering (1.2 MB), the vertex
+   pool (4 MB, ~0.8 MB free in play), the game heap's partly used chunks,
+   ARAM. The PGO-instrumented build runs out in the Frigate (its image is
+   4 MB bigger): `pgo/frigate` and `pgo/magmoor` give no profile, and the
+   profile in the tree is the old one.
+2. **Everything too bright after Morph Ball** (the user, hw6). In xemu
+   (`/c/xemu/px/scen-morph2`, `build-xbox/shots/morph4`) the view after
+   unmorphing looks paler than the old build's; not proven. Suspects:
+   the GXInit channel change (`0b407ad`) together with
+   `CMorphBallShadow`'s direct GX calls (GX_ALPHA0 lit, then restored;
+   `GXSetDstAlpha(true, 0)` and alpha updates left on, as retail). Trace a
+   frame before and after a morph (`-DXGX_DEBUG_TRACE=1`) and diff the
+   channel and blend state.
+3. **The Options divider sits on the text** (the user, hw6: Widescreen
+   HUD, Field of View, FPS Counter). The pause screen draws "Inner |
+   Edges" right in xemu (`build-xbox/shots/opt3`), so likely the main
+   menu's Port Options (`SOptionsFrontEndFrame`), whose left cell is sized
+   for retail's "Off". `/c/xemu/px/scen-portopt` doesn't reach Port
+   Options (it opens Options twice): find the path, shoot the Video rows,
+   then right-justify `textpane_double0` (and its "b" shadow) for
+   Prime-X rows, or shorten the labels.
+4. **The ship's save station fps** (12-14 on red in hw5): measure with the
+   doubled dynamic budget.
+5. FPS: console profile levers left after the rain: the dynamic lists'
+   template copies (memcpy from `GXCallDisplayList`, ~5%),
+   `CEnvFxManager::Update`, `BuildBoneRange`, CFishCloud.
+6. Visors: X-ray (D-pad Right) and thermal (Down) render in Phendrana with
+   `env PX_ALL_ITEMS=1` (`/c/xemu/px/scen-visor2`); compare with Dolphin.
+7. Magmoor's heat haze draws without its warp: its indirect maps are
+   512x256 EFB copies, past `ind_tex`'s 64K-texel limit; a GPU-side
+   conversion into the BUMPENVMAP layout would make it cheap.
+8. The audio start-up freeze after a chained launch (hw4 r4c): the flushed
+   `[AUDIO] step:` lines will say where if it recurs.
+9. Retrain PGO once the instrumented build fits the Frigate
+   (`tools/xbox/pgo_train.sh tallon frigate phendrana magmoor chozo`, two
+   xemu slots: unset `PX_RUN_3`). Kill leftover xemus after a training run:
+   they hold the HDD image and later runs silently reuse the old log.
+
+## Session 2026-10-28 (night and morning)
 
 - **Particles' texture coordinates**: CElementGen writes each quad corner's
   TEX0 (two S8s, one fraction bit) with `GXTexCoord1s16(0x0202)`; it was
@@ -22,7 +97,8 @@ rooms at 480i, the Landing Site 37-46, up from hw1's ~10). Everything is committ
 - The landing's remaining white frames are single frames (shots 2, 7, 23
   of a 20-frame-step run, `/c/xemu/px/white.log`) whose last draw is an
   untextured full-screen additive quad after the letterbox: a camera-filter
-  flash, most likely the storm's lightning. Compare with Dolphin.
+  flash, the storm's lightning (drawn at full strength: the GXInit
+  channel bug, fixed in the afternoon).
 - Rain and snow grids wholly off screen are skipped
   (`CEnvFxManagerGrid::Render`, `GXPortBoxCulled`); the line clipper sorts
   by outcode first; `put16` decodes the RGBA4 colours and S8 texcoord pairs
@@ -52,87 +128,6 @@ rooms at 480i, the Landing Site 37-46, up from hw1's ~10). Everything is committ
   the main menu (the Fusion bonuses row), three-choice rows only.
 - Streamed music (the AI path) mixed into MusyX's output.
 - Test hooks: `env PX_ALL_ITEMS=1`, `PX_SKIPPABLE=1`, `PX_WIDESCREEN=0|1|2`.
-- Console round hw5 (a profile of five scenes) is prepared, not run.
-
-## Session 2026-10-28 (afternoon): the hw5 free play's list
-
-The user played the ship build (`F:\Applications\Prime-X`, LTO + PGO,
-`7f1dfb3` + the watchdog fix) on red, 2026-10-28. Logs:
-`C:\xemu\hw\prime\logs-hw5play` (`boot.log`, `lastexit.txt`; map:
-`C:\xemu\hw\prime\stage-hw5\ship\prime_x.map`). What came of each:
-
-1. **Out of memory** leaving the ship (~215 s in, 2.1 MB free): game
-   `new` lived in malloc (15.5 MB in the Landing Site) beside
-   `CGameAllocator`'s MEM1 heap, each with its own high-water mark. Done
-   (plan 0.6, `docs/decisions.md` "Memory model"): `new` goes into
-   `CGameAllocator` (malloc only when it is full or not up), MEM1 reserved
-   32 MB (told 24), freed blocks decommit their whole 64 KB chunks. xemu:
-   Main Plaza's lowest free 2.6 -> 4.7 MB; sweep lowest 5.3 MB. **Not yet
-   seen on the console**: the ship path (Landing Site, save in the ship,
-   walk out) is the test. `XHW_MEMB` lines now say "game heap N KB free".
-   6 MB of the heap are resource buffers held by built objects
-   (`CResFactory::BuildAsync`), as on the GameCube.
-2. **The ship's save station, 12-14 fps** (7 skinned lists decoded every
-   call): the dynamic-template budget 1 -> 2 MB, and a list turned away
-   for want of budget retries every 120 frames (`gx_vtx.c`
-   `DLC_DYN_RETRY`). Not measured: needs the ship path.
-3. **Visor fog too strong**, 5. **the landing cinematic's white frames**,
-   and the old "Main Plaza all yellow after damage": one bug. GXInit
-   leaves all four lighting channels with the material from the vertex;
-   ours were zeroed (from the register). Prime's `CGX` only sets
-   `GX_COLOR0`/`GX_COLOR1`, so its alphas came from the material
-   register (FF) and every vertex-alpha fade drew at full strength.
-   Fixed in `gx_state.c` `GXInit` (aurora does the same). The cinematic
-   now has partial lightning flashes, translucent steam, lighter rain
-   (`build-xbox/shots/white2`), the hit flash a yellow tint.
-4. **Widescreen HUD row**: "Centred" ran over the two-value widget's
-   divider; the values are "Inner / Edges" now.
-
-**On red now (2026-10-28, hw6)**: the ship build (LTO + the old PGO
-profile, `7bdef5e`) in the console's Prime-X folder; stage
-`/c/xemu/hw/prime/stage-vhw6`, map `/c/xemu/hw/prime/prime_x.hw6.map`,
-console FTP 192.168.158.113. Pull the user's logs with
-`PX_HW=/c/xemu/hw/prime PX_FTP_HOST=192.168.158.113 python
-tools/xbox/console.py pull hw6`. Also since hw5: the rain in one call
-(`GXPortRainLines`, xemu +7%), the title Options' slider draws (the alpha
-fix). PGO retraining was stopped: rerun `tools/xbox/pgo_train.sh tallon
-frigate phendrana magmoor chozo` with two slots.
-
-**hw6 results (the user, 2026-10-28; log `/c/xemu/hw/prime/logshw6/boot.log`)**,
-the next session's list:
-1. **Out of memory again**, at 290 s (hw5: 215 s): `xhw_commit` failed with
-   2.9 MB free (MEM1+ARAM 25.8 MB). A single commit wanted more than
-   was free: the next build logs its size (`[MEM] out of memory
-   committing`). Levers: the texture pool (8 MB, 2.7-4.5 MB of it
-   unused in play), triple buffering (1.2 MB), the vertex pool, the
-   game heap's partly used chunks. The Frigate scenario also runs out
-   in the PGO-instrumented build (bigger image), so pgo/frigate and
-   pgo/magmoor gave no profile.
-2. **Everything too bright after going into Morph Ball** (the user). Look at
-   `CMorphBallShadow.cpp` (sets GX_ALPHA0 and colours directly, around
-   the CGX cache) and at whether hw5 did it too (it may be the GXInit
-   channel change, `0b407ad`).
-3. **Two-value Options rows (Widescreen HUD, Field of View, FPS
-   Counter): the divider sits on the text** ("stuck on the r" of Inner)
-   on the console. The pause screen draws "Inner | Edges" right in xemu
-   (`build-xbox/shots/opt3`), so it is most likely the main menu's Port
-   Options (`SOptionsFrontEndFrame`): its left cell holds retail's "Off"
-   with little room before the divider. `/c/xemu/px/scen-portopt` doesn't
-   reach Port Options (it opens Options twice): find the menu path, shoot
-   the Video rows, then right-justify `textpane_double0` (and its "b"
-   shadow) for Prime-X rows or shorten the labels.
-   Done after hw6 (`1d7071c`, `3abd277`): texture pool 8 -> 7 MB (Main
-   Plaza's lowest free in xemu 5.2 -> 6.6 MB, nothing dropped), the
-   display lists' extra 1 MB only while 6 MB is free, failed commits log
-   their size. Morph Ball in xemu (`/c/xemu/px/scen-morph2`,
-   `build-xbox/shots/morph4`): the view after unmorphing looks paler
-   than the old build's, not proven; `CMorphBallShadow` leaves
-   `GXSetDstAlpha(true, 0)` and alpha updates on, as retail does.
-
-Dolphin 2609 is unpacked at `C:\xemu\dolphin\Dolphin-x64` (portable,
-the user allowed it); no reference frames taken yet: the interesting
-scenes (Tallon, the ship) need a save there, and saves here live in
-xemu's HDD.
 
 ## Console round hw5 (red, 2026-10-28)
 
@@ -263,58 +258,6 @@ menus work; the front end runs ~17 fps because of the background movie's
 decode (THPDec's double-precision FMA on an SSE1 CPU, plain float now).
 **No console rounds until the user says.**
 
-## Next
-
-The user (2026-10-27, night): keep going without check-ins; FPS, texture
-issues, the planned features; no console rounds until they say.
-
-Open, in rough order (after the focus list at the top):
-1. FPS: the console runs the Landing Site at ~27-41 (sim 17-25 ms, display
-   lists 4-8 ms). A console profile (`-DXHW_PROF=1`) is the next thing a
-   round should bring back. Levers left: skinned models' display lists
-   decoded every call (the dynamic budget is full), GPU or further SSE
-   skinning, the rain's immediate-mode path, CFishCloud.
-2. Visors: X-ray (D-pad Right) and thermal (Down) switch and render in
-   Phendrana with `env PX_ALL_ITEMS=1` (`/c/xemu/px/scen-visor2`); the
-   Landing Site's scripts filter them (game logic). Compare with Dolphin.
-3. Rendering to compare against Dolphin: Main Plaza after taking damage
-   (`/c/xemu/px/scen-plaza`, shot 2: the whole screen yellow, energy 74;
-   probably the hit flash caught mid-way), the arm cannon's grey-white look
-   in bright rooms (the user's "gun white sometimes"), Magmoor's second room
-   (`/c/xemu/px/scen-mag`, shot 2: the gun grey, big translucent blue
-   panels; maybe the elevator's glass), the visors once they switch.
-3b. Magmoor's Lava Lake (`env MP_BOOT_WORLD=3EF8237C:A4719C6A`): the
-   "block with vertical streaks" was the particle texcoord bug (fixed
-   2026-10-28); the lava and its fire draw right in the sweep now. The
-   heat-haze overlay is an indirect warp of an EFB copy, drawn without the
-   warp (3c).
-3c. Morph Ball (`env PX_ALL_ITEMS=1`, Phendrana): transforms and rolls; the
-   transition frame had a fine crosshatch over the whole screen; not seen
-   again after the particle texcoord fix (`/c/xemu/px/scen-morph`, shots
-   12 and 26 frames after B). Right after the boot spawn in Phendrana the
-   view is white for ~150 frames: the elevator's arrival steam (draw of 18
-   camera-space puffs at 13% alpha), invisible before the fix. Looks like
-   the real game's; confirm against Dolphin. The heat haze over Magmoor's rooms is
-   drawn without its indirect warp: its two indirect maps are 512x256
-   A8R8G8B8 (EFB copies, new each frame), past `ind_tex`'s 64K-texel limit;
-   converting them would read ~1 MB of uncached pool memory a frame, ~5-10
-   ms on the console, for a subtle effect. A GPU-side conversion (render
-   the copy into the BUMPENVMAP layout) would make it cheap. Compare with
-   Dolphin.
-4. The audio start-up freeze after a chained launch (round hw4 r4c): the
-   flushed `[AUDIO] step:` lines will say where next time.
-5. The title screen's Options frame draws no slider (moot for Port
-   Options, which has none now).
-
-6. Memory: Main Plaza leaves ~2.6 MB free in xemu (the game's `new` heap
-   ~15.7 MB, MEM1+ARAM ~14.9 MB committed, image 9 MB, GPU pools 12.8 MB);
-   no room ran out in any sweep. Plan 0.6 (route `rs_new` into MEM1) is
-   still open; the texture pool (8 MB, ~4 MB free there) is the easiest to
-   give back if a room runs short.
-
-(The first session's list is done: profiling, disc validation, the
-interlaced movies, streamed music, the title's text.)
-
 ## Working notes
 
 - Build: `tools/xbox/msys/build.sh` (test build: `XBOX_CFLAGS=-DXHW_AUTOPAD=1`;
@@ -380,5 +323,3 @@ Added 2026-10-27 (this session):
   (`docs/performance.md`).
 - "Steady 30" at 720p vs uncapped, once judder can be measured.
 - Front LED effects: worth doing for Prime, or just off.
-- Console round hw5 (`tools/xbox/scenarios/hw5`, the console profile) when
-  the user allows a round.

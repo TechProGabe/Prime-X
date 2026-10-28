@@ -45,22 +45,22 @@ line under it says how far it got.
 
 ## Known issues
 
-- **Out of memory on red** after walking into the ship and out again
-  (free play after hw5, ~215 s). Game `new` now shares `CGameAllocator`
-  and freed chunks are given back (Main Plaza's lowest free in xemu 2.6
-  -> 4.7 MB); to be confirmed on the console with the same path.
-- Inside the gunship: 12-14 fps on red (lists decoded every call). The
-  dynamic-list budget is doubled; to be measured on the console.
-- Fixed 2026-10-28, to be seen on the console: the visor fog in the ship,
-  the landing cinematic's white frames and Main Plaza's yellow hit flash
-  (GXInit's alpha channels, `docs/handoff.md`); the Widescreen HUD row's
-  value ("Inner / Edges").
+- **Out of memory on red** in free play: hw5 at 215 s, hw6 at 290 s
+  (2.9 MB free when a commit failed). Since hw6: the texture pool is 7 MB
+  (xemu Main Plaza's lowest free 6.6 MB) and a failed commit logs its
+  size; to be played on the console again.
+- **Everything too bright after Morph Ball** (hw6, the user); being traced.
+- **The Options divider sits on the value text** in two-value rows (hw6;
+  likely the main menu's Port Options).
+- Inside the gunship: 12-14 fps on red in hw5; the dynamic-list budget is
+  doubled since, not measured.
 - Magmoor's heat haze draws without its warp (indirect maps past
   `ind_tex`'s size limit).
 - The audio start-up freeze after a chained launch (hw4 r4c) didn't recur
-  in hw5; the watchdog now times out a stalled boot screen.
-- Rendering not yet compared with Dolphin: the arm cannon's look in bright
-  rooms, Phendrana's elevator steam.
+  in hw5 or hw6; the watchdog times out a stalled boot screen.
+- Rendering not yet compared with Dolphin (installed, needs a save in the
+  rooms): the arm cannon in bright rooms, Phendrana's elevator steam, the
+  visors.
 
 ## Console history
 
@@ -70,6 +70,7 @@ line under it says how far it got.
 | 2026-10-27 | hw2, hw3 | red | first-boot experience: splash, disc check with music; fixes to the bar and the note line |
 | 2026-10-27 | hw4 | red | Landing Site 27-41 fps (ThinLTO + PGO); r4c froze in audio start-up |
 | 2026-10-28 | hw5 | red | five-scene profile chain, back to the dashboard by itself; no freeze; landing streaks gone |
+| 2026-10-28 | hw6 | red | free play: the alpha fix's visuals; out of memory at 290 s; too bright after Morph Ball; Options divider on the text |
 
 ## Performance per build
 
