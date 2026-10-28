@@ -116,12 +116,17 @@ static int s_cx, s_cy, s_cw = 640, s_ch = 480;   /* content rect, framebuffer pi
 static int s_efb_w = XGX_EFB_W;                  /* the game's EFB width (xgx_set_efb_width) */
 
 static void update_content_rect(void) {
-    float a = s_content_aspect < s_display_aspect ? s_content_aspect : s_display_aspect;
-    s_ch = s_fbh;
-    s_cw = (int)(s_fbw * a / s_display_aspect + 0.5f);
-    s_cw &= ~1;
-    s_cx = (s_fbw - s_cw) / 2;
-    s_cy = 0;
+    if (s_content_aspect <= s_display_aspect) {   /* pillarbox: 4:3 on a 16:9 screen, or as wide */
+        s_ch = s_fbh;
+        s_cw = (int)(s_fbw * s_content_aspect / s_display_aspect + 0.5f) & ~1;
+        s_cx = (s_fbw - s_cw) / 2;
+        s_cy = 0;
+    } else {   /* letterbox: the game's 16:9 on a 4:3 screen (Port Options' Widescreen 16:9) */
+        s_cw = s_fbw;
+        s_ch = (int)(s_fbh * s_display_aspect / s_content_aspect + 0.5f) & ~1;
+        s_cx = 0;
+        s_cy = (s_fbh - s_ch) / 2;
+    }
 }
 
 void xgx_output_size(uint32_t* w, uint32_t* h) {
@@ -148,9 +153,8 @@ void xgx_set_efb_width(uint32_t w) {
 uint32_t xgx_efb_width(void) { return (uint32_t)s_efb_w; }
 
 void xgx_content_size(uint32_t* w, uint32_t* h) {
-    float a = s_content_aspect < s_display_aspect ? s_content_aspect : s_display_aspect;
-    *h = (uint32_t)s_fbh;
-    *w = (uint32_t)(s_fbh * a + 0.5f);
+    *w = (uint32_t)s_cw;
+    *h = (uint32_t)s_ch;
 }
 
 /* logical (EFB) -> framebuffer, edges rounded so abutting rects stay abutting */
