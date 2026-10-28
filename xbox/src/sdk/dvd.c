@@ -543,6 +543,13 @@ static void disc_ini_line(char* ini, size_t icap, char* line, size_t lcap) {
     snprintf(line, lcap, "ok %llu %llu", (unsigned long long)s_img_size, (unsigned long long)s_img_written);
 }
 
+/* Options > Check Disc (Next Start): the next start checks every file */
+void xsdk_disc_forget(void) {
+    char ini[300], line[128];
+    disc_ini_line(ini, sizeof ini, line, sizeof line);
+    xhw_logf("[DISC] %s: the next start checks every file (Options)", remove(ini) == 0 ? "disc.ini removed" : "no disc.ini");
+}
+
 int xsdk_disc_passed_before(void) {
     char ini[300], line[128], have[128] = { 0 };
     FILE* f;

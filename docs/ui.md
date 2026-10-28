@@ -85,8 +85,56 @@ the game's own GUI.
 
 ### Prime-X rows
 
-Added after the retail rows of each category, in both the pause and the
-title-screen Options (`*` = applies after a restart):
+**Built so far (pause screen):** `xbox/src/port/port_xbox_options.cpp`,
+hooked into `CPauseScreenFrame.cpp` in place of MetroidPrimePort's PC rows.
+The user (2026-10-27): "copy all the critical and important options we have
+from Melee and Animal Crossing, all the typical stuff in settings", and
+"button mapping will be expected".
+
+| category | row | values | settings.ini |
+|---|---|---|---|
+| Display | Widescreen | Auto / 4:3 / 16:9, live (720p is always 16:9) | `[video] widescreen` 1 / 0 / 2 |
+| Display | Widescreen HUD | Centred / Edges | `[game] hud_wide` |
+| Display | Field of View | 55 (retail) / 65 / 75 | `[game] fov` |
+| Display | FPS Counter | Hide / Show (the counter in the corner) | `[video] fps` |
+| Display | Video Mode | 480i / 480p / 720p, each only where the dashboard allows it | `[video] 720p`, `progressive` |
+| Controller | Rumble Strength | Low / Medium / Full (40 / 70 / 100%; the retail Rumble row stays On/Off) | `[input] rumble` |
+| Controller | Stick Dead Zone | Low / Medium / High (10 / 20 / 30%) | `[portN] stick_deadzone` (all four) |
+| Controller | C-Stick Dead Zone | Low / Medium / High (15 / 25 / 35%) | `[portN] cstick_deadzone` |
+| Controller | Trigger Click | Light / Medium / Firm (180 / 230 / 250 of 255) | `[portN] trigger_click` |
+| Controller | Screen Capture | Off / On (Back saves `shotNN.bmp`) | `[system] screenshots` |
+| Controller | A / B / X / Y / White / Black / Start / Back Button, Left / Right Stick Click | what the button does: None, Fire, Jump, Morph, Missile, Map, Lock, Aim, Pause, Up/Down/Left/Right (the D-pad: the visors). A carousel in the game's three-cell value widget (previous, current, next; left and right step it) | `[portN] a = A` ... (all four ports) |
+
+No row is a slider (the title screen's frame draws none, and named steps
+are plainer: the user, round hw4); two-choice rows say what their values do
+rather than Off / On. In any menu the Xbox B button is back (the game's
+menus tell the pad they are up through `PortPointerMenu::Begin`; in play B
+keeps its binding). Restore Defaults also resets the category's Prime-X rows. settings.ini is
+written once, when the Options screen closes, and only if a row changed.
+
+**Main menu: "Port Options"** (the user: "on the main menu it has Start,
+Options; add a new one that says Port Options and make it look like it's
+part of the game"). The New Game popup reads Start | Options | Port
+Options: the third choice is the slot, separator and all, that the game
+fills with Hard once Normal is beaten. It opens the game's own title-screen
+Options frame with Prime-X's categories in place of the retail ones (that
+frame has four categories of five rows and doesn't scroll):
+
+| category | rows |
+|---|---|
+| Video | Video (Next Start), Widescreen, Widescreen HUD, Field of View, Frame Rate |
+| Controller | Rumble Strength, Stick Dead Zone, C-Stick Dead Zone, Trigger Click |
+| System | Screen Capture (Check Disc was removed: L+R+Y at boot does it) |
+
+It is also a row of the main menu itself, in place of "Metroid Fusion
+Connection Bonuses" (a GBA and its link cable, which an Xbox can't have), so
+it is reachable with every file slot used (the user, round hw4). Still to do: Skip Cutscenes (MetroidPrimePort's
+`port_skip_cutscenes` to import), the button remap on the title screen
+(its frame doesn't scroll: the pause screen has it), and a restart prompt
+for the video row. Known: the title-screen Options frame's slider doesn't
+draw (retail rows too; the pause screen's does).
+
+The full plan, as first written (`*` = applies after a restart):
 
 | category | row | values | default |
 |---|---|---|---|
@@ -101,7 +149,7 @@ title-screen Options (`*` = applies after a restart):
 | Controller | C-stick dead zone | slider | as Melee-X |
 | Controller | Trigger click | slider: how far L/R go in before they click (lock-on, free aim) | as Melee-X (230/255) |
 | Controller | Buttons | opens a remap page in the same frame style, per port | GameCube layout |
-| Controller | Screenshots | Off / On (Back saves `shotNN.bmp`) | Off (On in test builds) |
+| Controller | Screen Capture | Off / On (Back saves `shotNN.bmp`) | Off (On in test builds) |
 | Controller | Front LED | Off / On | Off |
 | (every) | Restore defaults | the retail row also restores the Xbox rows of that category | |
 | Display | Verify disc image | runs the full check (`docs/boot-safety.md`) | |

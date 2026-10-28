@@ -35,6 +35,9 @@
 #include "port_skip_cutscenes.h"
 #include <math.h>
 #endif
+#ifdef TARGET_XBOX
+#include "port_xbox_options.h" // PORT_XBOX: Prime-X's Options rows
+#endif
 
 static const int skQuitTitles[] = {24, 25, 26, 27, 28};
 
@@ -180,7 +183,91 @@ static SOptionCategory skGameOptions[] = {
     {4, skControllerOptions}, {0, nullptr},
 };
 
-#ifdef TARGET_PC
+#if defined(TARGET_XBOX)
+// PORT_XBOX: Prime-X's rows (docs/ui.md "Settings, inside the game's
+// Options") in place of MetroidPrimePort's PC rows, after each category's
+// retail rows on the pause screen. What they do is in
+// xbox/src/port/port_xbox_options.cpp; the right table scrolls as on the PC.
+#define PORT_OPTION(opt) static_cast< EGameOption >(opt)
+static const SGameOption skPortDisplayOptions[] = {
+    {kGO_ScreenBrightness, 25, 0.f, 8.f, 1.f, kOT_Float},
+    {kGO_ScreenOffsetX, 26, -30.f, 30.f, 1.f, kOT_Float},
+    {kGO_ScreenOffsetY, 27, -30.f, 30.f, 1.f, kOT_Float},
+    {kGO_ScreenStretch, 28, -10.f, 10.f, 1.f, kOT_Float},
+    {PORT_OPTION(PortXboxOptions::kXO_Widescreen), -1, 0.f, 2.f, 1.f, kOT_TripleEnum},
+    {PORT_OPTION(PortXboxOptions::kXO_WidescreenHud), -1, 0.f, 1.f, 1.f, kOT_DoubleEnum},
+    {PORT_OPTION(PortXboxOptions::kXO_Fov), -1, 0.f, 2.f, 1.f, kOT_TripleEnum},
+    {PORT_OPTION(PortXboxOptions::kXO_FpsCounter), -1, 0.f, 1.f, 1.f, kOT_DoubleEnum},
+    {PORT_OPTION(PortXboxOptions::kXO_VideoOutput), -1, 0.f, 2.f, 1.f, kOT_TripleEnum},
+    {kGO_RestoreDefaults, 35, 0.f, 1.f, 1.f, kOT_RestoreDefaults},
+};
+static const SGameOption skPortControllerOptions[] = {
+    {kGO_ReverseYAxis, 32, 0.f, 1.f, 1.f, kOT_DoubleEnum},
+    {kGO_Rumble, 33, 0.f, 1.f, 1.f, kOT_DoubleEnum},
+    {kGO_SwapBeamControls, 34, 0.f, 1.f, 1.f, kOT_DoubleEnum},
+    {PORT_OPTION(PortXboxOptions::kXO_RumbleStrength), -1, 0.f, 2.f, 1.f, kOT_TripleEnum},
+    {PORT_OPTION(PortXboxOptions::kXO_StickDeadZone), -1, 0.f, 2.f, 1.f, kOT_TripleEnum},
+    {PORT_OPTION(PortXboxOptions::kXO_CStickDeadZone), -1, 0.f, 2.f, 1.f, kOT_TripleEnum},
+    {PORT_OPTION(PortXboxOptions::kXO_TriggerClick), -1, 0.f, 2.f, 1.f, kOT_TripleEnum},
+    {PORT_OPTION(PortXboxOptions::kXO_Screenshots), -1, 0.f, 1.f, 1.f, kOT_DoubleEnum},
+    // the button remap: each a carousel in the three-cell widget (IsList)
+    {PORT_OPTION(PortXboxOptions::kXO_BindFirst + 0), -1, 0.f, 2.f, 1.f, kOT_TripleEnum},
+    {PORT_OPTION(PortXboxOptions::kXO_BindFirst + 1), -1, 0.f, 2.f, 1.f, kOT_TripleEnum},
+    {PORT_OPTION(PortXboxOptions::kXO_BindFirst + 2), -1, 0.f, 2.f, 1.f, kOT_TripleEnum},
+    {PORT_OPTION(PortXboxOptions::kXO_BindFirst + 3), -1, 0.f, 2.f, 1.f, kOT_TripleEnum},
+    {PORT_OPTION(PortXboxOptions::kXO_BindFirst + 4), -1, 0.f, 2.f, 1.f, kOT_TripleEnum},
+    {PORT_OPTION(PortXboxOptions::kXO_BindFirst + 5), -1, 0.f, 2.f, 1.f, kOT_TripleEnum},
+    {PORT_OPTION(PortXboxOptions::kXO_BindFirst + 6), -1, 0.f, 2.f, 1.f, kOT_TripleEnum},
+    {PORT_OPTION(PortXboxOptions::kXO_BindFirst + 7), -1, 0.f, 2.f, 1.f, kOT_TripleEnum},
+    {PORT_OPTION(PortXboxOptions::kXO_BindFirst + 8), -1, 0.f, 2.f, 1.f, kOT_TripleEnum},
+    {PORT_OPTION(PortXboxOptions::kXO_BindFirst + 9), -1, 0.f, 2.f, 1.f, kOT_TripleEnum},
+    {kGO_RestoreDefaults, 35, 0.f, 1.f, 1.f, kOT_RestoreDefaults},
+};
+static SOptionCategory skPauseOptions[] = {
+    {5, skVisorOptions},            {10, skPortDisplayOptions}, {4, skSoundOptions},
+    {19, skPortControllerOptions}, {0, nullptr},
+};
+
+static bool IsPortOption(EGameOption option) { return option > kGO_RestoreDefaults; }
+static const wchar_t* PortOptionTitle(EGameOption option) {
+  return PortXboxOptions::Title(static_cast< int >(option));
+}
+static int GetPortOption(EGameOption option) {
+  return PortXboxOptions::Get(static_cast< int >(option));
+}
+static void SetPortOption(EGameOption option, int value) {
+  PortXboxOptions::Set(static_cast< int >(option), value);
+}
+// The title screen's "Port Options" (the New Game popup's third choice): the
+// same frame as Options, five rows a category at most (it doesn't scroll).
+static const SGameOption skFrontVideoOptions[] = {
+    {PORT_OPTION(PortXboxOptions::kXO_VideoOutput), -1, 0.f, 2.f, 1.f, kOT_TripleEnum},
+    {PORT_OPTION(PortXboxOptions::kXO_Widescreen), -1, 0.f, 2.f, 1.f, kOT_TripleEnum},
+    {PORT_OPTION(PortXboxOptions::kXO_WidescreenHud), -1, 0.f, 1.f, 1.f, kOT_DoubleEnum},
+    {PORT_OPTION(PortXboxOptions::kXO_Fov), -1, 0.f, 2.f, 1.f, kOT_TripleEnum},
+    {PORT_OPTION(PortXboxOptions::kXO_FpsCounter), -1, 0.f, 1.f, 1.f, kOT_DoubleEnum},
+};
+static const SGameOption skFrontControllerOptions[] = {
+    {PORT_OPTION(PortXboxOptions::kXO_RumbleStrength), -1, 0.f, 2.f, 1.f, kOT_TripleEnum},
+    {PORT_OPTION(PortXboxOptions::kXO_StickDeadZone), -1, 0.f, 2.f, 1.f, kOT_TripleEnum},
+    {PORT_OPTION(PortXboxOptions::kXO_CStickDeadZone), -1, 0.f, 2.f, 1.f, kOT_TripleEnum},
+    {PORT_OPTION(PortXboxOptions::kXO_TriggerClick), -1, 0.f, 2.f, 1.f, kOT_TripleEnum},
+};
+static const SGameOption skFrontSystemOptions[] = {
+    {PORT_OPTION(PortXboxOptions::kXO_Screenshots), -1, 0.f, 1.f, 1.f, kOT_DoubleEnum},
+};
+static SOptionCategory skFrontPortOptions[] = {
+    {5, skFrontVideoOptions}, {4, skFrontControllerOptions}, {1, skFrontSystemOptions},
+    {0, nullptr},             {0, nullptr},
+};
+
+static const SOptionCategory& GetOptionCategory(int category, bool frontEnd) {
+  if (frontEnd) {
+    return PortXboxOptions::FrontEndPort() ? skFrontPortOptions[category] : skGameOptions[category];
+  }
+  return skPauseOptions[category];
+}
+#elif defined(TARGET_PC)
 // Port settings (the ones also in the debug overlay) shown on the pause screen,
 // after each category's retail rows. The left table has no free category (the
 // fifth is Quit Game), so the right table scrolls instead. The title-screen
@@ -653,7 +740,12 @@ void CGameOptions::TryRestoreDefaults(const CFinalInput& input, int category, in
     default:
       break;
     }
-#ifdef TARGET_PC
+#if defined(TARGET_XBOX)
+    // PORT_XBOX: the Prime-X rows of the category (pause screen only)
+    if (!frontEnd) {
+      PortXboxOptions::RestoreDefaults(category);
+    }
+#elif defined(TARGET_PC)
     // The port rows only show on the pause screen, so only it resets them.
     if (!frontEnd) {
       switch (category) {
@@ -710,6 +802,9 @@ COptionsScreen::~COptionsScreen() {
   // Write any port setting changed here now, not only at exit: Android can
   // kill the app without running exit handlers.
   PortDebug::SaveSettingsNow();
+#endif
+#ifdef TARGET_XBOX
+  PortXboxOptions::Save(); // PORT_XBOX: settings.ini, once, if a row changed
 #endif
 }
 
@@ -969,6 +1064,15 @@ void COptionsScreen::UpdateOptionView() {
     x18c_slidergroup_slider->SetLocalPosition(x3c_sliderStart + CVector3f(0.f, 0.f, zOff));
     break;
   case kOT_DoubleEnum:
+#ifdef TARGET_XBOX
+    // PORT_XBOX: a Prime-X row's own names for its two values, else Off / On
+    for (int i = 0; i < 2; ++i) {
+      const wchar_t* text = PortXboxOptions::ValueLabel(static_cast< int >(opt.option), i);
+      static_cast< CGuiTextPane* >(x190_tablegroup_double->GetWorkerWidget(i))
+          ->TextSupport()
+          .SetText(rstl::wstring_l(text != nullptr ? text : xc_pauseStrg.GetString(95 - i)));
+    }
+#endif
     x190_tablegroup_double->SetUserSelection(CGameOptions::GetOption(opt.option));
     x190_tablegroup_double->SetIsVisible(true);
     x190_tablegroup_double->SetIsActive(true);
@@ -976,7 +1080,22 @@ void COptionsScreen::UpdateOptionView() {
     x190_tablegroup_double->SetLocalPosition(x48_tableDoubleStart + CVector3f(0.f, 0.f, zOff));
     break;
   case kOT_TripleEnum:
-#ifdef TARGET_PC
+#if defined(TARGET_XBOX)
+    // PORT_XBOX: the triple labels are the sound modes' (strings 96-98)
+    // except on Prime-X rows
+    for (int i = 0; i < 3; ++i) {
+      CGuiTextPane* label =
+          static_cast< CGuiTextPane* >(x194_tablegroup_triple->GetWorkerWidget(i));
+      const wchar_t* text = PortXboxOptions::IsList(static_cast< int >(opt.option))
+                                ? PortXboxOptions::ListLabel(static_cast< int >(opt.option), i - 1)
+                                : PortXboxOptions::ValueLabel(static_cast< int >(opt.option), i);
+      if (text != nullptr) {
+        label->TextSupport().SetText(rstl::wstring_l(text));
+      } else {
+        label->TextSupport().SetText(rstl::wstring_l(xc_pauseStrg.GetString(96 + i)));
+      }
+    }
+#elif defined(TARGET_PC)
     // The triple labels are the sound modes' (strings 96-98) except on port rows.
     for (int i = 0; i < 3; ++i) {
       static const wchar_t* const kAspectLabels[] = {L"4:3", L"16:9", L"Window"};
@@ -997,7 +1116,13 @@ void COptionsScreen::UpdateOptionView() {
       }
     }
 #endif
+#ifdef TARGET_XBOX
+    // PORT_XBOX: a list row sits on its middle cell (the current value)
+    x194_tablegroup_triple->SetUserSelection(
+        PortXboxOptions::IsList(static_cast< int >(opt.option)) ? 1 : CGameOptions::GetOption(opt.option));
+#else
     x194_tablegroup_triple->SetUserSelection(CGameOptions::GetOption(opt.option));
+#endif
     x194_tablegroup_triple->SetIsVisible(true);
     x194_tablegroup_triple->SetIsActive(true);
     UpdateSideTable(x194_tablegroup_triple);
@@ -1025,6 +1150,16 @@ void COptionsScreen::OnEnumChanged(CGuiTableGroup* caller, int oldSel) {
         GetOptionCategory(x70_tablegroup_leftlog->GetUserSelection(), false);
     const SGameOption& option = category.options[x1c_rightSel];
     const int selection = caller->GetUserSelection();
+#ifdef TARGET_XBOX
+    // PORT_XBOX: a list row steps its value and is drawn again, centred
+    if (PortXboxOptions::IsList(static_cast< int >(option.option))) {
+      PortXboxOptions::Step(static_cast< int >(option.option), selection - 1);
+      UpdateOptionView();
+      CSfxManager::SfxStart(0x59d, 0x7f, 0x40, false, CSfxManager::kMedPriority, false,
+                            CSfxManager::kAllAreas);
+      return;
+    }
+#endif
     CGameOptions::SetOption(option.option, selection);
     if (option.option == kGO_Rumble && selection > 0) {
       x1a8_rumble.HardStopAll();
@@ -1054,7 +1189,14 @@ SOptionsFrontEndFrame::SOptionsFrontEndFrame()
   x10_pauseScreen.Lock();
 }
 
-SOptionsFrontEndFrame::~SOptionsFrontEndFrame() { CSfxManager::SfxStop(x3c_sliderSfx); }
+SOptionsFrontEndFrame::~SOptionsFrontEndFrame() {
+  CSfxManager::SfxStop(x3c_sliderSfx);
+#ifdef TARGET_XBOX
+  // PORT_XBOX: settings.ini once, if a row changed; the next Options is retail
+  PortXboxOptions::Save();
+  PortXboxOptions::SetFrontEndPort(false);
+#endif
+}
 
 bool SOptionsFrontEndFrame::PumpLoad() {
   if (x1c_loadedFrame != nullptr) {
@@ -1139,6 +1281,23 @@ void SOptionsFrontEndFrame::FinishedLoading() {
     sprintf(name, "textpane_filename%d", i);
     SetTextPanePair(x1c_loadedFrame, name, x20_loadedPauseStrg->GetString(16 + i));
   }
+#ifdef TARGET_XBOX
+  if (PortXboxOptions::FrontEndPort()) { // PORT_XBOX: "Port Options"
+    SetTextPanePair(x1c_loadedFrame, "textpane_title", L"Port Options");
+    for (int i = 0; i < 4; ++i) {
+      char name[32];
+      sprintf(name, "textpane_filename%d", i);
+      const wchar_t* text = PortXboxOptions::FrontEndCategory(i);
+      SetTextPanePair(x1c_loadedFrame, name, text != nullptr ? text : L"");
+      x24_tablegroup_leftmenu->GetWorkerWidget(i)->SetIsSelectable(text != nullptr);
+    }
+  } else {
+    // the frame is cached: undo a Port Options visit's empty categories
+    for (int i = 0; i < 4; ++i) {
+      x24_tablegroup_leftmenu->GetWorkerWidget(i)->SetIsSelectable(true);
+    }
+  }
+#endif
   x2c_tablegroup_double->SetVertical(false);
   x30_tablegroup_triple->SetVertical(false);
   x24_tablegroup_leftmenu->SetIsActive(true);
@@ -1151,11 +1310,26 @@ void SOptionsFrontEndFrame::FinishedLoading() {
   DeactivateRightMenu();
 }
 
+#ifdef TARGET_XBOX
+// PORT_XBOX: the frame's tables are the retail ones or, opened as "Port
+// Options", Prime-X's (GetOptionCategory)
+#define PX_FRONT_CATEGORY(sel) GetOptionCategory(sel, true)
+#else
+#define PX_FRONT_CATEGORY(sel) skGameOptions[sel]
+#endif
+
 void SOptionsFrontEndFrame::SetRightUIText() {
-  const SOptionCategory& options = skGameOptions[x24_tablegroup_leftmenu->GetUserSelection()];
+  const SOptionCategory& options = PX_FRONT_CATEGORY(x24_tablegroup_leftmenu->GetUserSelection());
   for (int i = 0; i < 5; ++i) {
     char name[32];
     sprintf(name, "textpane_right%d", i);
+#ifdef TARGET_XBOX
+    if (i < options.count && options.options[i].stringId < 0) { // PORT_XBOX: a Prime-X row
+      SetTextPanePair(x1c_loadedFrame, name, PortOptionTitle(options.options[i].option));
+      x28_tablegroup_rightmenu->GetWorkerWidget(i)->SetIsSelectable(true);
+      continue;
+    }
+#endif
     if (i < options.count) {
       SetTextPanePair(x1c_loadedFrame, name,
                       x20_loadedPauseStrg->GetString(options.options[i].stringId));
@@ -1169,7 +1343,7 @@ void SOptionsFrontEndFrame::SetRightUIText() {
 
 void SOptionsFrontEndFrame::HandleRightSelectionChange() {
   DeactivateRightMenu();
-  const SOptionCategory& category = skGameOptions[x24_tablegroup_leftmenu->GetUserSelection()];
+  const SOptionCategory& category = PX_FRONT_CATEGORY(x24_tablegroup_leftmenu->GetUserSelection());
   const SGameOption& option = category.options[x28_tablegroup_rightmenu->GetUserSelection()];
   switch (option.type) {
   case kOT_Float:
@@ -1185,6 +1359,15 @@ void SOptionsFrontEndFrame::HandleRightSelectionChange() {
         x34_slidergroup_slider->GetTransform());
     break;
   case kOT_DoubleEnum:
+#ifdef TARGET_XBOX
+    // PORT_XBOX: a Prime-X row's own names for its two values, else Off / On
+    for (int i = 0; i < 2; ++i) {
+      char name[32];
+      sprintf(name, "textpane_double%d", i);
+      const wchar_t* text = PortXboxOptions::ValueLabel(static_cast< int >(option.option), i);
+      SetTextPanePair(x1c_loadedFrame, name, text != nullptr ? text : x20_loadedPauseStrg->GetString(95 - i));
+    }
+#endif
     x2c_tablegroup_double->SetUserSelection(CGameOptions::GetOption(option.option));
     x2c_tablegroup_double->SetIsVisible(true);
     x2c_tablegroup_double->SetIsActive(true);
@@ -1195,6 +1378,15 @@ void SOptionsFrontEndFrame::HandleRightSelectionChange() {
     SetTableColors(x2c_tablegroup_double);
     break;
   case kOT_TripleEnum:
+#ifdef TARGET_XBOX
+    // PORT_XBOX: a Prime-X row's own value names, else the sound modes'
+    for (int i = 0; i < 3; ++i) {
+      char name[32];
+      sprintf(name, "textpane_triple%d", i);
+      const wchar_t* text = PortXboxOptions::ValueLabel(static_cast< int >(option.option), i);
+      SetTextPanePair(x1c_loadedFrame, name, text != nullptr ? text : x20_loadedPauseStrg->GetString(96 + i));
+    }
+#endif
     x30_tablegroup_triple->SetUserSelection(CGameOptions::GetOption(option.option));
     x30_tablegroup_triple->SetIsVisible(true);
     x30_tablegroup_triple->SetIsActive(true);
@@ -1243,7 +1435,7 @@ void SOptionsFrontEndFrame::DoMenuSelectionChange(CGuiTableGroup* caller, int ol
                           CSfxManager::kAllAreas);
   } else if (caller == x2c_tablegroup_double || caller == x30_tablegroup_triple) {
     if (x28_tablegroup_rightmenu->GetIsActive()) {
-      const SOptionCategory& category = skGameOptions[x24_tablegroup_leftmenu->GetUserSelection()];
+      const SOptionCategory& category = PX_FRONT_CATEGORY(x24_tablegroup_leftmenu->GetUserSelection());
       const SGameOption& option = category.options[x28_tablegroup_rightmenu->GetUserSelection()];
       const int selection = caller->GetUserSelection();
       CGameOptions::SetOption(option.option, selection);
@@ -1346,7 +1538,7 @@ void SOptionsFrontEndFrame::SetTableColors(CGuiTableGroup* table) const {
 
 void SOptionsFrontEndFrame::DoSliderChange(CGuiSliderGroup* caller, float value) {
   if (x28_tablegroup_rightmenu->GetIsActive()) {
-    const SOptionCategory& category = skGameOptions[x24_tablegroup_leftmenu->GetUserSelection()];
+    const SOptionCategory& category = PX_FRONT_CATEGORY(x24_tablegroup_leftmenu->GetUserSelection());
     const EGameOption option =
         category.options[x28_tablegroup_rightmenu->GetUserSelection()].option;
     CGameOptions::SetOption(option, caller->GetCurVal());

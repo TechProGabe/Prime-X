@@ -56,8 +56,32 @@ Each run at 480p 4:3, 480p 16:9 and 720p. Results go in a table in
   launch on the real console.
 - `simh` lockstep hashes (`tools/xbox/simh_diff.py`): an optimisation must
   not change the simulation.
-- Releases: ThinLTO + PGO and the profile-ordered link (`xbox/order.txt`),
-  which gave Melee-X +13%.
+- Releases: ThinLTO + PGO (`docs/pgo.md`: `XBOX_LTO=1`,
+  `XBOX_PGO=xbox/prime.profdata`) and later the profile-ordered link
+  (`xbox/order.txt`), which gave Melee-X +13%.
+- `[DLC] immediate batches begun from:` the return addresses of the game's
+  `GXBegin` calls with their counts per period (symbolize with
+  `tools/xbox/sym.py`): who makes the immediate-mode draws.
+
+## Measured so far (xemu, Landing Site, 2026-10-27)
+
+xemu's CPU is faster than the console's and its GPU slower, so only the
+ratios mean anything; console numbers come from console rounds. Same frames
+on both sides (`env PX_LOCKSTEP=1`, `/c/xemu/px/scen-perf`), averages of
+ten `[PERF]` periods:
+
+| build | draws/frame | game ms | display lists ms |
+|---|---|---|---|
+| hw1's code (profile run) | 2900-4300 | 46-54 | 19-27 |
+| + strip/fan joining, GUI subtree, builtins | ~410 | 21.6 | 5.4 |
+| + ThinLTO, PGO, link order | ~375 | 17.8 | 2.7 |
+
+The profile of the last (LTO + PGO) build: `GXCallDisplayList` 16.6%
+(skinned models' lists decoded on every call; the dynamic-list budget is
+full) and 5% more in its copies, the rain's immediate-mode calls ~9% (it
+draws now: `GXTexCoord1s16` was its colour), `BuildBoneRange` 2.3%,
+`pb_busy` 15% (xemu's GPU). Next: the decoder's fast path per format
+(`gx_vtx.c` `store_fast`, done), then GPU or SSE skinning.
 
 ## Levers, roughly in the order to try them
 
@@ -66,7 +90,7 @@ Each run at 480p 4:3, 480p 16:9 and 720p. Results go in a table in
 | everything Melee-X already has | GX/NV2A layer | display-list vertex cache, fewer bigger draws, generated and cached vertex programs, native texture formats, word-wide `memcpy`, kernel disc reads |
 | **skinning on the GPU** | `CSkinnedModel`/`CSkinRules` | Prime skins every animated model on the CPU into workspace arrays (Flipper had no skinning). Melee-X already skins in NV2A vertex programs (matrix palette, `a0` indexing): feed Prime's bone matrices to the same path and skip the CPU pass. Likely the biggest CPU win |
 | SSE (SSE1 only) for what stays on the CPU | skinning fallback, `CElementGen` particle updates, `Kyoto/Math` (`CMatrix4f`, `CTransform4f`, vector code), the audio mixer | `-march=pentium3`; no SSE2 (boot-safety) |
-| particle batching | `CElementGen`, `CParticleSwoosh`, `CParticleElectric` | immediate-mode `GXBegin` per particle: merge into one draw per emitter (Melee-X's merge) |
+| particle batching | `CElementGen`, `CParticleSwoosh`, `CParticleElectric` | immediate-mode `GXBegin` per particle: merge into one draw per emitter (Melee-X's merge). First step done: strips, fans and line strips of up to 64 vertices become lists and join (`gx_vtx.c` `seg_list`): every text glyph was its own 4-vertex strip, one draw each. The Landing Site had ~705 immediate draws a frame, none joined |
 | audio mixing cost | MusyX synth and the DSP-ADPCM music streams | was the GameCube DSP's job; mix at 32 kHz with SSE, cap voices if needed, measure first |
 | EFB copies | visors, blur, shadows, transitions | copy only the rectangle used, at the size used; reuse targets; skip the pause blur's copies when nothing moved |
 | culling | `CCubeRenderer` area octree, actors | check the game's culling isn't defeated by the widescreen frustum; Melee-X's off-screen DL culling |

@@ -2,6 +2,7 @@
 // a Port* hook: the aspect the video mode asks for, the dropped Remastered
 // movement entry points, and C++ runtime gaps.
 #include "port_debug.h"
+#include "port_xbox_options.h"
 
 #include "MetroidPrime/CGameCollision.hpp"
 
@@ -10,13 +11,9 @@
 #include "xhw.h"
 
 extern "C" {
-// boot.c, after the video mode is set: 16:9 at 720p always, at 480 when the
-// dashboard is set to widescreen (docs/architecture.md "Video")
-void px_port_boot() {
-  const xhw_video_mode* vm = xhw_video();
-  PortDebug::SetAspectMode(vm->widescreen ? PortDebug::kAspect_16_9 : PortDebug::kAspect_4_3);
-  xhw_logf("[VIDEO] game aspect %s", vm->widescreen ? "16:9" : "4:3");
-}
+// boot.c, after the video mode is set: the aspect, HUD and FOV from the
+// settings (port_xbox_options.cpp; 16:9 at 720p always)
+void px_port_boot() { PortXboxOptions::ApplyAtBoot(); }
 
 // vi.c, every frame boundary: main.cpp's ApplyAspectMode already follows
 // PortDebug::AspectMode() each frame

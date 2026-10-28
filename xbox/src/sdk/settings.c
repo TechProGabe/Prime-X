@@ -2,12 +2,15 @@
  *
  *   [video]
  *   720p = 1            ; use 720p (16:9) when the dashboard allows it (default)
- *   widescreen = 1      ; 16:9 at 480 when the dashboard is set to widescreen
+ *   widescreen = 1      ; at 480: 1 as the dashboard says, 0 always 4:3, 2 always 16:9 (720p is 16:9)
  *   fps = 1             ; frame-rate counter in the top-left corner
  *   [system]
  *   screenshots = 0     ; BACK saves shotNN.bmp (default on in test builds)
  *   led_effects = 0     ; front LED effects (xbox/src/hw/xhw_led.c); off by
  *                       ; default: a modchip that drives the LED fights it
+ *   [game]
+ *   hud_wide = 0        ; 1: at 16:9 the HUD reaches the screen's edges (0: centred, as 4:3)
+ *   fov = 55            ; first-person field of view in degrees (55 is the GameCube's)
  *   [input]
  *   rumble = 100        ; percent
  *   cstick_1p = 0       ; 1: the C-stick attacks in 1P modes (training...), not the camera
@@ -94,6 +97,8 @@ static void defaults(xsdk_settings* st) {
     st->shots = XHW_TEST_BUILD;
     st->led = 0;   /* a Kronos-modded console needed a Cerbios recovery (docs/decisions.md) */
     st->rumble = 1.0f;
+    st->hud_wide = 0;
+    st->fov = 55;
     for (p = 0; p < 4; p++) {
         xsdk_port_settings* ps = &st->port[p];
         ps->stick_deadzone = 0.20f;
@@ -151,7 +156,7 @@ static int parse(FILE* f, xsdk_settings* st) {
         if (_stricmp(section, "video") == 0) {
             if (_stricmp(key, "720p") == 0) st->video_720p = atoi(val) != 0;
             else if (_stricmp(key, "progressive") == 0) st->progressive = atoi(val) != 0, saw |= SAW_PROGRESSIVE;
-            else if (_stricmp(key, "widescreen") == 0) st->widescreen = atoi(val) != 0;
+            else if (_stricmp(key, "widescreen") == 0) st->widescreen = clampi(atoi(val), 0, 2);
             else if (_stricmp(key, "fps") == 0) st->fps = atoi(val) != 0, saw |= SAW_FPS;
         } else if (_stricmp(section, "system") == 0) {
             if (_stricmp(key, "ram128") == 0) saw |= atoi(val) != 0 ? SAW_RAM128 : 0;
@@ -159,6 +164,9 @@ static int parse(FILE* f, xsdk_settings* st) {
             /* not "led": v43-v48 wrote led = 1 as the default, and that
              * line is ignored so the effects start off for everyone */
             else if (_stricmp(key, "led_effects") == 0) st->led = atoi(val) != 0, saw |= SAW_LED;
+        } else if (_stricmp(section, "game") == 0) {
+            if (_stricmp(key, "hud_wide") == 0) st->hud_wide = atoi(val) != 0;
+            else if (_stricmp(key, "fov") == 0) st->fov = clampi(atoi(val), 45, 75);
         } else if (_stricmp(section, "input") == 0) {
             if (_stricmp(key, "rumble") == 0) st->rumble = clampi(atoi(val), 0, 100) / 100.0f;
             else if (_stricmp(key, "cstick_1p") == 0) st->cstick_1p = atoi(val) != 0;
@@ -185,7 +193,8 @@ int xsdk_settings_equal(const xsdk_settings* a, const xsdk_settings* b) {
     int p, i;
     if (a->video_720p != b->video_720p || a->progressive != b->progressive || a->widescreen != b->widescreen ||
         a->fps != b->fps || a->shots != b->shots || a->led != b->led ||
-        pct(a->rumble) != pct(b->rumble) || a->cstick_1p != b->cstick_1p)
+        pct(a->rumble) != pct(b->rumble) || a->cstick_1p != b->cstick_1p || a->hud_wide != b->hud_wide ||
+        a->fov != b->fov)
         return 0;
     for (p = 0; p < 4; p++) {
         const xsdk_port_settings *x = &a->port[p], *y = &b->port[p];
@@ -204,9 +213,9 @@ static void log_summary(const char* what) {
     const xsdk_settings* st = &g_xsdk_settings;
     const xsdk_port_settings* p1 = &st->port[0];
     xhw_logf("[SETTINGS] %s: 720p %d, progressive %d, widescreen %d, fps %d, screenshots %d, led %d, "
-             "rumble %d, C-stick in 1P %d, port 1 dead zones %d/%d, trigger click %d, trigger Z %d",
-             what, st->video_720p, st->progressive, st->widescreen, st->fps, st->shots, st->led,
-             pct(st->rumble), st->cstick_1p,
+             "HUD wide %d, FOV %d, rumble %d, C-stick in 1P %d, port 1 dead zones %d/%d, trigger click %d, trigger Z %d",
+             what, st->video_720p, st->progressive, st->widescreen, st->fps, st->shots, st->led, st->hud_wide,
+             st->fov, pct(st->rumble), st->cstick_1p,
              pct(p1->stick_deadzone), pct(p1->cstick_deadzone), p1->trigger_click, p1->trigger_z);
 }
 
@@ -275,6 +284,8 @@ static void write_all(FILE* f, const xsdk_settings* st) {
     fprintf(f, "; led_effects = 1: the front LED flashes on KOs, in the last seconds and on GAME!.\n");
     fprintf(f, "; Leave it 0 on a console with a modchip that drives the LED (Kronos and similar).\n");
     fprintf(f, "[system]\nscreenshots = %d\nled_effects = %d\n\n", st->shots, st->led);
+    fprintf(f, "; hud_wide = 1: at 16:9 the HUD reaches the screen's edges. fov: 45-75 degrees, 55 is the GameCube's.\n");
+    fprintf(f, "[game]\nhud_wide = %d\nfov = %d\n\n", st->hud_wide, st->fov);
     fprintf(f, "; cstick_1p = 1: the C-stick does smash attacks in 1P modes and training too (not the camera).\n");
     fprintf(f, "[input]\nrumble = %d\ncstick_1p = %d\n\n", pct(st->rumble), st->cstick_1p);
     fprintf(f, "; trigger_z = left or right: that trigger is Z (grab) instead of L/R; off: both are L/R.\n");

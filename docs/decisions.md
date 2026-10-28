@@ -127,6 +127,11 @@ One line per edit to `src/`, `include/`, `extern/musyx` or
 | `src/Kyoto/Input/CDolphinController.cpp` | input always focused | no window; SDL focus is always null |
 | `src/Kyoto/Graphics/CCubeMoviePlayer.cpp` | movies always take the deinterlaced (whole-frame) path | the field path draws every other line for an interlaced TV; Xbox frames are whole |
 | `extern/aurora/include/dolphin/ppc_math.h` | `_BitScanReverse64` only on x64 | nxdk's clang defines `_MSC_VER` on 32-bit |
+| `src/MetroidPrime/CPauseScreenFrame.cpp` | Prime-X's Options rows (`port_xbox_options.h`) in place of MetroidPrimePort's PC rows: tables, titles, get/set, triple labels, Restore Defaults, save on close; the title-screen frame reads its tables through `GetOptionCategory` so "Port Options" can swap them | the user's settings (docs/ui.md); the PC rows drive hooks the Xbox doesn't have |
+| `src/MetroidPrime/CFrontEndUI.cpp` | the main menu's "Metroid Fusion Connection Bonuses" row reads "Port Options" and opens them | the user: reachable without a New Game slot; the bonuses need a GBA link an Xbox can't have |
+| `src/MetroidPrime/CFrontEndUI.cpp` | the New Game popup's third slot (Hard's, unused before Normal is beaten) shows "Port Options" and opens the Options frame with Prime-X's tables | the user's main-menu entry (docs/ui.md) |
+| `src/Kyoto/Animation/DolphinCSkinRules.cpp` | `BuildBoneRange` positions and plain normals in SSE1, the three rows at once | speed (2.3% in xemu); same operations in the same order, no FMA: the same bits |
+| `src/GuiSys/CGuiObject.cpp`, `include/GuiSys/CGuiObject.hpp` | moving one widget recomputes its own subtree, not every later sibling's too (`RecalculateSubtree`) | speed: n^2 matrix products a frame for the HUD (3.5% of the Landing Site in xemu); same results |
 
 Imported unchanged but added to the game build (MetroidPrimePort compiles
 them as game code): `src/platform/port_raster_font.cpp`,

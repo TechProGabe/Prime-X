@@ -3,6 +3,7 @@
 # Run from Git Bash or an MSYS2 shell:
 #   tools/xbox/msys/build.sh                       # -> build-xbox/xbe/default.xbe
 #   XBOX_CFLAGS=-DXHW_PROF=1 tools/xbox/msys/build.sh
+#   XBOX_LTO=1 tools/xbox/msys/build.sh            # -> build-xbox-lto/xbe/default.xbe
 # One-time setup (docs/toolchain.md):
 #   pacman -S make git bison flex cmake ninja mingw-w64-x86_64-clang \
 #     mingw-w64-x86_64-lld mingw-w64-x86_64-llvm mingw-w64-x86_64-python \
@@ -18,7 +19,7 @@ msys="${MSYS2_ROOT:-/c/msys64}"
 rootu="$(cd "$root" && pwd)"
 # Git Bash's environment doesn't reach MSYS2's bash: hand the knobs over as arguments
 knobs=()
-for v in XBOX_CFLAGS XBOX_CMAKE_ARGS XBOX_NINJA_ARGS XBOX_NO_ICON NXDK_DIR; do
+for v in XBOX_CFLAGS XBOX_CMAKE_ARGS XBOX_NINJA_ARGS XBOX_NO_ICON XBOX_LTO XBOX_PGO NXDK_DIR; do
   [ -n "${!v:-}" ] && knobs+=("$v=${!v}")
 done
 # Run inside MSYS2's bash so msys cmake/ninja and mingw64 clang/python are used
@@ -29,9 +30,9 @@ exec "$msys/usr/bin/bash" -lc '
   root="$1"; shift; cd "$root"
   for kv in "$@"; do export "$kv"; done
   xbox/build.sh
-  xbe=build-xbox/xbe/default.xbe
+  bdir="$(tools/xbox/build_dir.sh)"; xbe=$bdir/xbe/default.xbe
   if [ -z "${XBOX_NO_ICON:-}" ] && [ -f "$xbe" ] && [ -f tools/xbox/xbe_title_image.py ]; then
-    python3 tools/xbox/xbe_title_image.py "$xbe" xbox/assets/logo.png build-xbox/xbe/default.tbn
+    python3 tools/xbox/xbe_title_image.py "$xbe" xbox/assets/logo.png $bdir/xbe/default.tbn
   fi
   [ -f "$xbe" ] && python3 tools/xbox/make_intro.py "$xbe"   # the boot screen music, appended (needs ffmpeg)
   true' _ "$rootu" "${knobs[@]}"

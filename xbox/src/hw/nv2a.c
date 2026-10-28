@@ -1048,6 +1048,10 @@ void xgx_tex_pool_shrink(void) {
     xhw_logf("[TEX] overflow pool released (free %u KB)", xhw_mem_free_kb());
 }
 
+uint32_t xgx_tex_palette(uint32_t tex) {
+    return tex && tex < MAX_TEX && s_tex[tex].used ? s_tex[tex].pal : 0;
+}
+
 uint32_t xgx_tex_bytes(uint32_t tex) {
     return tex && tex < MAX_TEX && s_tex[tex].used ? s_tex[tex].bytes : 0;
 }
@@ -2312,7 +2316,7 @@ static uint32_t s_tex_prog = 0xFFFFFFFFu;   /* NV097_SET_SHADER_STAGE_PROGRAM se
  * the register build (most DIRTY_UNITS draws rebind some map, few change
  * every unit). valid 0: rebuild (the shadow was reset). */
 typedef struct {
-    uint32_t valid, tex, epoch, wrap_s, wrap_t, min_filter, mag_filter, lod_bias, kind;
+    uint32_t valid, tex, epoch, wrap_s, wrap_t, min_filter, mag_filter, lod_bias, kind, pal;
 } UnitMemo;
 static UnitMemo s_unit_memo[4];
 static uint32_t s_unit_prog[4];             /* the unit's NV097_SET_SHADER_STAGE_PROGRAM bits */
@@ -2344,7 +2348,7 @@ static void emit_textures(const XgxState* st, const int unit_map[4], int nunits)
         uint32_t v[9] = { 0, 0, 0, 0, 0, 0, 0, 0, 0 };
         const Tex* t = NULL;
         const XgxMap* m = NULL;
-        UnitMemo key = { 1, 0, s_tex_epoch, 0, 0, 0, 0, 0, 0 };
+        UnitMemo key = { 1, 0, s_tex_epoch, 0, 0, 0, 0, 0, 0, 0 };
         if (u < nunits) {
             m = &st->map[unit_map[u]];
             key.tex = s_d_unit_tex[u] ? s_d_unit_tex[u] : m->tex;
@@ -2354,6 +2358,7 @@ static void emit_textures(const XgxState* st, const int unit_map[4], int nunits)
             key.mag_filter = m->mag_filter;
             memcpy(&key.lod_bias, &m->lod_bias, 4);
             key.kind = (uint32_t)s_d_unit_kind[u];
+            key.pal = s_d_unit_tex[u] ? 0 : m->pal;
         }
         if (memcmp(&key, &s_unit_memo[u], sizeof key) == 0) {   /* the registers as sent */
             prog |= s_unit_prog[u];
@@ -2383,7 +2388,9 @@ static void emit_textures(const XgxState* st, const int unit_map[4], int nunits)
              * loaded again (xemu reads palettes at each draw; the console
              * may keep the one it has) */
             v[5] = t->gen;
-            v[6] = t->pal;   /* DMA A: bit 0 clear */
+            /* DMA A: bit 0 clear. A CI texture's palette is the TLUT the
+             * game loaded last (XgxMap.pal), not the one it was made with */
+            v[6] = t->pal && key.pal ? key.pal : t->pal;
             s_unit_prog[u] = (s_d_unit_kind[u] == UNIT_BUMP ? 6u : 1u) << (u * 5);   /* BUMPENVMAP, 2D_PROJECTIVE */
             prog |= s_unit_prog[u];
         }
