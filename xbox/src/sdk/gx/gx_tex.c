@@ -730,6 +730,11 @@ static int s_npal;
 
 /* the texels go up once and the palette is chosen per draw (POT C4/C8: P8) */
 static int ci_separate(const TexObj* o) {
+#ifdef GX_TEX_NO_PAL_SPLIT
+    /* tools/xbox/test_tex_cache.py: compared with the cache before the split */
+    (void)o;
+    return 0;
+#endif
     return o->is_ci && (o->fmt == GX_TF_C4 || o->fmt == GX_TF_C8) && !(o->w & (o->w - 1)) && !(o->h & (o->h - 1));
 }
 
