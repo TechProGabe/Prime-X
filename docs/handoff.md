@@ -84,6 +84,14 @@ XBE, the check passes in ~65 s, the splash costs 19 ms a frame at 25 fps
 - The PC crashed once under 3 xemus + a 16-job build (WHEA machine check,
   CPU core 0): at most 2 xemus, builds at `-j8`, not both at once.
 
+- **Streamed music** (the main menu's, some rooms', movie audio): the AI DMA
+  path as MetroidPrimePort drives it, the main loop running the callback
+  into a 200 ms queue that MusyX's output mixes in (`prime_sdk.c`,
+  `px_sdl3.cpp`). `[AI] streamed audio starts` at the title in xemu; not
+  heard on a console yet.
+- Port Options: Fusion Suit (System), B is back in menus, three-choice rows.
+- PGO retrained on the current code (Tallon, Frigate, Phendrana).
+
 ## Next
 
 The user (after hw2): FPS first, then the port's settings menu (Options

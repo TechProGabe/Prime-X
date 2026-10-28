@@ -255,9 +255,10 @@ static const SGameOption skFrontControllerOptions[] = {
 };
 static const SGameOption skFrontSystemOptions[] = {
     {PORT_OPTION(PortXboxOptions::kXO_Screenshots), -1, 0.f, 1.f, 1.f, kOT_DoubleEnum},
+    {PORT_OPTION(PortXboxOptions::kXO_FusionSuit), -1, 0.f, 1.f, 1.f, kOT_DoubleEnum},
 };
 static SOptionCategory skFrontPortOptions[] = {
-    {5, skFrontVideoOptions}, {4, skFrontControllerOptions}, {1, skFrontSystemOptions},
+    {5, skFrontVideoOptions}, {4, skFrontControllerOptions}, {2, skFrontSystemOptions},
     {0, nullptr},             {0, nullptr},
 };
 

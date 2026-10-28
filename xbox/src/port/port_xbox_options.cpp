@@ -7,6 +7,10 @@
 #include "port_xbox_options.h"
 #include "port_debug.h"
 
+#include "MetroidPrime/Player/CGameState.hpp"
+#include "MetroidPrime/Player/CPlayerState.hpp"
+#include "MetroidPrime/Player/CSystemState.hpp"
+
 #include <dolphin/pad.h>
 
 #include "xgx.h"
@@ -113,6 +117,8 @@ const wchar_t* Title(int option) {
     return L"Trigger Click";
   case kXO_Screenshots:
     return L"Screen Capture";
+  case kXO_FusionSuit:
+    return L"Fusion Suit";
   default:
     return IsBind(option) ? kButtonNames[option - kXO_BindFirst] : L"";
   }
@@ -244,6 +250,8 @@ int Get(int option) {
     return Nearest(*PresetOf(option), st.port[0].trigger_click);
   case kXO_Screenshots:
     return st.shots ? 1 : 0;
+  case kXO_FusionSuit:
+    return gpGameState != nullptr && gpGameState->SystemState().GetHasFusion() ? 1 : 0;
   default:
     return 0;
   }
@@ -308,6 +316,17 @@ void Set(int option, int value) {
   case kXO_Screenshots:
     st.shots = value > 0;
     xhw_pad_set_shots(st.shots);
+    break;
+  case kXO_FusionSuit:
+    // What the Fusion bonuses screen does once a GBA has linked: the
+    // system state (saved with the game's options) and the game about to
+    // start. Kept in the game's save, as on the GameCube, not settings.ini.
+    if (gpGameState != nullptr) {
+      gpGameState->SystemState().SetHasFusion(value > 0);
+      if (gpGameState->PlayerState()) {
+        gpGameState->PlayerState()->SetIsFusionEnabled(value > 0);
+      }
+    }
     break;
   default:
     break;

@@ -23,6 +23,7 @@ enum EOption {
   kXO_CStickDeadZone,            // percent (slider)
   kXO_TriggerClick,              // 0-255, where L/R click (slider)
   kXO_Screenshots,               // Off / On (Back saves shotNN.bmp)
+  kXO_FusionSuit,                // Off / On: the GBA-link bonus, unlocked here (title screen)
   // Buttons: what each Xbox button does, a carousel of the game's actions
   // (IsList): A, B, X, Y, White, Black, Start, Back, the stick clicks
   kXO_BindFirst,
