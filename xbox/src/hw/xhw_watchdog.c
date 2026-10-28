@@ -42,6 +42,13 @@
 #ifndef XHW_WATCHDOG_PRESENT_SECS
 #define XHW_WATCHDOG_PRESENT_SECS 10
 #endif
+/* A deliberate stall (the boot screen's disc check, a screenshot) longer
+ * than this is a hang after all: round hw4's r4c froze in audio start-up
+ * under the boot screen's busy flag and never reported or moved on. The
+ * first boot's full check takes ~65 s on the console. */
+#ifndef XHW_WATCHDOG_BUSY_SECS
+#define XHW_WATCHDOG_BUSY_SECS 300
+#endif
 /* Every N seconds log retraces, presents and free RAM; 0 disables. */
 #ifndef XHW_HEARTBEAT_SECS
 #define XHW_HEARTBEAT_SECS 5
@@ -211,13 +218,20 @@ void xhw_watchdog_disable(void) { s_disabled = 1; }
 
 static void watchdog_body(void* arg) {
     unsigned last = 0, still = 0, secs = 0, boot_secs = 0, fired = 0;
-    unsigned last_p = 0, pstill = 0, pfired = 0, last_pf = 0;
+    unsigned last_p = 0, pstill = 0, pfired = 0, last_pf = 0, busy_secs = 0, busy_fired = 0;
     (void)arg;
     for (;;) {
         unsigned f, p;
         Sleep(1000);
         secs++;
         if (s_disabled) continue;
+        if (!s_busy) {
+            busy_secs = 0;
+            busy_fired = 0;
+        } else if (++busy_secs >= XHW_WATCHDOG_BUSY_SECS && !busy_fired) {
+            dump_all("busy for 5 minutes", 1);
+            busy_fired = 1;
+        }
         xhw_log_sync();
         f = xhw_frame_count();
         p = xgx_present_count();
