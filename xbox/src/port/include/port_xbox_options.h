@@ -32,6 +32,9 @@ enum EOption {
 };
 
 const wchar_t* Title(int option);
+// a line under the value, saying what the row does (the pause screen's body
+// pane, which the retail rows leave empty); nullptr: none
+const wchar_t* Description(int option);
 // a TripleEnum row's three cell labels; nullptr: the retail labels
 const wchar_t* ValueLabel(int option, int cell);
 // A list row: shown in the three-cell widget as previous | current | next,

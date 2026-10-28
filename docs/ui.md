@@ -105,7 +105,9 @@ from Melee and Animal Crossing, all the typical stuff in settings", and
 | Controller | Screen Capture | Off / On (Back saves `shotNN.bmp`) | `[system] screenshots` |
 | Controller | A / B / X / Y / White / Black / Start / Back Button, Left / Right Stick Click | what the button does: None, Fire, Jump, Morph, Missile, Map, Lock, Aim, Pause, Up/Down/Left/Right (the D-pad: the visors). A carousel in the game's three-cell value widget (previous, current, next; left and right step it) | `[portN] a = A` ... (all four ports) |
 
-No row is a slider (the title screen's frame draws none, and named steps
+On the pause screen a Prime-X row's selected value comes with a line saying
+what it does, at the top of the panel's body pane (empty on the retail
+rows: `PortXboxOptions::Description`). No row is a slider (the title screen's frame draws none, and named steps
 are plainer: the user, round hw4); two-choice rows say what their values do
 rather than Off / On. In any menu the Xbox B button is back (the game's
 menus tell the pad they are up through `PortPointerMenu::Begin`; in play B

@@ -938,7 +938,13 @@ void COptionsScreen::VActivate() {
     x70_tablegroup_leftlog->GetWorkerWidget(i)->SetIsSelectable(false);
   }
   x174_textpane_body->TextSupport().SetJustification(kJustification_Center);
+#ifdef TARGET_XBOX
+  // PORT_XBOX: the body pane holds the Prime-X rows' descriptions (retail
+  // leaves it empty here): at the top, clear of the value cells below
+  x174_textpane_body->TextSupport().SetVerticalJustification(kVerticalJustification_Top);
+#else
   x174_textpane_body->TextSupport().SetVerticalJustification(kVerticalJustification_Bottom);
+#endif
   CGuiTextPane* off = static_cast< CGuiTextPane* >(x190_tablegroup_double->GetWorkerWidget(0));
   off->TextSupport().SetText(rstl::wstring_l(xc_pauseStrg.GetString(95)));
   CGuiTextPane* on = static_cast< CGuiTextPane* >(x190_tablegroup_double->GetWorkerWidget(1));
@@ -1060,6 +1066,13 @@ void COptionsScreen::UpdateOptionView() {
     return;
   }
   const SGameOption& opt = category.options[x1c_rightSel];
+#ifdef TARGET_XBOX
+  { // PORT_XBOX: what a Prime-X row does, in the body pane retail leaves empty
+    const wchar_t* desc = IsPortOption(opt.option) ? PortXboxOptions::Description(static_cast< int >(opt.option))
+                                                   : nullptr;
+    x174_textpane_body->TextSupport().SetText(rstl::wstring_l(desc != nullptr ? desc : L""));
+  }
+#endif
 #ifdef TARGET_PC
   const float zOff = x38_highlightPitch * (x1c_rightSel - x18_firstViewRightSel);
 #else
