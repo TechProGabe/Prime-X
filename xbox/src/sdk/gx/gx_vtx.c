@@ -1325,6 +1325,26 @@ static void dyn_free(DlEntry* e) {
     e->dyn = NULL;
 }
 
+/* the dynamic list idle longest (not drawn for DYN_IDLE_FRAMES), template
+ * freed; 0 when none is that old */
+#define DYN_IDLE_FRAMES 120
+static int dyn_evict_idle(uint32_t frame, const DlEntry* keep) {
+    int i, pick = -1;
+    uint32_t oldest = frame;
+    for (i = 0; i < DLC_MAX; i++) {
+        const DlEntry* x = &s_dlc[i];
+        if (!x->dl || !x->dyn || x == keep) continue;
+        if (frame - x->last_used >= DYN_IDLE_FRAMES && x->last_used < oldest) {
+            oldest = x->last_used;
+            pick = i;
+        }
+    }
+    if (pick < 0) return 0;
+    dyn_free(&s_dlc[pick]);
+    s_dlc[pick].rebuilds = 0;   /* back to an ordinary entry: may go dynamic again */
+    return 1;
+}
+
 static void dlc_release_mem(DlEntry* e, int now) {
     if (now) xgx_vbuf_free_now(e->mem);
     else xgx_vbuf_free(e->mem);
@@ -1870,6 +1890,11 @@ static int dyn_build(DlEntry* e, uint32_t frame) {
         }
     }
     bytes = total + nidx * 2 + (uint32_t)nb * (sizeof(DynBatch) + 2 * sizeof(DlBatch) + sizeof(uint16_t));
+    /* over the budget: make room by dropping the dynamic lists no draw has
+     * used for a while (a model from a room left behind keeps its template
+     * otherwise, and every list after it goes volatile: Phendrana, ~80) */
+    while (s_dyn_bytes + bytes > DLC_DYN_BUDGET && dyn_evict_idle(frame, e)) {
+    }
     if (s_dyn_bytes + bytes > DLC_DYN_BUDGET) {
         free(d->batch);
         free(d);
