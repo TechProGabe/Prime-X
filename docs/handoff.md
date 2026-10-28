@@ -3,7 +3,7 @@
 Update this at the end of every session: what was done, what's next,
 what's broken, anything the next agent would otherwise rediscover.
 
-## Where it stands now (2026-10-28, morning)
+## Where it stands now (2026-10-28, afternoon)
 
 The game plays through every world in xemu (`tools/xbox/room_sweep.sh`:
 14 rooms, no failure) and on the red console (round hw5: ~35-45 fps in most
@@ -54,38 +54,44 @@ rooms at 480i, the Landing Site 37-46, up from hw1's ~10). Everything is committ
 - Test hooks: `env PX_ALL_ITEMS=1`, `PX_SKIPPABLE=1`, `PX_WIDESCREEN=0|1|2`.
 - Console round hw5 (a profile of five scenes) is prepared, not run.
 
-## Focus for the next session: the user's free play after hw5
+## Session 2026-10-28 (afternoon): the hw5 free play's list
 
 The user played the ship build (`F:\Applications\Prime-X`, LTO + PGO,
 `7f1dfb3` + the watchdog fix) on red, 2026-10-28. Logs:
 `C:\xemu\hw\prime\logs-hw5play` (`boot.log`, `lastexit.txt`; map:
-`C:\xemu\hw\prime\stage-hw5\ship\prime_x.map`). In this order:
+`C:\xemu\hw\prime\stage-hw5\ship\prime_x.map`). What came of each:
 
-1. **Out of memory** (`[FATAL] Out of memory`, retrace 6798, ~215 s in):
-   `xhw_commit` couldn't commit another chunk of the lazily committed game
-   heap (MEM1+ARAM 13632 KB committed) with ~2.1 MB free, as the game
-   left the ship and started loading. Free memory: 17.3 MB in the Landing
-   Site at first, 2.8 MB at 145 s, 2.1 MB from 175 s. Find what grew
-   (the `[BEAT]` free column fell in steps; match them to `[TEX]`/`[DLC]`
-   pool lines and loads), then plan 0.6 (route `rs_new` into MEM1) and/or
-   give back GPU pool memory (the texture pool had 2.5-3.4 MB free). Never
-   seen in xemu: reproduce with the same path (Landing Site, walk into the
-   ship, save, walk out) in xemu with `mem_limit` as on the console.
-2. **Inside the ship: 12-14 fps**, display lists 40-50 ms a frame, 210
-   draws but 81k vertices, and 7 lists gone volatile ("no dynamic form",
-   4 rebuilds each, `[DLC] volatile:` lines): decoded on every call. The
-   ship's interior (or Samus at the save station) needs a dynamic form or
-   a bigger budget.
-3. **The visor fog when walking into the ship is too strong** (the user).
-   New since the particle texcoord fix: the steam and condensation
-   particles now draw their whole textures. Check how much of it the
-   GameCube shows (Dolphin) and whether our alpha or blend is too strong
-   (the same question as the landing cinematic's white frames, below).
-4. **Port Options, the Widescreen HUD row ("Edges")**: its value is drawn
-   wrong in the centre of the row (the user: "messed up in center"). Look
-   at the triple label (`CPauseScreenFrame.cpp`, `port_xbox_options.cpp`)
-   for that row at 4:3 and 16:9.
-5. The landing cinematic's white frames (below).
+1. **Out of memory** leaving the ship (~215 s in, 2.1 MB free): game
+   `new` lived in malloc (15.5 MB in the Landing Site) beside
+   `CGameAllocator`'s MEM1 heap, each with its own high-water mark. Done
+   (plan 0.6, `docs/decisions.md` "Memory model"): `new` goes into
+   `CGameAllocator` (malloc only when it is full or not up), MEM1 reserved
+   32 MB (told 24), freed blocks decommit their whole 64 KB chunks. xemu:
+   Main Plaza's lowest free 2.6 -> 4.7 MB; sweep lowest 5.3 MB. **Not yet
+   seen on the console**: the ship path (Landing Site, save in the ship,
+   walk out) is the test. `XHW_MEMB` lines now say "game heap N KB free".
+   6 MB of the heap are resource buffers held by built objects
+   (`CResFactory::BuildAsync`), as on the GameCube.
+2. **The ship's save station, 12-14 fps** (7 skinned lists decoded every
+   call): the dynamic-template budget 1 -> 2 MB, and a list turned away
+   for want of budget retries every 120 frames (`gx_vtx.c`
+   `DLC_DYN_RETRY`). Not measured: needs the ship path.
+3. **Visor fog too strong**, 5. **the landing cinematic's white frames**,
+   and the old "Main Plaza all yellow after damage": one bug. GXInit
+   leaves all four lighting channels with the material from the vertex;
+   ours were zeroed (from the register). Prime's `CGX` only sets
+   `GX_COLOR0`/`GX_COLOR1`, so its alphas came from the material
+   register (FF) and every vertex-alpha fade drew at full strength.
+   Fixed in `gx_state.c` `GXInit` (aurora does the same). The cinematic
+   now has partial lightning flashes, translucent steam, lighter rain
+   (`build-xbox/shots/white2`), the hit flash a yellow tint.
+4. **Widescreen HUD row**: "Centred" ran over the two-value widget's
+   divider; the values are "Inner / Edges" now.
+
+Dolphin 2609 is unpacked at `C:\xemu\dolphin\Dolphin-x64` (portable,
+the user allowed it); no reference frames taken yet: the interesting
+scenes (Tallon, the ship) need a save there, and saves here live in
+xemu's HDD.
 
 ## Console round hw5 (red, 2026-10-28)
 
@@ -333,7 +339,5 @@ Added 2026-10-27 (this session):
   (`docs/performance.md`).
 - "Steady 30" at 720p vs uncapped, once judder can be measured.
 - Front LED effects: worth doing for Prime, or just off.
-- Dolphin on this PC for reference frames (rendering checks in phase 3 are
-  judged against Dolphin, which isn't installed): may I install it?
 - Console round hw5 (`tools/xbox/scenarios/hw5`, the console profile) when
   the user allows a round.

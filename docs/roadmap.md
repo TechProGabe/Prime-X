@@ -8,8 +8,8 @@ line under it says how far it got.
 - [ ] Phase 0: toolchain, the C++ spike, `TARGET_PC` inventory, import
       strategy, SDK surface, memory model
       - done except the Docker half of the toolchain gate (Docker isn't
-        installed on the build PC; CI covers it) and plan 0.6 (`rs_new`
-        into MEM1, `docs/handoff.md`)
+        installed on the build PC; CI covers it); plan 0.6 (game `new` in
+        `CGameAllocator`) done 2026-10-28
 - [ ] Phase 1: import; every game unit compiles; `default.xbe` links;
       `CHECK_SIZEOF` passes
       - compiles and links (2026-10-27); host tests pass except
@@ -24,7 +24,8 @@ line under it says how far it got.
       visors, 4:3 and 16:9
       - every world renders in xemu (room sweep, 14 rooms) and on red;
         visors switch; 4:3, 16:9 and 720p letterboxing work. Parity is
-        unjudged: Dolphin isn't on the build PC (open question)
+        unjudged: Dolphin is on the build PC (2026-10-28) but needs a save
+        in the rooms to compare
 - [ ] Phase 4: audio, input, saves (Frigate to the landing site, save,
       reload; Dolphin `.gci` both ways)
       - MusyX sound and music, streamed music, rumble, pads and the button
@@ -45,21 +46,21 @@ line under it says how far it got.
 ## Known issues
 
 - **Out of memory on red** after walking into the ship and out again
-  (free play after hw5, ~215 s): the game heap couldn't grow with ~2 MB
-  free. Top of the next session (`docs/handoff.md`).
-- Inside the gunship: 12-14 fps on red (display lists 40-50 ms, lists gone
-  volatile).
-- The visor fog when walking into the ship is too strong (the user).
-- Port Options' Widescreen HUD row draws its value wrong in the centre.
-- The Landing Site's landing cinematic shows washed-out white frames
-  (4 of 9 shots on red in hw5): a full-screen additive camera filter the
-  game draws; lightning or a blending fault, being traced.
+  (free play after hw5, ~215 s). Game `new` now shares `CGameAllocator`
+  and freed chunks are given back (Main Plaza's lowest free in xemu 2.6
+  -> 4.7 MB); to be confirmed on the console with the same path.
+- Inside the gunship: 12-14 fps on red (lists decoded every call). The
+  dynamic-list budget is doubled; to be measured on the console.
+- Fixed 2026-10-28, to be seen on the console: the visor fog in the ship,
+  the landing cinematic's white frames and Main Plaza's yellow hit flash
+  (GXInit's alpha channels, `docs/handoff.md`); the Widescreen HUD row's
+  value ("Inner / Edges").
 - Magmoor's heat haze draws without its warp (indirect maps past
   `ind_tex`'s size limit).
 - The audio start-up freeze after a chained launch (hw4 r4c) didn't recur
   in hw5; the watchdog now times out a stalled boot screen.
 - Rendering not yet compared with Dolphin: the arm cannon's look in bright
-  rooms, Main Plaza's hit flash, Phendrana's elevator steam.
+  rooms, Phendrana's elevator steam.
 
 ## Console history
 
