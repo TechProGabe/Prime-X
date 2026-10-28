@@ -17,7 +17,13 @@
 // allocates or frees again from inside the allocator. Never destroyed, so a free
 // from a static destructor after main still finds it.
 static std::recursive_mutex& HeapMutex() {
+#ifdef TARGET_XBOX
+  // PORT_XBOX: not through operator new, which comes here (PortXboxHeapAlloc)
+  alignas(std::recursive_mutex) static unsigned char storage[sizeof(std::recursive_mutex)];
+  static std::recursive_mutex* mutex = new (storage) std::recursive_mutex;
+#else
   static std::recursive_mutex* mutex = new std::recursive_mutex;
+#endif
   return *mutex;
 }
 #endif
@@ -37,7 +43,16 @@ CMemorySys::~CMemorySys() { CMemory::Shutdown(); }
 
 IAllocator& CMemorySys::GetGameAllocator() { return gGameAllocator; }
 
-void CMemory::Startup(COsContext& ctx) { mInitialized = mpAllocator->Initialize(ctx); }
+#ifdef TARGET_XBOX
+static bool sPortXboxHeapUp; // PORT_XBOX: CMemory's mInitialized, for operator new
+#endif
+
+void CMemory::Startup(COsContext& ctx) {
+  mInitialized = mpAllocator->Initialize(ctx);
+#ifdef TARGET_XBOX
+  sPortXboxHeapUp = mInitialized;
+#endif
+}
 
 void CMemory::SetAllocator(COsContext& ctx, IAllocator& allocator) {
   if (mpAllocator != &allocator) {
@@ -59,6 +74,9 @@ static bool cmemory_enum_alloc_cb(const IAllocator::SAllocInfo& info, const void
 
 void CMemory::Shutdown() {
   CMemory::mInitialized = false;
+#ifdef TARGET_XBOX
+  sPortXboxHeapUp = false;
+#endif
 
   if (mpAllocator->GetMetrics().x8_ != 0) {
     gLeakCount = 0;
@@ -112,6 +130,38 @@ bool PortHeapPeekBlock(const void* ptr, const char** fileAndLine, size_t* len) {
   std::lock_guard< std::recursive_mutex > heapLock(HeapMutex());
   return gGameAllocator.PeekLiveBlock(ptr, fileAndLine, len);
 }
+#endif
+
+#ifdef TARGET_XBOX
+// PORT_XBOX: game `new` lives in this heap, as on the GameCube (plan 0.6,
+// xbox/src/port/px_new.cpp). Null when the heap isn't up or has no room,
+// never a throw: operator new then takes the Xbox's own heap.
+extern bool gPortXboxQuietOom; // CGameAllocator.cpp
+
+void* PortXboxHeapAlloc(size_t len) {
+  // the flag first: HeapMutex's own first `new` comes through here
+  if (!sPortXboxHeapUp) {
+    return nullptr;
+  }
+  std::lock_guard< std::recursive_mutex > heapLock(HeapMutex());
+  if (!sPortXboxHeapUp || gPortXboxQuietOom) {
+    return nullptr;
+  }
+  gPortXboxQuietOom = true;
+  void* ret = gGameAllocator.Alloc(len, IAllocator::kHI_None, IAllocator::kSC_Unk1,
+                                   IAllocator::kTP_Heap, CCallStack(-1, "\?\?(\?\?)", nullptr));
+  gPortXboxQuietOom = false;
+  return ret;
+}
+
+void PortXboxHeapFree(const void* ptr) {
+  std::lock_guard< std::recursive_mutex > heapLock(HeapMutex());
+  if (sPortXboxHeapUp) {
+    gGameAllocator.Free(ptr);
+  }
+}
+
+unsigned PortXboxHeapFreeBytes() { return sPortXboxHeapUp ? gGameAllocator.GetMetrics().x14_heapSize2 : 0; }
 #endif
 
 void CMemory::SetOutOfMemoryCallback(IAllocator::FOutOfMemoryCb cb, const void* context) {

@@ -1,6 +1,13 @@
 // px_new.cpp - the global operator new and delete, for every C++ unit in the
-// XBE (game, libc++). In place of libc++'s: one place to measure and, later,
-// to choose where the game's objects live (docs/architecture.md "Memory").
+// XBE (game, libc++). In place of libc++'s: one place to measure and to
+// choose where the objects live (docs/architecture.md "Memory").
+//
+// Once the game's heap is up, objects go into it (CGameAllocator in MEM1,
+// as on the GameCube, plan 0.6): the game's resources and its objects then
+// share one heap and its holes, where two heaps each kept their own free
+// space (round hw5 ran out of Xbox memory with ~10 MB of MEM1 unused).
+// When the game's heap has no room, the Xbox's heap (malloc) takes it; a
+// block is freed by the heap whose address range holds it.
 //
 // -DPX_HEAP_PROFILE=1 (on in test builds): every block carries a small
 // header naming its caller, live bytes are summed per caller, and
@@ -13,6 +20,26 @@
 #include <new>
 
 #include "xhw.h"
+
+void* PortXboxHeapAlloc(size_t len); // src/Kyoto/Alloc/CMemory.cpp
+void PortXboxHeapFree(const void* ptr);
+unsigned PortXboxHeapFreeBytes();
+extern "C" int xsdk_in_mem1(const void* p); // xbox/src/sdk/os.c
+
+namespace {
+void* raw_alloc(size_t n) {
+  void* p = PortXboxHeapAlloc(n);
+  return p != nullptr ? p : std::malloc(n);
+}
+
+void raw_free(void* p) {
+  if (xsdk_in_mem1(p)) {
+    PortXboxHeapFree(p);
+  } else {
+    std::free(p);
+  }
+}
+} // namespace
 
 #ifndef PX_HEAP_PROFILE
 #define PX_HEAP_PROFILE XHW_TEST_BUILD
@@ -69,7 +96,8 @@ extern "C" void px_heap_report(const char* why) {
     }
   }
   xhw_mutex_unlock(s_lock);
-  xhw_logf("[HEAP] %s: %u KB live through operator new", why, static_cast< unsigned >(total / 1024));
+  xhw_logf("[HEAP] %s: %u KB live through operator new, game heap %u KB free", why,
+           static_cast< unsigned >(total / 1024), PortXboxHeapFreeBytes() / 1024);
   for (int k = 0; k < 30 && top[k].live; ++k)
     xhw_logf("[HEAP]   %6u KB in %6u blocks from %08x", top[k].live / 1024, top[k].count,
              static_cast< unsigned >(top[k].caller));
@@ -82,7 +110,7 @@ static void* px_alloc(size_t n, void* caller) {
 #if PX_HEAP_PROFILE
   if (!s_lock)
     s_lock = xhw_mutex_create();
-  Header* h = static_cast< Header* >(std::malloc((n ? n : 1) + sizeof(Header)));
+  Header* h = static_cast< Header* >(raw_alloc((n ? n : 1) + sizeof(Header)));
   void* p = h ? h + 1 : nullptr;
   if (h) {
     xhw_mutex_lock(s_lock);
@@ -94,7 +122,7 @@ static void* px_alloc(size_t n, void* caller) {
     h->site = site;
   }
 #else
-  void* p = std::malloc(n ? n : 1);
+  void* p = raw_alloc(n ? n : 1);
 #endif
   if (PX_NEW_LOG_BYTES && n >= PX_NEW_LOG_BYTES)
     xhw_logf("[NEW] %u KB at %p from %p", static_cast< unsigned >(n / 1024), p, caller);
@@ -115,9 +143,9 @@ static void px_free(void* p) {
   s_sites[h->site].live -= h->size;
   s_sites[h->site].count--;
   xhw_mutex_unlock(s_lock);
-  std::free(h);
+  raw_free(h);
 #else
-  std::free(p);
+  raw_free(p);
 #endif
 }
 

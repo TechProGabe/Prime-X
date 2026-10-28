@@ -83,10 +83,15 @@ over unless a line here says otherwise.
   `xbox/CMakeLists.txt`, so object paths are short; each part is a static
   library linked with `-wholearchive`, the game split in two (Windows'
   32 KB command line).
-- **Memory model** (0.6): pending. Today game `new` is the host heap
-  (MetroidPrimePort's `rs_new`); at the title screen the heap holds 12.9 MB
-  and 13.6 MB is free. Routing it into `CGameAllocator` in MEM1 is the
-  phase 2 work item.
+- **Memory model** (0.6, done 2026-10-28 after round hw5 ran out of
+  memory): game `new` (MetroidPrimePort's `rs_new` is plain `new`) goes into
+  `CGameAllocator` in MEM1 once the heap is up, malloc when it is full or
+  not up yet (`px_new.cpp`); a block is freed by the heap whose range holds
+  it. MEM1's arena is reserved 32 MB (to ARAM's VA), the game told 24 MB;
+  only touched 64 KB chunks cost RAM, and a freed block gives its whole
+  chunks back. Before: two heaps, each keeping its own high-water mark
+  (the Landing Site: `new` 15.5 MB in malloc, MEM1 ~8 MB); after: one heap
+  of ~20 MB live there, malloc 2.5 MB.
 
 Carried over from Melee-X as they are (see its `docs/decisions.md`):
 LLVM 21.1.8 and nxdk at its pinned commit; compiler builtins for `memcpy`
@@ -153,6 +158,9 @@ One line per edit to `src/`, `include/`, `extern/musyx` or
 | `src/Kyoto/Animation/DolphinCSkinRules.cpp` | `BuildBoneRange` positions and plain normals in SSE1, the three rows at once | speed (2.3% in xemu); same operations in the same order, no FMA: the same bits |
 | `src/MetroidPrime/CMainFlow.cpp` | `env PX_ALL_ITEMS=1` with `MP_BOOT_WORLD` gives every item (test builds) | rendering the visors, beams and suits in xemu |
 | `src/GuiSys/CGuiObject.cpp`, `include/GuiSys/CGuiObject.hpp` | moving one widget recomputes its own subtree, not every later sibling's too (`RecalculateSubtree`) | speed: n^2 matrix products a frame for the HUD (3.5% of the Landing Site in xemu); same results |
+| `src/Kyoto/Alloc/CMemory.cpp` | `PortXboxHeapAlloc`/`Free`/`FreeBytes` for operator new (no throw, null when the heap is down or full); `HeapMutex` built in static storage | plan 0.6: game `new` in `CGameAllocator` as on the GameCube; the mutex's own `new` would recurse |
+| `src/Kyoto/Alloc/CGameAllocator.cpp` | no OOM callback or dump while operator new asks (`gPortXboxQuietOom`); a freed block decommits the whole 64 KB chunks inside it (`xhw_lazy_decommit`) | operator new falls back to malloc; freed load buffers stop costing Xbox RAM (round hw5's out of memory) |
+| `src/MetroidPrime/main.cpp` | the GX FIFO 128 KB, not 384 | our GX never reads it; image memory |
 | `src/MetroidPrime/CEnvFxManager.cpp` | `CEnvFxManagerGrid::Render` skips a rain/snow grid whose box is wholly outside the view (`GXPortBoxCulled`, `port_xbox_gx.h`) | speed: every particle is a vertex call each frame, about half of them off screen; the GPU would clip them all anyway |
 
 Imported unchanged but added to the game build (MetroidPrimePort compiles

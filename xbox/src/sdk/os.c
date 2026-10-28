@@ -32,6 +32,13 @@
 #ifndef XSDK_MEM1_SIZE
 #define XSDK_MEM1_SIZE (24u * 1024 * 1024)
 #endif
+/* The arena runs past the 24 MB the game is told about, up to ARAM's VA
+ * (ar.c): game `new` shares CGameAllocator's heap here (px_new.cpp, plan
+ * 0.6), and only the pages touched cost Xbox RAM, so the heap's size is
+ * never the limit, the console's free memory is. */
+#ifndef XSDK_MEM1_RESERVE
+#define XSDK_MEM1_RESERVE (32u * 1024 * 1024)
+#endif
 #define ARENA_START_OFFSET 0x4000u   /* low-memory globals (boot info, clocks) */
 
 uintptr_t OSBaseAddress;
@@ -62,7 +69,7 @@ void OSInit(void) {
     s_intr_tls = xhw_tls_alloc();
     s_game_tls = xhw_tls_alloc();
     xhw_tls_set(s_game_tls, (void*)1);   /* melee_main calls OSInit first */
-    s_mem1 = (u8*)xhw_reserve_lazy(XSDK_MEM1_VA, XSDK_MEM1_SIZE);   /* committed on demand */
+    s_mem1 = (u8*)xhw_reserve_lazy(XSDK_MEM1_VA, XSDK_MEM1_RESERVE);   /* committed on demand */
     if (!s_mem1) xhw_fatal("Out of memory", "Could not reserve the game's main memory.");
     memset(s_mem1, 0, ARENA_START_OFFSET);
     OSBaseAddress = (uintptr_t)s_mem1;
@@ -75,11 +82,15 @@ void OSInit(void) {
     wr32(0xF8, OS_BUS_CLOCK);
     wr32(0xFC, 486000000u);
     s_arena_lo = s_mem1 + ARENA_START_OFFSET;
-    s_arena_hi = s_mem1 + XSDK_MEM1_SIZE;
+    s_arena_hi = s_mem1 + XSDK_MEM1_RESERVE;
     secs = xhw_wallclock_2000(&ns);
     s_time_base = (OSTime)secs * OS_TIMER_CLOCK + (OSTime)ns * (OS_TIMER_CLOCK / 1000000) / 1000;
     s_ns_base = xhw_time_ns();
-    xhw_logf("[OS] MEM1 %p, %u KB arena", s_mem1, (unsigned)(XSDK_MEM1_SIZE - ARENA_START_OFFSET) / 1024);
+    xhw_logf("[OS] MEM1 %p, %u KB arena", s_mem1, (unsigned)(XSDK_MEM1_RESERVE - ARENA_START_OFFSET) / 1024);
+}
+
+int xsdk_in_mem1(const void* p) {
+    return (uintptr_t)p - XSDK_MEM1_VA < XSDK_MEM1_RESERVE;
 }
 
 void* OSGetArenaHi(void) { return s_arena_hi; }

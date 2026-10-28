@@ -226,7 +226,13 @@ static void ApplyAspectMode() {
   CCameraManager::RefreshAspectRatio();
 }
 
+#ifdef TARGET_XBOX
+// PORT_XBOX: our GX never reads the FIFO; the smallest size GXInitFifoLimits'
+// arithmetic in CGraphics::InitGraphicsFifo takes, 256 KB less image
+#define GRAPHICS_FIFO_SIZE 0x20000
+#else
 #define GRAPHICS_FIFO_SIZE 0x60000
+#endif
 static uchar sGraphicsFifo[GRAPHICS_FIFO_SIZE];
 ALIGNAS(CMain) static uchar sMainSpace[sizeof(CMain)];
 
