@@ -8,6 +8,8 @@
 XgxState g_xgx;
 static uint32_t s_fmt, s_w, s_h, s_levels;
 static uint8_t s_data[1 << 20];
+uint32_t xgx_tex_palette(uint32_t tex) { (void)tex; return 0; }
+int gx_dlc_evict_spilled(int max) { (void)max; return 0; }
 uint32_t xgx_tex_create(uint32_t w, uint32_t h, uint32_t levels, uint32_t fmt, const void* data) {
     uint32_t n = 0, l, lw = w, lh = h;
     for (l = 0; l < levels; l++) {
@@ -46,10 +48,10 @@ static uint32_t lerp(uint32_t a, uint32_t b, int wa, int wb, int d) {
     for (k = 0; k < 24; k += 8) r |= (uint32_t)((((a >> k) & 255) * wa + ((b >> k) & 255) * wb) / d) << k;
     return r | 0xFF000000u;
 }
-static const uint8_t* s_pal;   /* P8: the palette after the levels */
+static const uint8_t* s_test_pal;   /* P8: the palette after the levels */
 static uint32_t expand(const uint8_t* d, uint32_t fmt, uint32_t w, uint32_t x, uint32_t y) {
     switch (fmt) {
-        case XGX_TEX_P8: { uint32_t c; memcpy(&c, s_pal + d[y * w + x] * 4, 4); return c; }
+        case XGX_TEX_P8: { uint32_t c; memcpy(&c, s_test_pal + d[y * w + x] * 4, 4); return c; }
         case XGX_TEX_AY8: { uint32_t v = d[y * w + x]; return argb(v, v, v, v); }
         case XGX_TEX_A8Y8: { const uint8_t* p = d + (y * w + x) * 2; return argb(p[1], p[0], p[0], p[0]); }
         case XGX_TEX_RGB565: { uint16_t v; memcpy(&v, d + (y * w + x) * 2, 2); return c565(v); }
@@ -100,7 +102,7 @@ static int check(uint32_t fmt, uint32_t w, uint32_t h, uint32_t levels) {
         lw = lw > 1 ? lw / 2 : 1;
         lh = lh > 1 ? lh / 2 : 1;
     }
-    s_pal = s_data + pal;
+    s_test_pal = s_data + pal;
     lw = w, lh = h;
     for (l = 0; l < levels; l++) {
         uint32_t x, y;

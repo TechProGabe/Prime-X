@@ -93,6 +93,8 @@ void xgx_tex_destroy(uint32_t tex) {
     }
 }
 uint32_t xgx_tex_bytes(uint32_t tex) { return tex < MAX_HANDLES && s_tex_live[tex] ? s_tex_bytes[tex] : 0; }
+uint32_t xgx_tex_palette(uint32_t tex) { return tex < MAX_HANDLES && s_tex_live[tex] ? 0x1000u + tex : 0; }
+int gx_dlc_evict_spilled(int max) { (void)max; return 0; }   /* no display lists here */
 uint32_t xgx_tex_pool_kb(void) { return (s_pool_total + s_grown) / 1024; }
 uint32_t xgx_tex_pool_free_kb(void) { return (s_pool_total + s_grown - s_pool_used) / 1024; }
 uint32_t xgx_tex_pool_largest_kb(void) { return xgx_tex_pool_free_kb(); }

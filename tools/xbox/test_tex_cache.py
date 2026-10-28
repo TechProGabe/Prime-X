@@ -17,7 +17,9 @@ import sys
 import tempfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-FLAGS = ["-O2", "-w", "-fno-strict-aliasing", "-fwrapv", "-DTARGET_PC=1", "-DMELEE_PC=1"]
+# GX_TEX_NO_PAL_SPLIT: the reference predates palettes kept apart from their
+# CI texels (gx_tex.c palette_for), which changes what is uploaded on purpose
+FLAGS = ["-O2", "-w", "-fno-strict-aliasing", "-fwrapv", "-DTARGET_PC=1", "-DMELEE_PC=1", "-DGX_TEX_NO_PAL_SPLIT"]
 
 
 def build_and_run(tmp, name, source, defines):
