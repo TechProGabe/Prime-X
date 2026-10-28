@@ -114,8 +114,20 @@ the next session's list:
    channel change, `0b407ad`).
 3. **Two-value Options rows (Widescreen HUD, Field of View, FPS
    Counter): the divider sits on the text** ("stuck on the r" of Inner)
-   on the console. Shoot the pause screen's Display rows in xemu at 4:3
-   and compare; the cells may need shorter labels or the divider moved.
+   on the console. The pause screen draws "Inner | Edges" right in xemu
+   (`build-xbox/shots/opt3`), so it is most likely the main menu's Port
+   Options (`SOptionsFrontEndFrame`): its left cell holds retail's "Off"
+   with little room before the divider. `/c/xemu/px/scen-portopt` doesn't
+   reach Port Options (it opens Options twice): find the menu path, shoot
+   the Video rows, then right-justify `textpane_double0` (and its "b"
+   shadow) for Prime-X rows or shorten the labels.
+   Done after hw6 (`1d7071c`, `3abd277`): texture pool 8 -> 7 MB (Main
+   Plaza's lowest free in xemu 5.2 -> 6.6 MB, nothing dropped), the
+   display lists' extra 1 MB only while 6 MB is free, failed commits log
+   their size. Morph Ball in xemu (`/c/xemu/px/scen-morph2`,
+   `build-xbox/shots/morph4`): the view after unmorphing looks paler
+   than the old build's, not proven; `CMorphBallShadow` leaves
+   `GXSetDstAlpha(true, 0)` and alpha updates on, as retail does.
 
 Dolphin 2609 is unpacked at `C:\xemu\dolphin\Dolphin-x64` (portable,
 the user allowed it); no reference frames taken yet: the interesting
