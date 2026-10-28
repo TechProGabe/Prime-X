@@ -98,8 +98,21 @@ SDL_AudioStream* px_SDL_OpenAudioDeviceStream(SDL_AudioDeviceID, const SDL_Audio
   return &s_stream;
 }
 
+// the streamed music and movie audio the main loop queued (prime_sdk.c's AI)
+extern "C" void px_ai_mix(int16_t* buf, uint32_t frames);
+
 bool px_SDL_PutAudioStreamData(SDL_AudioStream*, const void* buf, int len) {
-  xhw_audio_write(static_cast< const int16_t* >(buf), (uint32_t)len / 4u);
+  static int16_t mix[1024 * 2];
+  const int16_t* in = static_cast< const int16_t* >(buf);
+  uint32_t frames = (uint32_t)len / 4u;
+  while (frames) {
+    const uint32_t n = frames < 1024u ? frames : 1024u;
+    memcpy(mix, in, n * 4u);
+    px_ai_mix(mix, n);
+    xhw_audio_write(mix, n);
+    in += n * 2;
+    frames -= n;
+  }
   return true;
 }
 

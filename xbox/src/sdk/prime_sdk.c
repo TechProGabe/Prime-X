@@ -227,26 +227,95 @@ void OSProtectRange(u32 chan, void* addr, u32 nBytes, u32 control) { (void)chan;
 u32 OSSaveContext(OSContext* context) { (void)context; return 0; }
 
 /* ======================================================================
- * AI: the audio interface's DMA. MetroidPrimePort drives the registered
- * callback from the main loop (AIPortPoll) for streamed music and movie
- * audio; phase 4 (docs/plan.md) mixes that into the AC97 output. Until then
- * the callback is not run: no streamed music.
+ * AI: the audio interface's DMA, as MetroidPrimePort drives it
+ * (platform/ai_dma.cpp there). The streamed music (CStaticAudioPlayer: the
+ * front end's, some rooms') and movie audio fill an AI buffer from a DMA
+ * callback. There is no AI: the main loop runs the callback (AIPortPoll; the
+ * game's mixers aren't thread-safe) and queues what it made here, 16-bit
+ * stereo at 32 kHz like MusyX's output, which mixes it into each block it
+ * hands the AC97 (px_ai_mix, from px_sdl3.cpp). The queue is kept ~200 ms
+ * deep: the main loop runs at the frame rate, which can be 10 fps.
+ *
+ * On the GameCube MusyX's own AI callback submits a fresh mix buffer first
+ * and the others read it back (AIGetDMAStartAddr) and mix on top; here
+ * MusyX plays through its own path, so they are handed silence, zeroed
+ * each time (a mixer that adds to its input would feed back otherwise).
  * ====================================================================== */
+#define AI_RING 16384          /* stereo frames, a power of two */
+#define AI_TARGET 6400         /* 200 ms at 32 kHz */
+#define AI_MAX_DMA (0x7FFF * 32)
 static AIDCallback s_ai_cb;
 static uintptr_t s_ai_buf;
 static u32 s_ai_len;
-void AIInit(u8* stack) { (void)stack; }
+static int s_ai_playing = 1;
+static __attribute__((aligned(32))) u8 s_ai_silence[0x280];
+static int16_t s_ai_ring[AI_RING * 2];
+static volatile uint32_t s_ai_w, s_ai_r;   /* frames written (main loop) / mixed (audio thread) */
+
+static void ai_silence(void) {
+    s_ai_buf = (uintptr_t)s_ai_silence;
+    s_ai_len = sizeof s_ai_silence;
+}
+
+void AIInit(u8* stack) {
+    (void)stack;
+    ai_silence();
+}
 AIDCallback AIRegisterDMACallback(AIDCallback callback) {
     AIDCallback old = s_ai_cb;
     s_ai_cb = callback;
+    if (!old != !callback) xhw_logf("[AI] streamed audio %s", callback ? "starts" : "stops");
+    ai_silence();   /* the previous owner may free its buffer now */
+    s_ai_r = s_ai_w;   /* drop what the previous one queued */
     return old;
 }
 void AIInitDMA(uintptr_t start_addr, u32 length) {
+    if (!start_addr || !length || length % 4 || length > AI_MAX_DMA) {
+        ai_silence();
+        return;
+    }
     s_ai_buf = start_addr;
     s_ai_len = length;
 }
+u32 AIGetDMAStartAddr(void) { return (u32)s_ai_buf; }
 uintptr_t AIPortGetDMAStartAddr(void) { return s_ai_buf; }
-void AIPortPoll(void) {}
+void AISetStreamPlayState(u32 state) {
+    s_ai_playing = state != 0;
+    if (!s_ai_playing) s_ai_r = s_ai_w;
+}
+
+void AIPortPoll(void) {
+    int budget = 64;
+    if (!s_ai_buf) ai_silence();
+    while (s_ai_cb && s_ai_playing && budget-- > 0 && s_ai_w - s_ai_r < AI_TARGET) {
+        const int16_t* src;
+        uint32_t n, i, w;
+        memset(s_ai_silence, 0, sizeof s_ai_silence);
+        ai_silence();
+        s_ai_cb();
+        src = (const int16_t*)s_ai_buf;
+        n = s_ai_len / 4;
+        if (!src || !n || s_ai_w - s_ai_r + n > AI_RING) break;
+        w = s_ai_w;
+        for (i = 0; i < n; i++, w++) {
+            s_ai_ring[(w & (AI_RING - 1)) * 2] = src[2 * i];
+            s_ai_ring[(w & (AI_RING - 1)) * 2 + 1] = src[2 * i + 1];
+        }
+        s_ai_w = w;   /* after the samples: the audio thread reads up to here */
+    }
+}
+
+/* MusyX's audio thread: the queued AI frames added into a block (saturating) */
+void px_ai_mix(int16_t* buf, uint32_t frames) {
+    uint32_t r = s_ai_r, have = s_ai_w - r, n = frames < have ? frames : have, i;
+    for (i = 0; i < n; i++, r++) {
+        const int16_t* s = &s_ai_ring[(r & (AI_RING - 1)) * 2];
+        int32_t a = buf[2 * i] + s[0], b = buf[2 * i + 1] + s[1];
+        buf[2 * i] = (int16_t)(a > 32767 ? 32767 : a < -32768 ? -32768 : a);
+        buf[2 * i + 1] = (int16_t)(b > 32767 ? 32767 : b < -32768 ? -32768 : b);
+    }
+    s_ai_r = r;
+}
 
 /* ======================================================================
  * DTK (disc track streaming) and the GBA link: Prime streams its music as
