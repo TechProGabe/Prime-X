@@ -98,6 +98,25 @@ tools/xbox/console.py pull hw6`. Also since hw5: the rain in one call
 fix). PGO retraining was stopped: rerun `tools/xbox/pgo_train.sh tallon
 frigate phendrana magmoor chozo` with two slots.
 
+**hw6 results (the user, 2026-10-28; log `/c/xemu/hw/prime/logshw6/boot.log`)**,
+the next session's list:
+1. **Out of memory again**, at 290 s (hw5: 215 s): `xhw_commit` failed with
+   2.9 MB free (MEM1+ARAM 25.8 MB). A single commit wanted more than
+   was free: the next build logs its size (`[MEM] out of memory
+   committing`). Levers: the texture pool (8 MB, 2.7-4.5 MB of it
+   unused in play), triple buffering (1.2 MB), the vertex pool, the
+   game heap's partly used chunks. The Frigate scenario also runs out
+   in the PGO-instrumented build (bigger image), so pgo/frigate and
+   pgo/magmoor gave no profile.
+2. **Everything too bright after going into Morph Ball** (the user). Look at
+   `CMorphBallShadow.cpp` (sets GX_ALPHA0 and colours directly, around
+   the CGX cache) and at whether hw5 did it too (it may be the GXInit
+   channel change, `0b407ad`).
+3. **Two-value Options rows (Widescreen HUD, Field of View, FPS
+   Counter): the divider sits on the text** ("stuck on the r" of Inner)
+   on the console. Shoot the pause screen's Display rows in xemu at 4:3
+   and compare; the cells may need shorter labels or the divider moved.
+
 Dolphin 2609 is unpacked at `C:\xemu\dolphin\Dolphin-x64` (portable,
 the user allowed it); no reference frames taken yet: the interesting
 scenes (Tallon, the ship) need a save there, and saves here live in
