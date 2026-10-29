@@ -20,9 +20,10 @@ line under it says how far it got.
         on red; the full disc check matches the Redump hash on red (hw1).
         Doctored images in xemu (2026-10-28): wrong ID, another revision,
         trimmed and a changed file each stop at their screen
-        (`build-xbox/shots/disc_*`). Still to show: the 128 MB hold (xemu's
-        BIOS here exposes 64 MB whatever `mem_limit` says: needs a 128 MB
-        BIOS) and `XHW_CODE_REPAIR_TEST`
+        (`build-xbox/shots/disc_*`); `XHW_CODE_REPAIR_TEST` rewrote an
+        rdtsc as a BIOS would and the code check put it back. Still to
+        show: the 128 MB hold (xemu's BIOS here exposes 64 MB whatever
+        `mem_limit` says: needs a 128 MB BIOS)
 - [ ] Phase 3: renderer parity with Dolphin in the benchmark rooms, all
       visors, 4:3 and 16:9
       - every world renders in xemu (room sweep, 14 rooms) and on red;
