@@ -60,8 +60,34 @@ enum {
     XHW_PERF_VSYNC,   /* pacing to 60 Hz: spare time */
     XHW_PERF_N
 };
+#if !defined(XHW_PMC) || !XHW_PMC
+/* inline: they run per display list and per draw, and as calls into the hw
+ * library (outside ThinLTO) they were ~1.2% of the console's CPU (round
+ * hw5); the probe build's PMC charging keeps the calls (xhw_perf.c) */
+extern int xhw_perf_cur;
+extern uint64_t xhw_perf_mark, xhw_perf_acc[XHW_PERF_N];
+static inline void xhw_perf_charge_(void) {
+    uint32_t lo, hi;
+    uint64_t now;
+    __asm__ volatile("rdtsc" : "=a"(lo), "=d"(hi));
+    now = (uint64_t)hi << 32 | lo;
+    if (xhw_perf_mark) xhw_perf_acc[xhw_perf_cur] += now - xhw_perf_mark;
+    xhw_perf_mark = now;
+}
+static inline int xhw_perf_enter(int bucket) {
+    int prev = xhw_perf_cur;
+    xhw_perf_charge_();
+    xhw_perf_cur = bucket;
+    return prev;
+}
+static inline void xhw_perf_leave(int prev) {
+    xhw_perf_charge_();
+    xhw_perf_cur = prev;
+}
+#else
 int xhw_perf_enter(int bucket);
 void xhw_perf_leave(int prev);
+#endif
 uint64_t xhw_perf_now(void);                   /* rdtsc, for xhw_perf_audio */
 void xhw_perf_audio(uint64_t ticks);           /* mixer thread: time spent mixing */
 void xhw_perf_frame(uint32_t draws, uint32_t verts);   /* once per presented frame */
@@ -127,7 +153,7 @@ uint32_t xhw_mem_free_kb(void);
  * xhw_mem_tick (the game thread, once a frame, no locks held) reclaims
  * while less than XHW_MEM_LOW_KB is free. */
 typedef uint32_t (*xhw_reclaim_fn)(uint32_t want_kb, int urgent);
-void xhw_mem_add_reclaim(xhw_reclaim_fn fn);
+void xhw_mem_add_reclaim(xhw_reclaim_fn fn, int first);   /* first: asked before those already added */
 uint32_t xhw_mem_reclaim(uint32_t want_kb, int urgent);
 #ifndef XHW_MEM_LOW_KB
 #define XHW_MEM_LOW_KB (3u * 1024)

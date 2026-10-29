@@ -92,7 +92,7 @@ static void aram_map(void) {
         s_swap = xhw_file_create_rw(path);
         if (!s_swap) xhw_logf("[AR] no swap file (%s)", path);
     }
-    xhw_mem_add_reclaim(aram_reclaim);
+    xhw_mem_add_reclaim(aram_reclaim, 0);
 }
 
 u32 xsdk_aram_disc_kb(void) { return (s_disc_pages - s_swap_pages) * (PAGE / 1024); }

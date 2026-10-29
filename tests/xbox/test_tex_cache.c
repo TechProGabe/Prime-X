@@ -109,8 +109,13 @@ void xgx_tex_pool_shrink(void) {
     tr("shrink");
     s_grown = 0;
 }
-int xhw_perf_enter(int bucket) { return bucket; }
-void xhw_perf_leave(int prev) { (void)prev; }
+/* xhw.h's inline xhw_perf_enter/leave keep these */
+int xhw_perf_cur;
+uint64_t xhw_perf_mark, xhw_perf_acc[XHW_PERF_N];
+void xgx_tex_set_color(uint32_t tex, uint32_t avg_argb, int uniform) { (void)tex; (void)avg_argb; (void)uniform; }
+void xhw_mem_add_reclaim(xhw_reclaim_fn fn, int first) { (void)fn; (void)first; }
+uint32_t xhw_mem_free_kb(void) { return 0; }
+uint32_t xgx_tex_pool_overflow_kb(void) { return 0; }
 uint32_t xgx_tex_from_efb(const int32_t src[4], uint32_t w, uint32_t h, int i, uint32_t reuse) { return 0; }
 void xgx_read_efb(const int32_t src[4], uint32_t w, uint32_t h, uint8_t* rgba) {}
 /* the format only: "[TEX] changed" and "[TEX] drop" print host pointers */
