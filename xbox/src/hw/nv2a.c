@@ -1864,17 +1864,20 @@ static void vp_upload(const VpEntry* e, int start) {
 /* VpKeys compared as words, inline: a 48-byte memcmp is a call (the
  * builtin only inlines short ones), on every draw whose lighting or
  * texgens changed */
-_Static_assert(sizeof(VpKey) % 4 == 0, "VpKey compares as words");
-static inline int vk_same(const VpKey* a, const VpKey* b) {
+/* n bytes (a multiple of 4, a constant) compared as words, inline */
+static inline int words_same(const void* a, const void* b, unsigned n) {
     uint32_t d = 0, wa, wb;
     unsigned i;
-    for (i = 0; i < sizeof(VpKey); i += 4) {
+    for (i = 0; i < n; i += 4) {
         memcpy(&wa, (const uint8_t*)a + i, 4);
         memcpy(&wb, (const uint8_t*)b + i, 4);
         d |= wa ^ wb;
     }
     return d == 0;
 }
+
+_Static_assert(sizeof(VpKey) % 4 == 0, "VpKey compares as words");
+static inline int vk_same(const VpKey* a, const VpKey* b) { return words_same(a, b, sizeof(VpKey)); }
 
 static void vp_select(const VpKey* k) {
     int i, pick = -1, start, loaded;
@@ -2419,7 +2422,10 @@ static void emit_textures(const XgxState* st, const int unit_map[4], int nunits)
             key.kind = (uint32_t)s_d_unit_kind[u];
             key.pal = s_d_unit_tex[u] ? 0 : m->pal;
         }
-        if (memcmp(&key, &s_unit_memo[u], sizeof key) == 0) {   /* the registers as sent */
+        /* the registers as sent; compared inline, as the shadow below: as
+         * memcmp calls they were part of the 2% of Main Plaza's CPU xgx_draw
+         * spent in the string routines (round hw5) */
+        if (words_same(&key, &s_unit_memo[u], sizeof key)) {
             prog |= s_unit_prog[u];
             continue;
         }
@@ -2453,7 +2459,7 @@ static void emit_textures(const XgxState* st, const int unit_map[4], int nunits)
             s_unit_prog[u] = (s_d_unit_kind[u] == UNIT_BUMP ? 6u : 1u) << (u * 5);   /* BUMPENVMAP, 2D_PROJECTIVE */
             prog |= s_unit_prog[u];
         }
-        if (memcmp(v, s_tex_shadow[u], sizeof v) != 0) {
+        if (!words_same(v, s_tex_shadow[u], sizeof v)) {
             uint32_t b = (uint32_t)u * 64;
             if (!t) {
                 put1(NV097_SET_TEXTURE_CONTROL0 + b, 0);
@@ -2487,7 +2493,7 @@ static void emit_textures(const XgxState* st, const int unit_map[4], int nunits)
             memcpy(&w[0], &s_d_unit_bump[u][0], 8);
             memcpy(&w[2], &s_d_unit_bump[u][3], 4);
             memcpy(&w[3], &s_d_unit_bump[u][2], 4);
-            if (memcmp(w, s_bump_shadow[u], sizeof w) != 0) {
+            if (!words_same(w, s_bump_shadow[u], sizeof w)) {
                 uint32_t k;
                 for (k = 0; k < 4; k++) put1(NV097_SET_TEXTURE_SET_BUMP_ENV_MAT + (uint32_t)u * 64 + k * 4, w[k]);
                 memcpy(s_bump_shadow[u], w, sizeof w);

@@ -88,7 +88,17 @@ Pull logs before deploying: each boot rotates `boot.log`.
 world in xemu (two at a time), takes two shots in each and lists any FATAL,
 THROW, texture drop or out-of-memory line; shots in
 `build-xbox/shots/sweep`. About 40 minutes. The first one (2026-10-28):
-nothing failed; every room rendered.
+nothing failed; every room rendered. The image must be an autopad build
+(`XBOX_CFLAGS=-DXHW_AUTOPAD=1`, also with `XBOX_LTO`/`XBOX_PGO` for the
+ship code): a release image ignores the script and sits on the title, and
+the sweep now refuses one.
+
+`-DXGX_DYN_VERIFY=1` (test builds): every dynamic display-list draw is
+also made the old way, before and after, and compared; `[DLC] dyn verify:
+N draws, M differ (K more with arrays that changed during the call)` every
+600 frames. K is the verify's own doing (its megabyte mallocs land on a
+skinning buffer the game has already freed); M must be 0. 2026-10-29:
+Landing Site 29914 draws, Main Plaza 46877, none differed.
 
 ## 720p in xemu
 

@@ -121,6 +121,18 @@ lists with the pool full were LRU turning the whole cache over). Left:
 the batch table (a separate allocation per list), the dynamic lists'
 template copies, `CStateManager::Update`'s inlined callees.
 
+2026-10-29, from the same hw5 logs (`[PROFL]`: memcpy's callers):
+`GXCallDisplayList` made half of memcpy's 10% in the Landing Site, where
+the dynamic (skinned) lists hold ~800 KB of templates and fetch positions
+and normals on every call. Each batch is now staged through a 16 KB
+scratch buffer (template read once, fetched there, copied to the ring)
+instead of fetched into the template and the whole template copied after:
+about half the bus traffic. `-DXGX_DYN_VERIFY=1` makes every dynamic draw
+the old way too and compares. A list of one draw (most of them, after
+merging) keeps that draw in its entry's hot 64 bytes with the layout in
+a shared table: no batch table, so no miss for it on the call. Not yet
+measured on a console.
+
 The front end (title, file select) runs over a 640x480 THP movie: its
 decode was 60% of a frame (float AAN IDCT with a double-precision FMA on an
 SSE1 CPU) and the planes' GX-tile conversion 18%. An integer IDCT

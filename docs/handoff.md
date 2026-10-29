@@ -80,6 +80,21 @@ No hardware rounds until they say.
   peach rectangle in Twin Fires). Proper ones need depth copies that
   carry depth: a GPU path to try on a console.
 - Host test `test_aram.py` for the ARAM swap (400k random operations).
+- nxdk's printf has no `%f` (prints nothing, shifts the arguments): the
+  Threat Assessment distance digits were empty and the `port: frame N at
+  X s` milestones garbage. Both use the SDK's `xsdk_snprintf` now
+  (`ee76d4f`). The room sweep refuses a non-autopad image (a ship image
+  sits on the title: the first ship sweep took 40 minutes for 0 shots).
+- The LTO + PGO ship code (built with `-DXHW_AUTOPAD=1`) passes the room
+  sweep: all 14 rooms render, the Chozo arm cannon is dark metal.
+- FPS, from round hw5's `[PROFL]` (memcpy's callers) and buckets:
+  dynamic (skinned) lists stage each batch through an L1 scratch buffer
+  instead of fetching into the ~800 KB template and copying all of it;
+  one-draw lists keep their draw in the entry (no batch table miss);
+  `emit_textures`' 40- and 36-byte compares inline (were memcmp calls).
+  `-DXGX_DYN_VERIFY=1` checks the dynamic path against the old one: no
+  draw differed (Landing Site, Main Plaza). Main Plaza: 1633 of 1933
+  cached lists are one draw, 4 layouts in all. Not measured on red.
 
 ## Where it stood before (2026-10-28, evening)
 
