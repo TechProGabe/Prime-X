@@ -328,11 +328,84 @@ void xhw_vlog_raw(const char* fmt, va_list ap) {
 uint64_t xhw_ticks(void) { return KeQueryPerformanceCounter(); }
 uint64_t xhw_ticks_per_sec(void) { return KeQueryPerformanceFrequency(); }
 
-uint64_t xhw_time_ns(void) {
+static uint64_t kernel_ns(void) {
     static uint64_t freq;
     uint64_t t = KeQueryPerformanceCounter();
     if (!freq) freq = KeQueryPerformanceFrequency();
     return (t / freq) * 1000000000ull + (t % freq) * 1000000000ull / freq;
+}
+
+/* The game reads the clock thousands of times a frame (OSGetTime, SDL's
+ * ticks, the perf buckets): KeQueryPerformanceCounter reads the ACPI timer
+ * through an I/O port, and the conversion took three 64-bit divisions, ~3%
+ * of the console's CPU in Main Plaza (round hw5). Time still comes from
+ * the ACPI timer (docs/boot-safety.md: never from the TSC alone), read
+ * once every 100 ms; in between the CPU's time-stamp counter interpolates,
+ * at the rate measured against the timer at the first call (50 ms; an
+ * upgraded or overclocked CPU gets its own), with multiplies only:
+ * ns = dt * (whole + frac / 2^32). */
+static inline uint64_t rdtsc_now(void) {
+    uint32_t lo, hi;
+    __asm__ volatile("rdtsc" : "=a"(lo), "=d"(hi));
+    return (uint64_t)hi << 32 | lo;
+}
+
+typedef struct {
+    uint64_t tsc0, ns0;   /* an ACPI reading and the TSC at that moment */
+} TimeBase;
+static TimeBase s_tb[2];
+static volatile LONG s_tb_cur, s_tb_busy;
+static uint32_t s_ns_whole, s_ns_frac;
+static uint64_t s_tsc_resync;   /* TSC ticks between ACPI readings */
+static volatile uint64_t s_ns_last;
+static volatile int s_tsc_ready;
+
+static uint64_t tsc_to_ns(uint64_t dt) {
+    return dt * s_ns_whole + (uint64_t)(uint32_t)(dt >> 32) * s_ns_frac + (((uint64_t)(uint32_t)dt * s_ns_frac) >> 32);
+}
+
+static void tsc_calibrate(void) {
+    uint64_t k0 = kernel_ns(), t0 = rdtsc_now(), k1, t1, hz;
+    do {
+        k1 = kernel_ns();
+    } while (k1 - k0 < 50000000ull);
+    t1 = rdtsc_now();
+    hz = (t1 - t0) * 1000000000ull / (k1 - k0);
+    if (hz < 100000000ull) return;   /* no sane counter: the ACPI timer on every call */
+    s_ns_whole = (uint32_t)(1000000000ull / hz);
+    s_ns_frac = (uint32_t)(((1000000000ull % hz) << 32) / hz);
+    s_tsc_resync = hz / 10;
+    s_tb[0].tsc0 = t1;
+    s_tb[0].ns0 = s_ns_last = k1;
+    s_tsc_ready = 1;
+}
+
+uint64_t xhw_time_ns(void) {
+    const TimeBase* b;
+    uint64_t now, dt, ns;
+    if (!s_tsc_ready) {
+        static int tried;
+        if (tried) return kernel_ns();
+        tried = 1;
+        tsc_calibrate();
+        if (!s_tsc_ready) return kernel_ns();
+    }
+    b = &s_tb[s_tb_cur & 1];
+    now = rdtsc_now();
+    dt = now - b->tsc0;
+    if (dt >= s_tsc_resync && !InterlockedCompareExchange(&s_tb_busy, 1, 0)) {
+        /* one thread takes a new reading into the other slot, then flips */
+        TimeBase* n = &s_tb[(s_tb_cur + 1) & 1];
+        n->ns0 = kernel_ns();
+        n->tsc0 = rdtsc_now();
+        if (n->ns0 < s_ns_last) n->ns0 = s_ns_last;   /* never backwards */
+        InterlockedExchange(&s_tb_cur, (s_tb_cur + 1) & 1);
+        InterlockedExchange(&s_tb_busy, 0);
+        return n->ns0;
+    }
+    ns = b->ns0 + tsc_to_ns(dt);
+    if (ns > s_ns_last) s_ns_last = ns;
+    return ns;
 }
 
 int64_t xhw_wallclock_2000(uint32_t* ns_out) {

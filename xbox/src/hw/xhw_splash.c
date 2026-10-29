@@ -592,5 +592,6 @@ int xhw_splash_card(const char* title, const char* const* lines) {
     for (i = 0, y = CARD_Y0 + 64; lines && lines[i] && y < CARD_Y1; i++, y += 20)
         centered(fb, lines[i], y, 1, COL_TEXT, 256);
     memcpy(s_fb, fb, SCR_W * SCR_H * 4);
+    if (XHW_TEST_BUILD) xhw_fbdump(s_fb, SCR_W, SCR_H, 32, SCR_W * 4);   /* the rejection screens in xemu */
     return 1;
 }
