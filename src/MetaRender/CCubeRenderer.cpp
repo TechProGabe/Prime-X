@@ -2129,12 +2129,20 @@ void CCubeRenderer::PostRenderFogs() {
 
   x2ac_fogVolumes.sort(fog_sorter());
 
+#ifndef TARGET_XBOX
   for (AUTO(fogIt, x2ac_fogVolumes.begin()); fogIt != x2ac_fogVolumes.end(); ++fogIt) {
     CFogVolumeListItem& fog = *fogIt;
     CGraphics::SetModelMatrix(fog.x0_xf);
     ReallyRenderFogVolume(fog.x30_color, fog.x34_aabb, fog.x4c_model ? **fog.x4c_model : nullptr,
                           fog.x5c_skinnedModel);
   }
+#endif
+  // PORT_XBOX: no fog volumes. The pass reads the depth of the volume's front
+  // and back faces through Z16 copies as indirect offsets into its density
+  // ramp; the Xbox's depth copies are only the in-front masks GXSetZTexture
+  // needs, so a volume came out as nothing or as a solid box of fog colour
+  // (Magmoor's lava, a peach rectangle over the HUD). Until copies carry
+  // the depth itself, the volumes are left out.
 
   x2ac_fogVolumes.clear();
 }
