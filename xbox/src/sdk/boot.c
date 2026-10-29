@@ -50,6 +50,14 @@ void xsdk_early(void) {
     if (held) xhw_logf("[MEM] 128 MB console: running in 64 MB, %u KB above it held back", held);
     xhw_splash_log(held ? "> MEM   128 MB, HELD TO 64 MB ...... OK" : "> MEM   64 MB  MEM1 24 / ARAM 16 .. OK");
     xsdk_settings_load();
+    if (XHW_TEST_BUILD && getenv("PX_MEM_BALLOON_KB")) {
+        /* test builds: hold this much RAM for good, to play the console's
+         * low-memory moments in xemu (the reclaimers, the out of memory screen) */
+        uint32_t kb = (uint32_t)atoi(getenv("PX_MEM_BALLOON_KB"));
+        void* p = kb ? malloc(kb * 1024u) : NULL;
+        if (p) memset(p, 0x5A, kb * 1024u);
+        xhw_logf("[MEM] balloon: %u KB held (%s)", kb, p ? "ok" : "failed");
+    }
     if (safe) {
         /* saved, so the next boot stays visible too; the Options rows turn them back on */
         g_xsdk_settings.video_720p = 0;

@@ -18,9 +18,19 @@
  * back; reading it back into MEM1 reads the image; a CPU touch (the audio
  * mixer reads samples in ARAM) faults, and the chunk is committed and
  * filled from the image (fill_chunk). Everything else is kept in memory as
- * before. */
+ * before.
+ *
+ * The swap file. Prime's ARAM also holds what was never on the disc as is
+ * (the world PAKs' resource tables CPakFile stashes, sample data decoded in
+ * MEM1): ~4 MB in play. When the Xbox runs low (xhw_mem_tick, or a commit
+ * that failed: aram_reclaim), whole chunks go back to the kernel: those all
+ * on the disc at once, then others written to a file in the save folder
+ * first (one 64 KB slot per chunk, given at its first swap-out), their
+ * pages marked as living there. A touch or a read brings them back the way
+ * disc pages come back. */
 #include <dolphin/ar.h>
 #include <dolphin/os.h>
+#include <stdio.h>
 #include <string.h>
 
 #include "xhw.h"
@@ -37,6 +47,8 @@
 #define CHUNK XHW_LAZY_CHUNK
 #define PER_CHUNK (CHUNK / PAGE)
 #define NO_DISC 0xFFFFFFFFu
+#define SWAP 0x80000000u   /* s_disc: swap file offset | SWAP (GameCube images are < 2 GB) */
+#define NCHUNKS (ARAM_SIZE / CHUNK)
 
 static u8* s_aram;
 static u32 s_disc[NPAGES];   /* page -> disc image offset of its bytes, or NO_DISC */
@@ -46,8 +58,25 @@ static u32 s_top = ARAM_USER_BASE;
 static u32* s_stack;
 static u32 s_stack_n, s_stack_max;
 static ARQCallback s_dma_cb;
+static void* s_swap;          /* the swap file, or NULL */
+static u16 s_slot[NCHUNKS];   /* chunk -> its swap slot + 1, 0: none yet */
+static u32 s_slots, s_swap_pages, s_cursor;
+static u32 s_swapped_out, s_swap_fills;
+static int s_swap_full;      /* a write failed (disk full?): no more swap-outs */
+#if XHW_TEST_BUILD
+/* test builds: each swapped-out chunk's hash, checked when it comes back
+ * (0: none, or ARAM was written there since) */
+static u32 s_hash[NCHUNKS];
+static u32 s_hash_bad;
+static u32 chunk_hash(const u8* p) {
+    u32 h = 2166136261u, i;
+    for (i = 0; i < CHUNK; i += 4) h = (h ^ *(const u32*)(p + i)) * 16777619u;
+    return h | 1;
+}
+#endif
 
 static void fill_chunk(void* chunk);
+static u32 aram_reclaim(u32 want_kb, int urgent);
 
 static void aram_map(void) {
     u32 i;
@@ -57,13 +86,30 @@ static void aram_map(void) {
     s_aram = (u8*)xhw_reserve_lazy(XSDK_ARAM_VA, ARAM_SIZE);
     if (!s_aram) xhw_fatal("Out of memory", "Could not reserve ARAM.");
     xhw_lazy_set_fill(s_aram, fill_chunk);
+    {
+        char path[96];
+        snprintf(path, sizeof path, "%saram.swp", xhw_save_dir());
+        s_swap = xhw_file_create_rw(path);
+        if (!s_swap) xhw_logf("[AR] no swap file (%s)", path);
+    }
+    xhw_mem_add_reclaim(aram_reclaim);
 }
 
-u32 xsdk_aram_disc_kb(void) { return s_disc_pages * (PAGE / 1024); }
+u32 xsdk_aram_disc_kb(void) { return (s_disc_pages - s_swap_pages) * (PAGE / 1024); }
+u32 xsdk_aram_swap_kb(void) { return s_swap_pages * (PAGE / 1024); }
 
 static void set_disc(u32 page, u32 off) {
-    if ((s_disc[page] == NO_DISC) != (off == NO_DISC)) s_disc_pages += off == NO_DISC ? (u32)-1 : 1u;
+    u32 old = s_disc[page];
+    if ((old == NO_DISC) != (off == NO_DISC)) s_disc_pages += off == NO_DISC ? (u32)-1 : 1u;
+    if ((old != NO_DISC && (old & SWAP)) != (off != NO_DISC && (off & SWAP)))
+        s_swap_pages += off != NO_DISC && (off & SWAP) ? 1u : (u32)-1;
     s_disc[page] = off;
+}
+
+/* a page's bytes from wherever they live: the image or the swap file */
+static int backing_read(u32 at, u8* dst, u32 len) {
+    if (at & SWAP) return s_swap && xhw_file_read(s_swap, at & ~SWAP, dst, len);
+    return xsdk_dvd_image_read(at, dst, len);
 }
 
 /* pages [p, p + n) from the image into dst, runs of consecutive pages in
@@ -79,7 +125,7 @@ static void read_pages(u32 p, u32 n, u32 in, u8* dst, u32 len) {
                 run += len - run < PAGE ? len - run : PAGE;
                 k++;
             }
-            if (!xsdk_dvd_image_read(s_disc[p] + in, dst, run)) {
+            if (!backing_read(s_disc[p] + in, dst, run)) {
                 xhw_logf("[AR] image read failed: %08x + %u", (unsigned)(s_disc[p] + in), (unsigned)run);
                 memset(dst, 0, run);
             }
@@ -96,7 +142,14 @@ static void read_pages(u32 p, u32 n, u32 in, u8* dst, u32 len) {
 static void fill_chunk(void* chunk) {
     u32 c = (u32)((u8*)chunk - s_aram) / CHUNK;
     xhw_mutex_lock(s_lock);
-    if (!xhw_lazy_is_committed(chunk)) read_pages(c * PER_CHUNK, PER_CHUNK, 0, (u8*)chunk, CHUNK);
+    if (!xhw_lazy_is_committed(chunk)) {
+        if (s_slot[c]) s_swap_fills++;
+        read_pages(c * PER_CHUNK, PER_CHUNK, 0, (u8*)chunk, CHUNK);
+#if XHW_TEST_BUILD
+        if (s_hash[c] && chunk_hash((const u8*)chunk) != s_hash[c] && s_hash_bad++ < 16)
+            xhw_logf("[AR] swap verify: chunk %u came back different", (unsigned)c);
+#endif
+    }
 #ifdef XSDK_ARAM_VERIFY
     {
         static u32 nfill;
@@ -113,12 +166,73 @@ static int chunk_on_disc(u32 c) {
     return 1;
 }
 
+/* Chunk c (committed) into its swap slot; its pages not on the disc are
+ * then marked as in the file. 0 if it can't be written. */
+static int swap_out(u32 c) {
+    u32 p, off;
+    if (!s_swap || s_swap_full) return 0;
+    if (!s_slot[c]) {
+        if (s_slots >= NCHUNKS) return 0;
+        s_slot[c] = (u16)++s_slots;
+    }
+    off = (u32)(s_slot[c] - 1) * CHUNK;
+    if (!xhw_file_write(s_swap, off, s_aram + c * CHUNK, CHUNK)) {
+        xhw_logf("[AR] swap write failed: chunk %u", (unsigned)c);
+        s_swap_full = 1;   /* what other chunks have in it stays readable */
+        for (p = c * PER_CHUNK; p < (c + 1) * PER_CHUNK; p++)   /* this slot may be half written */
+            if (s_disc[p] != NO_DISC && (s_disc[p] & SWAP)) set_disc(p, NO_DISC);
+        return 0;
+    }
+    for (p = c * PER_CHUNK; p < (c + 1) * PER_CHUNK; p++)
+        if (s_disc[p] == NO_DISC || (s_disc[p] & SWAP)) set_disc(p, SWAP | (off + (p - c * PER_CHUNK) * PAGE));
+    s_swapped_out++;
+#if XHW_TEST_BUILD
+    s_hash[c] = chunk_hash(s_aram + c * CHUNK);
+#endif
+    return 1;
+}
+
+/* xhw_mem reclaimer: whole chunks back to the kernel, round robin from
+ * where the last call stopped; those all on the disc or in the swap file
+ * cost nothing, the rest a 64 KB write each. */
+static u32 aram_reclaim(u32 want_kb, int urgent) {
+    u32 got = 0, pass, i, start;
+    if (!s_aram) return 0;
+    if (urgent) {
+        if (!xhw_mutex_trylock(s_lock)) return 0;
+    } else {
+        xhw_mutex_lock(s_lock);
+    }
+    start = s_cursor;
+    for (pass = 0; pass < 2 && got < want_kb; pass++)
+        for (i = 0; i < NCHUNKS && got < want_kb; i++) {
+            u32 c = (start + i) % NCHUNKS;
+            u8* chunk = s_aram + c * CHUNK;
+            if (!xhw_lazy_is_committed(chunk)) continue;
+            if (!chunk_on_disc(c) && (pass == 0 || !swap_out(c))) continue;
+            xhw_lazy_decommit(chunk);
+            got += CHUNK / 1024;
+            s_cursor = (c + 1) % NCHUNKS;
+        }
+    xhw_mutex_unlock(s_lock);
+    return got;
+}
+
+void xsdk_aram_log(void) {
+    xhw_logf("[AR] %u KB on the disc, %u KB in the swap file (%u slots); %u chunks swapped out, %u filled back",
+             (unsigned)xsdk_aram_disc_kb(), (unsigned)xsdk_aram_swap_kb(), (unsigned)s_slots,
+             (unsigned)s_swapped_out, (unsigned)s_swap_fills);
+}
+
 /* main memory -> ARAM; disc: the image offset of src's bytes, or NO_DISC */
 static void aram_write(u32 aram, const u8* src, u32 len, u32 disc) {
     u32 end = aram + len;
     while (aram < end) {
         u32 c = aram / CHUNK, cend = (c + 1) * CHUNK < end ? (c + 1) * CHUNK : end, a;
         u8* chunk = s_aram + c * CHUNK;
+#if XHW_TEST_BUILD
+        s_hash[c] = 0;
+#endif
         for (a = aram; a < cend;) {
             u32 p = a / PAGE, in = a % PAGE, n = PAGE - in < cend - a ? PAGE - in : cend - a;
             if (disc != NO_DISC && n == PAGE) {

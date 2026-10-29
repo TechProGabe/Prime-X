@@ -102,6 +102,11 @@ void xsdk_frame_boundary(void) {
     next_ns += period;
 
     s_retrace++;
+    xhw_mem_tick();   /* low on memory: ARAM chunks to the disc or the swap file */
+    if (s_retrace % 1800 == 0) {   /* every 30 s */
+        xsdk_aram_log();
+        xhw_mem_log_reclaim();
+    }
     xsdk_run_alarms();
     if (s_pre_cb) s_pre_cb(s_retrace);
     s_cur_fb = s_next_fb;

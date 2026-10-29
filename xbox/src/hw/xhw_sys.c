@@ -365,6 +365,7 @@ xhw_mutex* xhw_mutex_create(void) {
 }
 void xhw_mutex_lock(xhw_mutex* m) { EnterCriticalSection(&m->cs); }
 void xhw_mutex_unlock(xhw_mutex* m) { LeaveCriticalSection(&m->cs); }
+int xhw_mutex_trylock(xhw_mutex* m) { return TryEnterCriticalSection(&m->cs) != 0; }
 
 struct xhw_event { HANDLE h; };
 
@@ -480,26 +481,88 @@ static Lazy* lazy_find(uintptr_t a) {
     return NULL;
 }
 
+/* ---- memory pressure ---- */
+#define RECLAIM_MAX 8
+static xhw_reclaim_fn s_reclaim[RECLAIM_MAX];
+static volatile LONG s_reclaim_n;
+static volatile LONG s_reclaim_urgent_n, s_reclaim_urgent_kb;
+
+void xhw_mem_add_reclaim(xhw_reclaim_fn fn) {
+    LONG i;
+    for (i = 0; i < s_reclaim_n; i++)
+        if (s_reclaim[i] == fn) return;
+    if (s_reclaim_n < RECLAIM_MAX) {
+        s_reclaim[s_reclaim_n] = fn;
+        InterlockedIncrement(&s_reclaim_n);
+    }
+}
+
+uint32_t xhw_mem_reclaim(uint32_t want_kb, int urgent) {
+    uint32_t got = 0;
+    LONG i, n = s_reclaim_n;
+    for (i = 0; i < n && got < want_kb; i++) got += s_reclaim[i](want_kb - got, urgent);
+    return got;
+}
+
+/* Round hw6 ran out with ~3 MB free (a room load's reads land in MEM1 a
+ * chunk at a time): below XHW_MEM_LOW_KB the reclaimers give back up to
+ * 1 MB a frame, so a failed commit is the last resort, not the first. */
+void xhw_mem_tick(void) {
+    uint32_t free_kb, got;
+    static uint32_t s_logged;
+    if (!s_reclaim_n) return;
+    free_kb = xhw_mem_free_kb();
+    if (free_kb >= XHW_MEM_LOW_KB) return;
+    got = xhw_mem_reclaim(XHW_MEM_LOW_KB + 1024 - free_kb < 1024 ? XHW_MEM_LOW_KB + 1024 - free_kb : 1024, 0);
+    if (got && s_logged < 64) {
+        s_logged++;
+        xhw_logf("[MEM] low (free %u KB): reclaimed %u KB", free_kb, got);
+    }
+}
+
+/* A failed commit: ask the reclaimers (without blocking) and try again. */
+static int lazy_commit_retry(Lazy* l, uint32_t chunk) {
+    int tries;
+    for (tries = 0; tries < 3; tries++) {
+        uint32_t got = xhw_mem_reclaim(LAZY_CHUNK / 1024 * 4, 1);
+        InterlockedIncrement(&s_reclaim_urgent_n);
+        InterlockedExchangeAdd(&s_reclaim_urgent_kb, (LONG)got);
+        if (lazy_commit_chunk(l, chunk)) return 1;
+        if (!got) xhw_sleep_ms(2);   /* a reclaimer's lock was busy: let its holder go on */
+    }
+    return 0;
+}
+
+void xhw_mem_log_reclaim(void) {
+    if (s_reclaim_urgent_n)
+        xhw_logf("[MEM] %u failed commits rescued, %u KB given back for them", (unsigned)s_reclaim_urgent_n,
+                 (unsigned)s_reclaim_urgent_kb);
+}
+
 void xhw_commit(const void* p, uint32_t bytes) {
     uintptr_t a = (uintptr_t)p, end = a + bytes;
     Lazy* l;
     if (!bytes || !(l = lazy_find(a))) return;
     if (end > l->base + l->size) end = l->base + l->size;
     for (a = (a - l->base) / LAZY_CHUNK; a <= (end - 1 - l->base) / LAZY_CHUNK; a++)
-        if (!lazy_commit_chunk(l, (uint32_t)a)) {
+        if (!lazy_commit_chunk(l, (uint32_t)a) && !lazy_commit_retry(l, (uint32_t)a)) {
             xhw_logf("[MEM] out of memory committing %u KB at %08x (free %u KB)", bytes / 1024,
                      (unsigned)(uintptr_t)p, xhw_mem_free_kb());
+            xhw_lazy_log_map();
             xhw_fatal("Out of memory", "The Xbox ran out of memory for the game's main memory or ARAM.");
         }
 }
 
 int xhw_lazy_fault(uintptr_t addr) {
     Lazy* l = lazy_find(addr);
+    uint32_t chunk;
     if (!l || KeGetCurrentIrql() >= DISPATCH_LEVEL) return 0;
-    if (lazy_commit_chunk(l, (uint32_t)((addr - l->base) / LAZY_CHUNK))) return 1;
+    chunk = (uint32_t)((addr - l->base) / LAZY_CHUNK);
+    if (lazy_commit_chunk(l, chunk) || lazy_commit_retry(l, chunk)) return 1;
     /* the Xbox has no page left for it: say so, as xhw_commit does, not as
      * an access violation (the instrumented build in the Frigate) */
     xhw_logf("[MEM] out of memory committing %08x (free %u KB)", (unsigned)addr, xhw_mem_free_kb());
+    xhw_lazy_log_map();
     xhw_fatal("Out of memory", "The Xbox ran out of memory for the game's main memory or ARAM.");
     return 0;
 }
@@ -748,6 +811,27 @@ int xhw_file_stamp(void* file, uint64_t* size, uint64_t* written) {
     if (!GetFileInformationByHandle((HANDLE)file, &fi)) return 0;
     *size = (uint64_t)fi.nFileSizeHigh << 32 | fi.nFileSizeLow;
     *written = (uint64_t)fi.ftLastWriteTime.dwHighDateTime << 32 | fi.ftLastWriteTime.dwLowDateTime;
+    return 1;
+}
+
+void* xhw_file_create_rw(const char* path) {
+    HANDLE h = CreateFileA(path, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ, NULL, CREATE_ALWAYS,
+                           FILE_ATTRIBUTE_NORMAL, NULL);
+    return h == INVALID_HANDLE_VALUE ? NULL : (void*)h;
+}
+
+int xhw_file_write(void* file, uint32_t off, const void* src, uint32_t len) {
+    const uint8_t* s = (const uint8_t*)src;
+    LONG hi = 0;
+    if (SetFilePointer((HANDLE)file, (LONG)off, &hi, FILE_BEGIN) == INVALID_SET_FILE_POINTER &&
+        GetLastError() != NO_ERROR)
+        return 0;
+    while (len) {
+        DWORD put = 0;
+        if (!WriteFile((HANDLE)file, s, len, &put, NULL) || put == 0) return 0;
+        s += put;
+        len -= put;
+    }
     return 1;
 }
 

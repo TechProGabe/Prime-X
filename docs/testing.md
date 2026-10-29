@@ -39,6 +39,7 @@ console put it next to `default.xbe`. Its `env` lines set what the game's
 | `env MP_BOOT_WORLD=<MLVL>[:<MREA>]` | no logos or front end: a new game starts in that world (its default room without an MREA). Logged as `[TEST] boot world` |
 | `env MP_FAST_BOOT=1` | skip the boot logos |
 | `env MP_SKIP_CUTSCENES=1`, `env MP_CUTSCENE_SPEED=4` | skip or speed up cinematics |
+| `env PX_MEM_BALLOON_KB=<n>` | test builds: hold n KB of RAM from boot, to play the console's low-memory moments in xemu (the reclaimers, `[MEM] low`, the swap file, the Out of memory screen); Main Plaza with 7000 runs at ~1 MB free |
 | `env PX_ALL_ITEMS=1` | with `MP_BOOT_WORLD`: every item (visors, beams, suits, 250 missiles, 14 tanks) |
 | `env PX_SKIPPABLE=1` | Port Options' Skip Cutscenes on, over settings.ini |
 | `env PX_WIDESCREEN=0`, `=1`, `=2` | Port Options' Widescreen: 4:3, as the dashboard, 16:9 (over settings.ini) |

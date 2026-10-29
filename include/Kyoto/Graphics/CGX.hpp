@@ -69,9 +69,21 @@ public:
     union {
       uchar x4c_chanFlags;
       struct {
+#ifdef TARGET_XBOX
+        // PORT_XBOX: x86 fills bitfields from the low bit, PowerPC from the
+        // high one; FlushState tests bit 0 for numDirty, so it goes first here.
+        // Laid out as on PowerPC, SetNumChans set bit 7 and never reached GX:
+        // the channel count stayed whatever a direct GXSetNumChans left (the
+        // gun's shadow pass lost COLOR1 and drew white; Morph Ball's shadow
+        // left 0 channels behind it)
+        uchar numDirty : 1;
+        uchar chansDirty : 2;
+        uchar unused : 5;
+#else
         uchar unused : 5;
         uchar chansDirty : 2;
         uchar numDirty : 1;
+#endif
       } x4c_flags;
     };
     uchar x4d_prevNumChans;
