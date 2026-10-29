@@ -56,9 +56,17 @@ No hardware rounds until they say.
   backwards across threads. Left knowingly: the mixer can read a few ms
   of zeros from a chunk being refilled by another thread (only under
   memory pressure; recently used chunks are reclaimed last).
-- The ship configuration (`XBOX_LTO=1 XBOX_PGO=xbox/prime.profdata`)
-  builds with all of this (the profile is stale but loads); retrain
-  before a console round.
+- PGO retrained on today's code (`xbox/prime.profdata`, 2026-10-29):
+  Tallon, Frigate, Phendrana, Magmoor and Chozo all gave profiles for the
+  first time (the instrumented build no longer runs out of memory). The
+  ship build (`XBOX_LTO=1 XBOX_PGO=xbox/prime.profdata`,
+  `build-xbox-lto-pgo/xbe/default.xbe`) boots to the title in xemu. A new
+  profile now restarts the -pgo build folder by itself (`xbox/build.sh`).
+- Fog volumes are left out (`PostRenderFogs`): they need real depth from
+  their Z16 copies, ours are masks, and they drew as solid boxes (the
+  peach rectangle in Twin Fires). Proper ones need depth copies that
+  carry depth: a GPU path to try on a console.
+- Host test `test_aram.py` for the ARAM swap (400k random operations).
 
 ## Where it stood before (2026-10-28, evening)
 
@@ -105,13 +113,11 @@ Done 2026-10-28 (afternoon and evening), newest first:
    for `[MEM] low` and `[AR]` lines: reclaims and swap-outs), the arm
    cannon in Chozo (dark metal with its reflection, not white), the view
    after Morph Ball, the title's Port Options Video rows, fps against hw5
-   (Main Plaza 21-46). Retrain PGO first (`tools/xbox/pgo_train.sh`, both
-   xemu slots): the profile predates every change since 7f1dfb3; with the
-   reclaimers the instrumented build may now survive the Frigate and
-   Main Plaza (it ran out there before).
-2. If memory still runs out on red: other reclaimers are easy to add
-   (`xhw_mem_add_reclaim`): the display lists' dynamic templates (malloc),
-   the texture overflow pool, idle cached lists in the vertex pool.
+   (Main Plaza 21-46), then the same with **Game Timing: Flex**. The
+   profile is fresh (2026-10-29); retrain again only if much code moved.
+2. If memory still runs out on red: another reclaimer is easy to add
+   (`xhw_mem_add_reclaim`); left: the display lists' dynamic templates
+   (malloc: freed memory mostly stays in the heap).
 3. FPS (console profile, hw5 Main Plaza, read at the instruction level):
    what is left in `GXCallDisplayList` after this session's changes is the
    batch table (its own allocation per list: a miss a call) and the
@@ -121,11 +127,8 @@ Done 2026-10-28 (afternoon and evening), newest first:
    Magmoor's heat-haze warp on the GPU (a new render-to-texture pass: the
    console has faulted on those before, so it wants a console round).
 5. Visors and parity: no Dolphin reference frames yet (`docs/renderer.md`).
-   One transient seen once in xemu (sweep, Twin Fires Tunnel, 2026-10-28):
-   a solid peach rectangle over the bottom-left HUD (about 150x105 px);
-   not in 30 dense shots of the same spot nor with CMP normals off, so
-   rare. Suspect: a fog-volume chunk (`CCubeRenderer` fog volume pass,
-   depth copies read as indirect maps) drawn without its warp.
+   The peach rectangle seen once in Twin Fires was a fog volume (now left
+   out, see above).
 6. Gate leftovers: the 128 MB hold needs a 128 MB-aware BIOS in xemu;
    the save round trip and Dolphin `.gci` (phase
    4); Docker/CI (the workflow exists, `gh` isn't logged in here).
