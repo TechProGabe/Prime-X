@@ -1,0 +1,12 @@
+# r8a: the front end: title movie, main menu, Port Options (~40 s); profiler build (-DXHW_PROF=1, ThinLTO + PGO)
+env PX_NEXT_XBE=F:\Applications\Prime-X-r8b\default.xbe
+600 SHOT
+700 START
+1300 SHOT
+1700 DOWN
+1720 DOWN
+1740 DOWN
+1760 DOWN
+1800 A
+2000 SHOT
+2400 NEXT
