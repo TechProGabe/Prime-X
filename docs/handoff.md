@@ -95,7 +95,7 @@ Done 2026-10-28 (afternoon and evening), newest first:
    console has faulted on those before, so it wants a console round).
 5. Visors and parity: no Dolphin reference frames yet (`docs/renderer.md`).
 6. Gate leftovers: the 128 MB hold needs a 128 MB-aware BIOS in xemu;
-   `XHW_CODE_REPAIR_TEST`; the save round trip and Dolphin `.gci` (phase
+   the save round trip and Dolphin `.gci` (phase
    4); Docker/CI (the workflow exists, `gh` isn't logged in here).
 
 ## Session 2026-10-28 (night and morning)
