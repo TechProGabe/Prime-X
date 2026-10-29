@@ -145,33 +145,19 @@ Done 2026-10-28 (afternoon and evening), newest first:
 
 ## Next session, in order
 
-0. **Console round hw8, staged 2026-10-29** (the user asked): hw7's chain
-   again (`tools/xbox/scenarios/hw8`, README there) on `dev` with the
-   skinned-list and memcpy prefetches (`0b0cc35`), the rain's writes
-   without per-vertex calls (`6218d26`), the Port Options rows
-   (`030553a`) and the audio fix; the PGO profile retrained on it.
-   Compare each scene with `logs-hw7` (`prof_report.py --last` for steady
-   play): `GXCallDisplayList`, `memcpy`, `memset`, `gx_vtx_flush`. Each
-   prefetch has a switch to turn it off if it loses (`XGX_DYN_PREFETCH=0`,
-   `XHW_COPY_PREFETCH=0`). On red since 2026-10-29 13:00 (`stage-hw8`, maps
-   `prime_x.hw8.map`, `prime_x.hw8ship.map`; what was there before in
-   `logs-hw8pre`); xemu ran the profile image's Landing Site and Main Plaza
-   clean. Launch `Prime-X-r8a`.
-1. **Console round hw7, staged 2026-10-29** (the user asked): chain
-   `tools/xbox/scenarios/hw7` (hw5's five scenes, then Main Plaza and the
-   Landing Site with Game Timing: Flex), the files laid out by console path
-   in `C:\xemu\hw\prime\stage-hw7\console` (`F/Applications/Prime-X-r7a`..`g`
-   with the profiler build, `F/Applications/Prime-X` the ship build,
-   `E/UDATA/50580001` its icon), maps `prime_x.hw7.map` (profiler) and
-   `prime_x.hw7ship.map`. Built from `4473399` plus the scenarios. Free
-   play on the ship build: an LTO + PGO ship build of `dev` on red, the hw6 path (Landing Site, save in the
-   ship, walk on, then Chozo and Magmoor). Check: no Out of memory (look
-   for `[MEM] low` and `[AR]` lines: reclaims and swap-outs), the arm
-   cannon in Chozo (dark metal with its reflection, not white), the view
-   after Morph Ball, the title's Port Options Video rows, fps against hw5
-   (Main Plaza 21-46), then the same with **Game Timing: Flex**. The
-   profile is fresh (retrained after the display-list changes, `a445123`,
-   2026-10-29); retrain again only if much code moved.
+1. **Console round hw9, staged 2026-10-29** (the user asked):
+   `tools/xbox/scenarios/hw9` (README there): hw7's chain again on the
+   charge beam fix, the Port Options grid and the 4 MB dynamic budget, with
+   hw8's prefetch and rain changes (only r8g ran in hw8). Images
+   `C:\xemu\hw\prime\stage-hw9` (laid out by console path in `console`),
+   maps `prime_x.hw9.map`, `prime_x.hw9ship.map`; round index
+   `C:\xemu\hw\prime\ROUNDS.md`. Back up `E:\UDATA\50580001` first
+   (save, settings), then upload; launch `Prime-X-r9a`. In free play: hold
+   fire (charge), the pause screen's fps, Port Options' rows, the hw6 path
+   for memory. Compare with `logs-hw7`; each prefetch has a switch to turn
+   it off if it loses (`XGX_DYN_PREFETCH=0`, `XHW_COPY_PREFETCH=0`). The
+   title's retail Options screen restore (after a Port Options visit) is
+   untested: the main menu has no retail Options row to reach it by.
 2. If memory still runs out on red: another reclaimer is easy to add
    (`xhw_mem_add_reclaim`); left: the display lists' dynamic templates
    (malloc: freed memory mostly stays in the heap).
@@ -234,6 +220,35 @@ Done 2026-10-28 (afternoon and evening), newest first:
   the main menu (the Fusion bonuses row), three-choice rows only.
 - Streamed music (the AI path) mixed into MusyX's output.
 - Test hooks: `env PX_ALL_ITEMS=1`, `PX_SKIPPABLE=1`, `PX_WIDESCREEN=0|1|2`.
+
+## Console round hw8 (red, 2026-10-29)
+
+Logs `C:\xemu\hw\prime\logs-hw8` (the round index: `C:\xemu\hw\prime\ROUNDS.md`);
+the user's free play is `boot_freeplay.log` (ship image, map
+`prime_x.hw8ship.map`). Only r8g of the chain ran.
+
+- r8g (Landing Site, Flex) against r7g: median 37.9 -> 40.2 fps, lowest
+  tenth 20.5 -> 22.5, sim 19.3 -> 18.2 ms, display lists 7.2 -> 6.7 ms;
+  memset gone from the top ten (2.1%), memcpy 9.0 -> 8.0%.
+- Free play, 285 s: **no out of memory** where hw6 ran out (one `[MEM] low`
+  reclaim, 16 chunks to the swap file). The user: the visor steam looks
+  good.
+- **The pause screen at 14-17 fps** (display lists 40-48 ms a frame): six
+  of Samus's lists went volatile ("no dynamic form": the dynamic budget,
+  1 MB, was full and its extra 1 MB needs 6 MB free; there were 4.6) and
+  were decoded on every call. The extra now needs 4 MB free (still a full
+  extra above the reclaimers' 3 MB).
+- **Charge beam dead** (the user): `CPlayerState::HasPowerUp(kIT_ChargeBeam)`
+  asks `PortAp::ChargeBeamRule` for an owned Charge Beam, and the generated
+  stub said false. Hand-written now (`port_overrides.cpp`: true). The 120
+  generated bool stubs were checked for others whose "off" isn't false:
+  none breaks retail (SpringBallRule's 0 is "no Spring Ball", retail).
+- **Port Options still misaligned on the console** (the user: "remove the
+  bar, centred and well spaced"): the frame's value cells differ in box,
+  justification and height, so a value's place depended on its width.
+  Every cell now gets worker 0's box, centred both ways, on fixed points
+  around one centre between the columns, dividers hidden; the shared
+  frame's retail rows get their cells back (`CPauseScreenFrame.cpp`).
 
 ## Console round hw7 (red, 2026-10-29)
 
