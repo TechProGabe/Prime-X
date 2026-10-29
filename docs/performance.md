@@ -213,6 +213,11 @@ of it measured on a console yet (no more console rounds, the user's call):
   `PortHasHudInterference` (every HUD model's materials, three times a
   frame) is kept per frame; the vertex constants' and programs' method
   headers are written inline (pbkit's `pb_push` is two unoptimised calls).
+- Each `GXBegin` built its vertex plan again (a loop over the 21
+  attributes) and copied its ~400 bytes into the batch, a few hundred times
+  a frame: plans are cached per vertex format until the descriptor or a
+  format changes (`cached_plan`), and the copy skipped when the batch
+  already holds it.
 - Found, not changed: the HUD minimap (`CMapWorld::Draw`) is 150-300
   immediate draws every frame of play (each surface's fill and outline,
   alternating triangles and lines, a `GXSetTevKColor` between each).

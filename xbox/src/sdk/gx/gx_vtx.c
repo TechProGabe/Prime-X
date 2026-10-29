@@ -95,11 +95,20 @@ static struct {
 
 static void sig_recompute(void);
 static void plan_kinds(Plan* p, int vtxfmt);
+/* bumped whenever s_desc_sum, s_arrs_sum or a s_vat_sum changes (sig_*):
+ * fmt_key's and cached_plan's caches (an array base alone, every model's
+ * GXSetArray, leaves it) */
+static uint32_t s_sig_gen = 1;
+static Plan s_plan_cache[8];         /* cached_plan */
+static uint32_t s_plan_gen[8];
+static const Plan* B_plan_of;        /* the cached plan B.plan is a copy of (set_batch_plan) */
+static uint32_t B_plan_gen;
 #if XGX_DYN_VERIFY
 static uint32_t s_snowv_quads, s_snowv_bad;   /* GXPortSnowQuads checked against the per-vertex calls */
 #endif
 void gx_vtx_reset(void) {
     memset(&B, 0, sizeof B);
+    B_plan_of = NULL;
     sig_recompute();
 }
 
@@ -638,21 +647,41 @@ static void seg_list(void) {
     B.seg_prim = 0;
 }
 
+/* The plan of each vertex format, made again only after the descriptor or
+ * a format changed (s_sig_gen): every GXBegin made one (a loop over the 21
+ * attributes) and copied its ~400 bytes into the batch, a few hundred times
+ * a frame. B_plan_of says which cached plan B.plan is a copy of. */
+
+static const Plan* cached_plan(int vtxfmt) {
+    int f = vtxfmt & 7;
+    if (s_plan_gen[f] != s_sig_gen) {
+        make_plan(&s_plan_cache[f], f);
+        s_plan_gen[f] = s_sig_gen;
+    }
+    return &s_plan_cache[f];
+}
+
+static void set_batch_plan(const Plan* pl, int vtxfmt) {
+    if (B_plan_of == pl && B_plan_gen == s_plan_gen[vtxfmt & 7]) return;
+    B.plan = *pl;
+    B_plan_of = pl;
+    B_plan_gen = s_plan_gen[vtxfmt & 7];
+}
+
 static void begin_batch(uint32_t prim, int vtxfmt, uint32_t n) {
-    Plan plan;
+    const Plan* pl = cached_plan(vtxfmt);
     uint32_t s, list = seg_list_prim(prim, n);
-    make_plan(&plan, vtxfmt);
-    s = plan.layout.stride;
+    s = pl->layout.stride;
     s_st_imm_batches++;
     if (B.pending) {
         /* a strip or fan joins a waiting list of what it will become; room
          * for its list form (at most 3 vertices for each) */
         if ((prim == B.prim || list == B.prim) && n &&
             out_count(prim, B.done + (list ? 3 * n : n)) <= JOIN_MAX &&
-            memcmp(&plan.layout, &B.plan.layout, sizeof plan.layout) == 0 &&
+            memcmp(&pl->layout, &B.plan.layout, sizeof pl->layout) == 0 &&
             stage_reserve((B.done + (list ? 3 * n : n)) * s)) {
             B.base = s_stage;
-            B.plan = plan;   /* same layout; the slots may read other formats */
+            set_batch_plan(pl, vtxfmt);   /* same layout; the slots may read other formats */
             B.vtxfmt = vtxfmt;
             B.seg_prim = list ? prim : 0;
             B.seg_start = B.done;
@@ -669,7 +698,7 @@ static void begin_batch(uint32_t prim, int vtxfmt, uint32_t n) {
         }
         draw_batch();
     }
-    B.plan = plan;
+    set_batch_plan(pl, vtxfmt);
     B.prim = prim;
     B.vtxfmt = vtxfmt;
     B.seg_prim = list ? prim : 0;
@@ -1142,9 +1171,7 @@ static uint32_t s_vat_term[8][GX_VA_MAX_ATTR], s_vat_sum[8];
 static uint8_t s_vat_on[GX_VA_MAX_ATTR];   /* attribute a's terms are in s_vat_sum */
 static uint32_t s_arr_term[GX_VA_MAX_ATTR], s_arr_sum;       /* indexed arrays: base, stride, byte order */
 static uint32_t s_arrs_term[GX_VA_MAX_ATTR], s_arrs_sum;     /* the same without the base */
-/* bumped whenever s_desc_sum, s_arrs_sum or a s_vat_sum changes: fmt_key's
- * cache (an array base alone, every model's GXSetArray, leaves it) */
-static uint32_t s_sig_gen = 1;
+
 
 static uint32_t mix32(uint32_t h) {   /* murmur3's finalizer */
     h ^= h >> 16;
