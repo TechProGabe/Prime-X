@@ -1373,18 +1373,44 @@ void SOptionsFrontEndFrame::SetRightUIText() {
 #ifdef TARGET_XBOX
 // PORT_XBOX: the selected right row's own offset from the first instead, so
 // a right table spaced unlike the left one can't drift onto other rows (the
-// Port Options' lower Video rows: "the divider sits on the text", round hw6)
+// Port Options' lower Video rows: "the divider sits on the text", round hw6).
+// Measured from the second row: the first worker's idle position isn't on the
+// rows' spacing, and from it every row past the first came out ~two rows low
+// (the user, 2026-10-29). The tables sit on the first row as loaded.
 static float PortRightRowZ(CGuiTableGroup* right, float pitch) {
   const int sel = right->GetUserSelection();
   CGuiWidget* row = right->GetWorkerWidget(sel);
-  CGuiWidget* first = right->GetWorkerWidget(0);
-  if (row == nullptr || first == nullptr) {
+  CGuiWidget* second = right->GetWorkerWidget(1);
+  CGuiWidget* third = right->GetWorkerWidget(2);
+  if (sel <= 0) {
+    return 0.f;
+  }
+  if (row == nullptr || second == nullptr || third == nullptr) {
     return sel * pitch;
   }
-  return row->GetIdlePosition().GetZ() - first->GetIdlePosition().GetZ();
+  const float rowPitch = third->GetIdlePosition().GetZ() - second->GetIdlePosition().GetZ();
+  return row->GetIdlePosition().GetZ() - second->GetIdlePosition().GetZ() + rowPitch;
+}
+// Port Options' labels run longer than retail's: "C-Stick Dead Zone" met the
+// table's last cell with no gap. Its tables sit 24 px further left (a row is
+// ~18.25 px at 480 lines).
+static float PortValueX(CGuiTableGroup* right, float pitch) {
+  if (!PortXboxOptions::FrontEndPort()) {
+    return 0.f;
+  }
+  CGuiWidget* second = right->GetWorkerWidget(1);
+  CGuiWidget* third = right->GetWorkerWidget(2);
+  float rowPitch = second != nullptr && third != nullptr
+                       ? third->GetIdlePosition().GetZ() - second->GetIdlePosition().GetZ()
+                       : pitch;
+  if (rowPitch < 0.f) {
+    rowPitch = -rowPitch;
+  }
+  return -rowPitch * (24.f / 18.25f);
 }
 #else
 static float PortRightRowZ(CGuiTableGroup* right, float pitch) { return right->GetUserSelection() * pitch; }
+static float PortValueX(CGuiTableGroup*, float) { return 0.f; }
 #endif
 
 void SOptionsFrontEndFrame::HandleRightSelectionChange() {
@@ -1400,7 +1426,8 @@ void SOptionsFrontEndFrame::HandleRightSelectionChange() {
     x34_slidergroup_slider->SetIncrement(option.increment);
     x34_slidergroup_slider->SetCurVal(CGameOptions::GetOption(option.option));
     x34_slidergroup_slider->SetO2PTransform(
-        CTransform4f::Translate(0.f, 0.f, PortRightRowZ(x28_tablegroup_rightmenu, x38_rowPitch)) *
+        CTransform4f::Translate(PortValueX(x28_tablegroup_rightmenu, x38_rowPitch), 0.f,
+                                PortRightRowZ(x28_tablegroup_rightmenu, x38_rowPitch)) *
         x34_slidergroup_slider->GetTransform());
     break;
   case kOT_DoubleEnum:
@@ -1417,7 +1444,8 @@ void SOptionsFrontEndFrame::HandleRightSelectionChange() {
     x2c_tablegroup_double->SetIsVisible(true);
     x2c_tablegroup_double->SetIsActive(true);
     x2c_tablegroup_double->SetO2PTransform(
-        CTransform4f::Translate(0.f, 0.f, PortRightRowZ(x28_tablegroup_rightmenu, x38_rowPitch)) *
+        CTransform4f::Translate(PortValueX(x28_tablegroup_rightmenu, x38_rowPitch), 0.f,
+                                PortRightRowZ(x28_tablegroup_rightmenu, x38_rowPitch)) *
         x2c_tablegroup_double->GetTransform());
     SetTableColors(x2c_tablegroup_double);
     break;
@@ -1435,7 +1463,8 @@ void SOptionsFrontEndFrame::HandleRightSelectionChange() {
     x30_tablegroup_triple->SetIsVisible(true);
     x30_tablegroup_triple->SetIsActive(true);
     x30_tablegroup_triple->SetO2PTransform(
-        CTransform4f::Translate(0.f, 0.f, PortRightRowZ(x28_tablegroup_rightmenu, x38_rowPitch)) *
+        CTransform4f::Translate(PortValueX(x28_tablegroup_rightmenu, x38_rowPitch), 0.f,
+                                PortRightRowZ(x28_tablegroup_rightmenu, x38_rowPitch)) *
         x30_tablegroup_triple->GetTransform());
     SetTableColors(x30_tablegroup_triple);
     break;
