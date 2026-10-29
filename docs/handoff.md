@@ -86,7 +86,11 @@ No hardware rounds until they say.
   (`ee76d4f`). The room sweep refuses a non-autopad image (a ship image
   sits on the title: the first ship sweep took 40 minutes for 0 shots).
 - The LTO + PGO ship code (built with `-DXHW_AUTOPAD=1`) passes the room
-  sweep: all 14 rooms render, the Chozo arm cannon is dark metal.
+  sweep: all 14 rooms render, the Chozo arm cannon is dark metal. Again
+  after the display-list changes and the retrained profile (`2623192`):
+  14 rooms, no FATAL, THROW, texture drop or out of memory.
+- A review (subagent) of `713d3fd` found nothing; the dynamic path's
+  verify was also run in the Frigate (0 differ).
 - FPS, from round hw5's `[PROFL]` (memcpy's callers) and buckets:
   dynamic (skinned) lists stage each batch through an L1 scratch buffer
   instead of fetching into the ~800 KB template and copying all of it;
