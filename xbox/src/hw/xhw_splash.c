@@ -589,8 +589,23 @@ int xhw_splash_card(const char* title, const char* const* lines) {
     bracket(fb, CARD_X1 - 1, CARD_Y1 + 20, -1, -1, COL_ORANGE);
     centered(fb, "PRIME-X  //  SIGNAL LOST", CARD_Y0 - 20, 1, COL_RED, 256);
     glow(fb, title, 1 << 30, (SCR_W - text_w(title, 2)) / 2, CARD_Y0 + 10, 2, 0xff6a3au, 0x551c0cu, 256);
-    for (i = 0, y = CARD_Y0 + 64; lines && lines[i] && y < CARD_Y1; i++, y += 20)
-        centered(fb, lines[i], y, 1, COL_TEXT, 256);
+    /* a line wider than the screen wraps at spaces ("This image has been
+     * changed or trimmed ..." ran off both edges) */
+    for (i = 0, y = CARD_Y0 + 64; lines && lines[i] && y < CARD_Y1; i++) {
+        const char* p = lines[i];
+        const int max = (SCR_W - 48) / GLYPH_W;
+        do {
+            int n = (int)strlen(p), k;
+            if (n > max) {
+                for (k = max; k > 0 && p[k] != ' '; k--) {}
+                n = k > 0 ? k : max;
+            }
+            text(fb, p, n, (SCR_W - n * GLYPH_W) / 2, y, 1, COL_TEXT, 256);
+            y += 20;
+            p += n;
+            while (*p == ' ') p++;
+        } while (*p && y < CARD_Y1);
+    }
     memcpy(s_fb, fb, SCR_W * SCR_H * 4);
     if (XHW_TEST_BUILD) xhw_fbdump(s_fb, SCR_W, SCR_H, 32, SCR_W * 4);   /* the rejection screens in xemu */
     return 1;
