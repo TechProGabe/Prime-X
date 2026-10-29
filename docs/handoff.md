@@ -50,6 +50,15 @@ No hardware rounds until they say.
   mismatch card said "1 files" and offered the dashboard under its A/B.
 - Options: "FPS Counter" is "Frame Rate" (ran past its button); the
   title's value tables sit at the selected row's own offset.
+- A review of the new memory and clock code found races, fixed in
+  `ebd001b`: a refill could write a chunk a reclaim had just freed; one
+  failed swap write stopped swapping for good; the clock could go
+  backwards across threads. Left knowingly: the mixer can read a few ms
+  of zeros from a chunk being refilled by another thread (only under
+  memory pressure; recently used chunks are reclaimed last).
+- The ship configuration (`XBOX_LTO=1 XBOX_PGO=xbox/prime.profdata`)
+  builds with all of this (the profile is stale but loads); retrain
+  before a console round.
 
 ## Where it stood before (2026-10-28, evening)
 
