@@ -96,7 +96,7 @@ from Melee and Animal Crossing, all the typical stuff in settings", and
 | Display | Widescreen | Auto / 4:3 / 16:9, live (720p is always 16:9) | `[video] widescreen` 1 / 0 / 2 |
 | Display | Widescreen HUD | Inner / Edges ("Centred" overlapped the divider, round hw5) | `[game] hud_wide` |
 | Display | Field of View | 55 (retail) / 65 / 75 | `[game] fov` |
-| Display | FPS Counter | Hide / Show (the counter in the corner) | `[video] fps` |
+| Display | Frame Rate | Hide / Show (the counter in the corner) | `[video] fps` |
 | Display | Video Mode | 480i / 480p / 720p, each only where the dashboard allows it | `[video] 720p`, `progressive` |
 | Controller | Rumble Strength | Low / Medium / Full (40 / 70 / 100%; the retail Rumble row stays On/Off) | `[input] rumble` |
 | Controller | Stick Dead Zone | Low / Medium / High (10 / 20 / 30%) | `[portN] stick_deadzone` (all four) |
@@ -146,7 +146,7 @@ The full plan, as first written (`*` = applies after a restart):
 | Display | Widescreen | Auto (follows the dashboard, shown as "Auto, 16:9") / 4:3 / 16:9; 720p is always 16:9 | Auto |
 | Display | Widescreen HUD | Centred / Edge to edge (16:9 only) | Centred |
 | Display | Field of view | slider, retail to retail + 20 degrees | retail |
-| Display | FPS counter | Off / On | Off |
+| Display | Frame Rate | Hide / Show | Hide |
 | Controller | Rumble strength | slider, 0-100% | 100% |
 | Controller | Stick dead zone | slider, with a live stick readout | as Melee-X |
 | Controller | C-stick dead zone | slider | as Melee-X |

@@ -33,6 +33,7 @@ void xhw_logf(const char* fmt, ...) __attribute__((format(printf, 1, 2)));
 void xhw_fatal(const char* title, const char* msg) __attribute__((noreturn));
 /* a debug-screen page: the title and NULL-terminated lines (no wait) */
 void xhw_error_screen(const char* title, const char* const* lines);
+void xhw_choice_screen(const char* title, const char* const* lines);   /* no dashboard line: the caller asks */
 
 /* ---- time ---- */
 uint64_t xhw_ticks(void);            /* rdtsc */

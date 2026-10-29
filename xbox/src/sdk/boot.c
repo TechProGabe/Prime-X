@@ -169,8 +169,9 @@ static void disc_full_check(void) {
         static char l0[160];
         const char* lines[] = { l0, "The game may crash in those areas (boot.log lists them).", "",
                                 "A: play anyway    B: quit", NULL };
-        snprintf(l0, sizeof l0, "%d files don't match a clean dump (first: %s).", bad, first);
-        xhw_error_screen("Disc image doesn't match", lines);
+        snprintf(l0, sizeof l0, "%d %s a clean dump (first: %s).", bad,
+                 bad == 1 ? "file doesn't match" : "files don't match", first);
+        xhw_choice_screen("Disc image doesn't match", lines);
         if (!ask_a_or_b()) xhw_quit_to_dashboard();
         xhw_logf("[DISC] playing anyway with %d files that differ", bad);
     }
