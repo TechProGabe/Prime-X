@@ -58,7 +58,25 @@ CGuiFrame::CGuiFrame(uint id, CGuiSys& sys, int a, int b, int c, CSimplePool* sp
       !x8_guiSys.GetIsUsedInGame()));
 }
 
+#ifdef TARGET_XBOX
+// PORT_XBOX: PortHasHudInterference's answers, per frame (see there)
+struct SPortHudCache {
+  const CGuiFrame* frame;
+  int widgets;
+  bool result;
+};
+static SPortHudCache sPortHudCache[4];
+static int sPortHudNext;
+#endif
+
 CGuiFrame::~CGuiFrame() {
+#ifdef TARGET_XBOX
+  for (int c = 0; c < 4; ++c) {
+    if (sPortHudCache[c].frame == this) {
+      sPortHudCache[c].frame = nullptr; // PORT_XBOX: a new frame may take this address
+    }
+  }
+#endif
   if (x10_rootWidget) {
     delete x10_rootWidget;
   }
@@ -642,6 +660,19 @@ CGuiLight* CGuiFrame::GetFrameLight(int idx) { return x3c_lights[idx]; }
 
 #ifdef TARGET_PC
 bool CGuiFrame::PortHasHudInterference() const {
+#ifdef TARGET_XBOX
+  // PORT_XBOX: asked three times a frame for the HUD's frames, and the walk
+  // reads every material of every model widget (~0.4% of the console's CPU,
+  // round hw9). Kept per frame once all its models are loaded (the answer
+  // can't change then); keyed by the frame and its widget count.
+  for (int c = 0; c < 4; ++c) {
+    if (sPortHudCache[c].frame == this && sPortHudCache[c].widgets == static_cast< int >(x2c_widgets.size())) {
+      return sPortHudCache[c].result;
+    }
+  }
+  bool portAllLoaded = true;
+  bool portResult = false;
+#endif
   for (CGuiWidget* widget : x2c_widgets) {
     if (widget->GetWidgetTypeID() != FourCC('MODL')) {
       continue;
@@ -649,6 +680,9 @@ bool CGuiFrame::PortHasHudInterference() const {
     const rstl::optional_object< TCachedToken< CModel > >& token =
         static_cast< const CGuiModel* >(widget)->GetModel();
     if (!token.valid() || (*token).GetObject() == nullptr) {
+#ifdef TARGET_XBOX
+      portAllLoaded = portAllLoaded && !token.valid();
+#endif
       continue;
     }
     const CCubeModel* cube = (*token).GetObject()->GetCubeModel();
@@ -658,10 +692,31 @@ bool CGuiFrame::PortHasHudInterference() const {
     const uint count = cube->PortMaterialCount();
     for (uint i = 0; i < count; ++i) {
       if (cube->GetMaterialByIndex(static_cast< int >(i)).IsFlagSet(kStateFlag_PortHudInterference)) {
+#ifdef TARGET_XBOX
+        portResult = true;
+        break;
+#else
         return true;
+#endif
       }
     }
+#ifdef TARGET_XBOX
+    if (portResult) {
+      break;
+    }
+#endif
   }
+#ifdef TARGET_XBOX
+  if (portAllLoaded) {
+    SPortHudCache& slot = sPortHudCache[sPortHudNext];
+    sPortHudNext = (sPortHudNext + 1) & 3;
+    slot.frame = this;
+    slot.widgets = static_cast< int >(x2c_widgets.size());
+    slot.result = portResult;
+  }
+  return portResult;
+#else
   return false;
+#endif
 }
 #endif

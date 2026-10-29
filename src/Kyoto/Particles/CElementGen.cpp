@@ -1149,6 +1149,17 @@ void CElementGen::UpdateExistingParticles() {
         }
       }
     }
+#ifdef TARGET_XBOX
+    {
+      // PORT_XBOX: the particle two on asked for in the cache (its lines
+      // were a miss each; no hardware prefetcher on the Pentium III). Past
+      // the end it is only an unused hint.
+      const char* next = reinterpret_cast< const char* >(&*p) + 2 * sizeof(*p);
+      __builtin_prefetch(next);
+      __builtin_prefetch(next + 32);
+      __builtin_prefetch(next + 64);
+    }
+#endif
     p->x10_prevPos = p->x4_pos;
 #ifdef TARGET_PC
     // Remastered omits `pos += vel` when a VEL source finalizes the position (0x291b90).
