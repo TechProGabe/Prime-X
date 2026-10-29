@@ -245,6 +245,12 @@ the console before (the save, settings, hw6's xbe) in `logs-hw7pre`.
   hw4's r4c froze around the same reads. Fixed in `f73d0d7`: on the
   console, no codec access after the reset (it never had anything to power
   up there). Melee-X has the same code.
+- **The user's note:** in the Landing cinematic, as the gunship comes into
+  the atmosphere, a black box around its glow texture. r7b's frame 600 shot
+  (`shot_Prime-X-r7b_01.bmp`) shows the quad's square around the sprite.
+  Next: find that particle or sprite's texture format and blend (an alpha
+  that isn't reaching the blend, or I4/IA4 read as opaque) in xemu with a
+  trace build of the cinematic.
 
 ## Console round hw5 (red, 2026-10-28)
 
