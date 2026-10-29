@@ -153,7 +153,10 @@ Done 2026-10-28 (afternoon and evening), newest first:
    Compare each scene with `logs-hw7` (`prof_report.py --last` for steady
    play): `GXCallDisplayList`, `memcpy`, `memset`, `gx_vtx_flush`. Each
    prefetch has a switch to turn it off if it loses (`XGX_DYN_PREFETCH=0`,
-   `XHW_COPY_PREFETCH=0`).
+   `XHW_COPY_PREFETCH=0`). On red since 2026-10-29 13:00 (`stage-hw8`, maps
+   `prime_x.hw8.map`, `prime_x.hw8ship.map`; what was there before in
+   `logs-hw8pre`); xemu ran the profile image's Landing Site and Main Plaza
+   clean. Launch `Prime-X-r8a`.
 1. **Console round hw7, staged 2026-10-29** (the user asked): chain
    `tools/xbox/scenarios/hw7` (hw5's five scenes, then Main Plaza and the
    Landing Site with Game Timing: Flex), the files laid out by console path
