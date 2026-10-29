@@ -84,6 +84,11 @@ public:
   void SetFontColor(const CColor& col);
   void Render() const;
   const rstl::pair< CVector2i, CVector2i >& GetBounds();
+#ifdef TARGET_XBOX
+  // PORT_XBOX: read back for Port Options' value cells, which the shared
+  // Options frame's retail rows get restored to (CPauseScreenFrame.cpp)
+  const CGuiTextProperties& PortGetProps() const { return x14_props; }
+#endif
   bool GetIsTextSupportFinishedLoading() const;
 
   void SetExtentX(int extent) {

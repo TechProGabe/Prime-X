@@ -51,13 +51,15 @@ line under it says how far it got.
 
 ## Known issues
 
-- **Out of memory on red** in free play: hw5 at 215 s, hw6 at 290 s.
-  Since then: memory-pressure reclaim and the ARAM swap file (xemu Main
-  Plaza with 7 MB held back runs at ~1 MB free without failing), 0.9 MB of
-  `.bss` less, the texture pool 7 MB. To be played on the console again.
+- Out of memory on red (hw5 at 215 s, hw6 at 290 s): gone in hw8's free
+  play where hw6 ran out (one reclaim, 16 chunks to the swap file); keep
+  an eye on longer sessions.
+- Fixed, not yet seen on red: the pause screen at 14-17 fps (hw8: Samus's
+  lists over the dynamic budget; the extra budget opens at 4 MB free now),
+  the charge beam (hw8, `188fb44`), Port Options' value cells off their
+  rows (hw6, hw8: a fixed grid now, no dividers).
 - Fixed in xemu, not yet seen on red: everything too bright after Morph
-  Ball, the white arm cannon (Chozo, Magmoor), the Options divider on the
-  lower Video rows (not reproduced in xemu: the fix is by construction).
+  Ball, the white arm cannon (Chozo, Magmoor).
 - Inside the gunship: 12-14 fps on red in hw5; the dynamic-list budget is
   doubled since, not measured.
 - Magmoor's heat haze draws without its warp (indirect maps past
