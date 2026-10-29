@@ -3278,6 +3278,8 @@ static const XgxTexGen* unit_texgen(const XgxState* st, uint32_t tc) {
     return tg;
 }
 
+static uint8_t s_lt_ang, s_lt_dist;   /* derive_vk's light bits, while s_lt_valid */
+static int s_lt_valid;
 static void derive_vk(const XgxState* st, const XgxLayout* layout) {
     VpKey* vk = &s_d_vk;
     int i;
@@ -3311,12 +3313,21 @@ static void derive_vk(const XgxState* st, const XgxLayout* layout) {
         if (tg->mtx < GX_TEXMTX0) s_d_tg_posmtx = 1;
     }
     /* attenuation rows (build_lights) that make a spot light's factor 1:
-     * HSD's infinite lights (a and k (1, 0, 0)) and point lights (a) */
-    for (i = 0; i < XGX_MAX_LIGHTS && i < 8; i++) {
-        const XgxLight* l = &st->light[i];
-        if (l->a[0] == 1.0f && l->a[1] == 0.0f && l->a[2] == 0.0f) vk->ang_one |= (uint8_t)(1u << i);
-        if (l->k[0] == 1.0f && l->k[1] == 0.0f && l->k[2] == 0.0f) vk->dist_one |= (uint8_t)(1u << i);
+     * HSD's infinite lights (a and k (1, 0, 0)) and point lights (a).
+     * Worked out again only after a light changed (xgx_draw clears
+     * s_lt_valid on XGX_DIRTY_LIGHTS): 48 float compares a draw were
+     * xgx_draw's busiest spot in round hw9's Main Plaza. */
+    if (!s_lt_valid) {
+        s_lt_ang = s_lt_dist = 0;
+        for (i = 0; i < XGX_MAX_LIGHTS && i < 8; i++) {
+            const XgxLight* l = &st->light[i];
+            if (l->a[0] == 1.0f && l->a[1] == 0.0f && l->a[2] == 0.0f) s_lt_ang |= (uint8_t)(1u << i);
+            if (l->k[0] == 1.0f && l->k[1] == 0.0f && l->k[2] == 0.0f) s_lt_dist |= (uint8_t)(1u << i);
+        }
+        s_lt_valid = 1;
     }
+    vk->ang_one |= s_lt_ang;
+    vk->dist_one |= s_lt_dist;
     vp_canon(vk);   /* configurations with the same program compare equal */
 }
 
@@ -3384,6 +3395,7 @@ void xgx_draw(uint32_t prim, uint32_t count, const XgxLayout* layout, XgxState* 
     census_count(d, count);
 #endif
     s_draw_force = 0;
+    if (d & XGX_DIRTY_LIGHTS) s_lt_valid = 0;
     lay = (layout->off_nrm >= 0) | (layout->off_col[0] >= 0) << 1 | (layout->off_col[1] >= 0) << 2 |
           (layout->off_mtx >= 0 ? (layout->tc_mtx & 0xFFu) << 3 : 0);
     /* Its inputs, without indirect stages: the TEV stages, swap tables and

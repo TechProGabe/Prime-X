@@ -188,6 +188,10 @@ static void BuildBoneRange(const CVirtualBone* bones, int first, int end, int of
     const __m128 c3 = _mm_setr_ps(xf.Get03(), xf.Get13(), xf.Get23(), 0.f);
     const int count = bones[b].GetNumIndices();
     for (int i = 0; i < count; ++i, src += 12, out += 3) {
+      // PORT_XBOX: the Pentium III has no hardware prefetcher: the source and
+      // output streams' lines are asked for ~8 vertices ahead (hints only)
+      _mm_prefetch(reinterpret_cast< const char* >(src) + 96, _MM_HINT_T0);
+      _mm_prefetch(reinterpret_cast< const char* >(out) + 96, _MM_HINT_T0);
       const __m128 x = _mm_set1_ps(LoadBigFloat(src));
       const __m128 y = _mm_set1_ps(LoadBigFloat(src + 4));
       const __m128 z = _mm_set1_ps(LoadBigFloat(src + 8));
@@ -225,6 +229,8 @@ static void BuildBoneRange(const CVirtualBone* bones, int first, int end, int of
       const __m128 c2 = _mm_setr_ps(rot.Get02(), rot.Get12(), rot.Get22(), 0.f);
       const int count = bones[b].GetNumIndices();
       for (int i = 0; i < count; ++i, src += 12, out += 3) {
+        _mm_prefetch(reinterpret_cast< const char* >(src) + 96, _MM_HINT_T0); // PORT_XBOX: as above
+        _mm_prefetch(reinterpret_cast< const char* >(out) + 96, _MM_HINT_T0);
         const __m128 x = _mm_set1_ps(LoadBigFloat(src));
         const __m128 y = _mm_set1_ps(LoadBigFloat(src + 4));
         const __m128 z = _mm_set1_ps(LoadBigFloat(src + 8));

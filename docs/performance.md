@@ -157,6 +157,55 @@ display lists ~10.5 -> ~8.3 ms in xemu. Still the heaviest scene measured
 is the next limit, and memory is tight for raising it (Main Plaza: ~2.6 MB
 free).
 
+2026-10-29 (evening), from round hw9 (profiler chain r9a-r9e and the
+user's ship-build free play through the Frigate to Parasite Queen); none
+of it measured on a console yet (no more console rounds, the user's call):
+
+- **The game clock** (`OSGetTime`, `os.c`): whole seconds plus the rest at
+  40 ticks a microsecond (`OS_TIMER_CLOCK / 1000000`, 40.5 truncated), so
+  it ran 1.2% slow through each second and jumped 12.3 ms at the next. The
+  game's tick clock (`CStopwatch`, `UpdateTicks`) took the jump as an extra
+  simulation tick once a second: a periodic hitch. Now one 32.32 fixed-point
+  multiply (no `__aulldiv`); lockstep frames are exactly 675000 ticks.
+- **memcpy's small copies**: Main Plaza had 8% of the CPU on the `rep
+  movs` of copies under 2 KB (three microcode starts a call). Under 64
+  bytes it is a loop now; zero-length `rep`s are skipped; 256 B-2 KB
+  copies prefetch their source first. `copy_prim`/`seg_list` copy vertices
+  as words (three memcpy calls a quad before: every particle and flake).
+- **Dynamic (skinned) lists' fetch**: positions and normals are native
+  floats from the skinning; a loop each (12-byte move, CMP pack) instead
+  of `store()`'s per-element switch through the stack (~5% in Main
+  Plaza). `-DXGX_DYN_VERIFY=1`: 0 of 125k draws differ (Landing Site,
+  Main Plaza, Phendrana).
+- **Index-only dynamic lists**: a skinned list that doesn't fit the
+  dynamic budget kept no dynamic form and was parsed and decoded from the
+  list on every call (free play: up to 16 such lists in the Frigate's
+  fights, display lists 15-28 ms, 10-15 fps). It now keeps its indices and
+  plans without a template (every array fetched each call, a few bytes a
+  vertex; their own 256 KB allowance past the budget, and batches over
+  the 16 KB scratch go through a buffer reserved up to 128 KB).
+  `-DXGX_DYN_INDEX_ONLY=0` restores the old behaviour. A volatile list's
+  log line now says which limit refused it.
+- **Failed builds back off**: with the vertex pool full, a list that found
+  no room scanned, decoded and tried evictions on every call, then was
+  decoded again to draw. It tries again 30 frames on (`DLC_BUILD_RETRY`).
+- `derive_vk`'s scan of the eight lights' attenuation (48 float compares a
+  draw, xgx_draw's busiest spot) runs only after a light changed.
+- **Snow** (Phendrana ~10%): `GXPortSnowQuads`, one call for a grid's
+  flakes; `GXTexCoord2u8` & co. take a fast path when the next slot is a
+  direct texture coordinate.
+- **Cache misses in the game's walks**: prefetches four world models
+  ahead in `DrawUnsortedGeometry`'s cull loop (~3%), three entities ahead
+  in the state manager's object-list walks (~4%), and ~8 vertices ahead
+  in `BuildBoneRange`'s streams (the Pentium III has no hardware
+  prefetcher).
+- Found, not changed: the HUD minimap (`CMapWorld::Draw`) is 150-300
+  immediate draws every frame of play (each surface's fill and outline,
+  alternating triangles and lines, a `GXSetTevKColor` between each).
+  pbkit is built without optimisation (as on Melee-X); its hot spots are
+  waits, and `-O2` would turn `while (pb_BackBufferbReady[...])` into a
+  hang.
+
 ## Levers, roughly in the order to try them
 
 | lever | where | note |

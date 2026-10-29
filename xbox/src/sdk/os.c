@@ -593,7 +593,7 @@ static void card_deliver(void) {
  * it 1 ms at a time instead of sleeping. Pacing is off; [PERF] keeps the
  * real clock. */
 static int s_lockstep = -1;
-static uint64_t s_lockstep_ns;
+static uint64_t s_lockstep_ticks;   /* the lockstep clock, in OS ticks: a frame is exactly OS_TIMER_CLOCK / 60 */
 
 int xsdk_lockstep(void) {
     if (s_lockstep < 0) {
@@ -604,12 +604,25 @@ int xsdk_lockstep(void) {
     return s_lockstep;
 }
 
-void xsdk_lockstep_advance(u32 ns) { s_lockstep_ns += ns; }
+/* ns -> 40.5 MHz ticks: ns * OS_TIMER_CLOCK / 1e9 with the factor in 32.32
+ * fixed point (0.0405; 0.24 ms a day short). Was whole seconds plus the
+ * remainder at OS_TIMER_CLOCK / 1000000 = 40 ticks a microsecond (40.5
+ * truncated): the clock ran 1.2% slow through each second and jumped
+ * 12.3 ms at the next, and the game's tick clock (CStopwatch) took that
+ * jump as an extra simulation tick once a second. Two 64-bit divisions a
+ * call too (__aulldiv; the allocator alone reads the clock twice an
+ * allocation). */
+static OSTime ns_to_ticks(uint64_t ns) {
+    const uint32_t k = (uint32_t)(((uint64_t)OS_TIMER_CLOCK << 32) / 1000000000ull);
+    return (OSTime)((uint64_t)(uint32_t)(ns >> 32) * k + (((uint64_t)(uint32_t)ns * k) >> 32));
+}
+
+void xsdk_lockstep_advance(u32 ns) { s_lockstep_ticks += ns_to_ticks(ns); }
+void xsdk_lockstep_frame(void) { s_lockstep_ticks += OS_TIMER_CLOCK / 60; }
 
 OSTime OSGetTime(void) {
-    uint64_t ns = xsdk_lockstep() ? s_lockstep_ns : xhw_time_ns() - s_ns_base;
-    return s_time_base + (OSTime)(ns / 1000000000ull) * OS_TIMER_CLOCK +
-           (OSTime)(ns % 1000000000ull) * (OS_TIMER_CLOCK / 1000000) / 1000;
+    if (xsdk_lockstep()) return s_time_base + (OSTime)s_lockstep_ticks;
+    return s_time_base + ns_to_ticks(xhw_time_ns() - s_ns_base);
 }
 
 OSTick OSGetTick(void) { return (OSTick)OSGetTime(); }

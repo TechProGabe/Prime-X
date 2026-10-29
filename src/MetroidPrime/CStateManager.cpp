@@ -979,6 +979,9 @@ void CStateManager::UpdateSortedLists() {
 
   CObjectList* actorList = x808_objectLists[kOL_Actor].get();
   for (int i = actorList->GetFirstObjectIndex(); i != -1; i = actorList->GetNextObjectIndex(i)) {
+#ifdef TARGET_XBOX
+    actorList->PortPrefetchAhead(i, 3, 0xe4); // PORT_XBOX: CActor's flags (CObjectList.hpp)
+#endif
     CActor* actor = static_cast< CActor* >((*actorList)[i]);
     if (actor != nullptr) {
       UpdateActorInSortedLists(*actor);
@@ -1453,6 +1456,9 @@ void CStateManager::Think(float dt) {
   } else {
     CObjectList* const camList = x808_objectLists[kOL_GameCamera].get();
     for (int i = allList->GetFirstObjectIndex(); i != -1; i = allList->GetNextObjectIndex(i)) {
+#ifdef TARGET_XBOX
+      allList->PortPrefetchAhead(i, 3, 0); // PORT_XBOX: CObjectList.hpp
+#endif
       CEntity* ent = (*allList)[i];
       if (ent != nullptr) {
         CPatterned* patterned = TCastToPtr< CPatterned >(ent);
@@ -1506,6 +1512,9 @@ void CStateManager::PreThinkObjects(float dt) {
   } else {
     CObjectList* const camList = x808_objectLists[kOL_GameCamera].get();
     for (int i = allList->GetFirstObjectIndex(); i != -1; i = allList->GetNextObjectIndex(i)) {
+#ifdef TARGET_XBOX
+      allList->PortPrefetchAhead(i, 3, 0); // PORT_XBOX: CObjectList.hpp
+#endif
       CEntity* ent = (*allList)[i];
       if (ent != nullptr && camList->GetObjectById(ent->GetUniqueId()) == nullptr) {
         ent->PreThink(dt, *this);
@@ -2784,6 +2793,9 @@ void CStateManager::PreRender() {
           static_cast< CObjectList* >(areaIt->GetPostConstructed()->x10c0_areaObjectList.get());
       for (int i = areaObjList->GetFirstObjectIndex(); i != -1;
            i = areaObjList->GetNextObjectIndex(i)) {
+#ifdef TARGET_XBOX
+        areaObjList->PortPrefetchAhead(i, 3, 0xe4); // PORT_XBOX: CActor's flags (CObjectList.hpp)
+#endif
         CActor* actor = TCastToPtr< CActor >((*areaObjList)[i]);
         if (actor != nullptr && actor->IsDrawEnabled()) {
           actor->CalculateRenderBounds();
@@ -3648,6 +3660,9 @@ void CStateManager::DrawWorld() const {
     const CObjectList& objects = *area.GetPostConstructed()->x10c0_areaObjectList;
     for (int idx = objects.GetFirstObjectIndex(); idx != -1;
          idx = objects.GetNextObjectIndex(idx)) {
+#ifdef TARGET_XBOX
+      objects.PortPrefetchAhead(idx, 3, 0xe4); // PORT_XBOX: CActor's flags (CObjectList.hpp)
+#endif
       if (const CActor* actor = TCastToConstPtr< CActor >(objects[idx])) {
         if (!actor->IsDrawEnabled()) {
           continue;

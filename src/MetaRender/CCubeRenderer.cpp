@@ -820,6 +820,17 @@ void CCubeRenderer::DrawUnsortedGeometry(int areaIdx, uint mask, uint targetMask
     int modelIdx = 0;
     for (AUTO(modelIt, models.begin()); modelIt != models.end(); ++modelIt, ++modelIdx) {
       CCubeModel& model = **modelIt;
+#ifdef TARGET_XBOX
+      // PORT_XBOX: each model is its own allocation and the test below waits
+      // on its box and flags (two cache lines, a miss each: most of this
+      // loop's ~3% of the CPU in Main Plaza, round hw9). Ask for the ones
+      // four models on, so the misses overlap.
+      if (modelIdx + 4 < models.size()) {
+        const char* box = reinterpret_cast< const char* >(&models[modelIdx + 4]->GetBoundingBox());
+        __builtin_prefetch(box);
+        __builtin_prefetch(box + 32);
+      }
+#endif
 
       if (pvs != nullptr) {
         const bool visible = pvs->GetVisible(modelIdx) != kVSS_EndOfTree;

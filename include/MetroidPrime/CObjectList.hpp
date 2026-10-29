@@ -53,6 +53,27 @@ public:
     }
   }
 
+#ifdef TARGET_XBOX
+  // PORT_XBOX: the entity `ahead` links after idx asked for in the cache
+  // (its first line, the line with its flags at 0x30, and `off` if not 0).
+  // The state manager's walks over every object wait on each entity's
+  // lines, one miss after another (round hw9 Main Plaza: ~4% of the CPU in
+  // PreThink, Think and the sorted-list update). A prefetch is only a hint.
+  void PortPrefetchAhead(int idx, int ahead, int off) const {
+    for (; ahead > 0 && idx != -1; --ahead) {
+      idx = mObjects[idx].mNext;
+    }
+    if (idx != -1 && mObjects[idx].mEnt != nullptr) {
+      const char* p = reinterpret_cast< const char* >(mObjects[idx].mEnt);
+      __builtin_prefetch(p);
+      __builtin_prefetch(p + 0x30);
+      if (off != 0) {
+        __builtin_prefetch(p + off);
+      }
+    }
+  }
+#endif
+
 private:
   SObjectListEntry mObjects[1024];
   EGameObjectList mListType;
