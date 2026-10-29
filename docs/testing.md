@@ -10,6 +10,11 @@ checklist. Phase 1 copies its tools; this file grows with them.
   `test_vp_opt`, `test_rc`, `test_fog`, `test_pool`, `test_tex_cache`,
   `test_dl_cull`, `test_audio_mix`, `test_mplib`): they must pass unchanged
   after the import.
+- `test_aram.py`: ARAM's disc-backed pages and swap file (`ar.c`) under
+  random DMA writes (disc copies and plain data), DMA and CPU reads,
+  reclaims (normal and urgent) and failed swap writes, against a shadow
+  copy. `test_rc.py` also checks the arm cannon's TEV with texture
+  constants.
 - New: `test_disc_check.py`, the disc validation (`docs/boot-safety.md`)
   against doctored headers and FSTs built in the test (no game data):
   every rejection reason, the `.ciso` coverage check, CRC mismatches.
