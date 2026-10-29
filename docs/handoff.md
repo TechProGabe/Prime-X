@@ -3,6 +3,63 @@
 Update this at the end of every session: what was done, what's next,
 what's broken, anything the next agent would otherwise rediscover.
 
+## Session 2026-10-29 (evening): hw9 read, FPS from the logs, xemu only
+
+**Hardware testing is over** (the user, after round hw9: "We will not be
+doing any more hardware testing"). Everything below is checked in xemu
+only: verify builds (`-DXGX_DYN_VERIFY=1`) compare the new paths with the
+old ones draw by draw, and shots. Round hw9's logs: `C:\xemu\hw\prime\logs-hw9`
+(chain r9a-r9e, `boot_freeplay.log` = the user's ship-build play from a new
+game through the Frigate to Parasite Queen, map `prime_x.hw9ship.map`).
+
+What hw9 said:
+
+- The user: Morph Ball and textures fine ("visually the game works
+  great"); fps "really bad" fighting pirates on the Frigate up to Parasite
+  Queen. The free play's slow windows (10-20 fps) have up to 16 skinned
+  lists over the dynamic budget ("no dynamic form": parsed and decoded from
+  the list every call, display lists 15-28 ms), the display-list cache full
+  (2048 entries, the vertex pool too) at times, and the catch-up ticks
+  (Fixed) multiply the sim on those frames.
+- **r9f froze** at `[AUDIO] found:` on the codec register reads before the
+  idle step (hw7's freeze was the first read after the reset). Fixed: no
+  codec reads on the console at all (`xhw_audio.c`). r9e's audio was stuck
+  ("silent until the Xbox is switched off"): roadmap item 9, not fixable
+  without a console.
+- Chain fps against hw7: front end about the same, Landing Site and
+  Phendrana a little up (hw8's prefetches), Main Plaza flat. Profiles:
+  memcpy's small-copy `rep movs` 8% (Main Plaza), the dynamic lists' fetch
+  ~6%, the world-model cull loop ~3%, the object-list walks ~4%, snow
+  ~10% (Phendrana), skinning 3-4%.
+
+Done (`docs/performance.md`, "2026-10-29 (evening)", has the details):
+
+- `OSGetTime`'s sawtooth (a 12.3 ms jump every second: an extra
+  simulation tick, a hitch a second) and its two 64-bit divisions; lockstep
+  frames now exactly 1/60 s of OS ticks (probably why lockstep runs weren't
+  frame-exact).
+- memcpy/memset small paths, vertex copies as words.
+- Dynamic lists: fast fetch loops; **index-only dynamic lists** when a
+  template doesn't fit the budget (own 256 KB allowance, big batches through
+  a reserved buffer up to 128 KB). Verify: 0 differ (Landing Site, Main
+  Plaza, Phendrana, with the budget forced down to 192 KB so lists go
+  index-only: `-DDLC_DYN_BUDGET=196608u -DDLC_DYN_EXTRA=0u`).
+- Snow quads in one call (`GXPortSnowQuads`; verify: 335k quads, 0 differ),
+  `GXTexCoord2u8` & co. fast path.
+- Prefetches: world models (cull loop), entities (state manager walks),
+  skinning streams. `derive_vk`'s light scan cached until a light changes.
+
+Next:
+
+1. The HUD minimap is 150-300 draws a frame (fill and outline alternate per
+   surface, `GXSetTevKColor` between): only a different draw method would
+   join them; look at it only if it keeps the retail look exactly.
+2. GPU skinning (the biggest lever left on fights: skinning and the dynamic
+   lists ~10-15% with pirates on screen); Prime's virtual bones are one
+   matrix a vertex, so a matrix palette in constants could do it.
+3. LTO + PGO ship build and the room sweep before calling this a release;
+   the PGO profile predates this session (retrain, `docs/pgo.md`).
+
 ## Session 2026-10-28 (night, unattended): fixes in xemu, not on red yet
 
 The user's list: fix the hardware crash (the hw6 Out of memory screen),

@@ -17,6 +17,13 @@ int GXPortBoxCulled(const float bmin[3], const float bmax[3]);
 // layout and nothing was written (make the calls).
 int GXPortRainLines(const short* xyz, unsigned n, short dz, unsigned short c0, unsigned short c1);
 
+// The snow's (or the underwater flakes') n quads into the open GX_QUADS
+// batch, last particle first: corners p, p + up, p + up + right, p + right
+// (short sums) with texture corners (0,0) (0,2) (2,2) (2,0), as four
+// GXPosition3s16 + GXTexCoord2u8 pairs a flake would. 0: the batch isn't
+// that layout and nothing was written (make the calls).
+int GXPortSnowQuads(const short* xyz, unsigned n, const short up[3], const short right[3]);
+
 #ifdef __cplusplus
 }
 #endif

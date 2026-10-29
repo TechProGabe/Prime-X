@@ -45,7 +45,7 @@
 #include <vector>
 #endif
 #ifdef TARGET_XBOX
-#include "port_xbox_gx.h" // PORT_XBOX: GXPortBoxCulled, GXPortRainLines
+#include "port_xbox_gx.h" // PORT_XBOX: GXPortBoxCulled, GXPortRainLines, GXPortSnowQuads
 #endif
 
 static const float gkReal32Max = FLT_MAX;
@@ -142,6 +142,18 @@ void CEnvFxManagerGrid::RenderSnowParticles(const CTransform4f& camXf) {
   short xy = real_to_fixed8_8(0.2f * camXf.Get10());
   short xz = real_to_fixed8_8(0.2f * camXf.Get20());
   CGX::Begin(GX_QUADS, GX_VTXFMT6, particleCount * 4);
+#ifdef TARGET_XBOX
+  // PORT_XBOX: the same quads in one call, not 8 calls a flake (port_xbox_gx.h)
+  {
+    const short up[3] = {zx, zy, zz};
+    const short right[3] = {xx, xy, xz};
+    if (sPortSnowSteps == nullptr && particleCount > 0 &&
+        GXPortSnowQuads(&x1c_particles[0].x, static_cast< unsigned >(particleCount), up, right)) {
+      CGX::End();
+      return;
+    }
+  }
+#endif
   for (int i = particleCount - 1; i >= 0; --i) {
     CVectorFixed8_8 p = x1c_particles[i];
 #ifdef TARGET_PC
@@ -184,6 +196,18 @@ void CEnvFxManagerGrid::RenderUnderwaterParticles(const CTransform4f& camXf) {
   short xy = real_to_fixed8_8(0.5f * camXf.Get10());
   short xz = real_to_fixed8_8(0.5f * camXf.Get20());
   CGX::Begin(GX_QUADS, GX_VTXFMT6, particleCount * 4);
+#ifdef TARGET_XBOX
+  // PORT_XBOX: the same quads in one call (port_xbox_gx.h)
+  {
+    const short up[3] = {zx, zy, zz};
+    const short right[3] = {xx, xy, xz};
+    if (particleCount > 0 &&
+        GXPortSnowQuads(&x1c_particles[0].x, static_cast< unsigned >(particleCount), up, right)) {
+      CGX::End();
+      return;
+    }
+  }
+#endif
   for (int i = particleCount - 1; i >= 0; --i) {
     CVectorFixed8_8 p = x1c_particles[i];
     GXPosition3s16(p.x, p.y, p.z);

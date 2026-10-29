@@ -13,6 +13,7 @@ int xsdk_is_game_thread(void);
 void xsdk_run_alarms(void);
 int xsdk_lockstep(void);         /* env PX_LOCKSTEP=1: one simulation tick per frame (os.c) */
 void xsdk_lockstep_advance(u32 ns);
+void xsdk_lockstep_frame(void);    /* one frame on, exactly 1/60 s of OS ticks */
 void xsdk_fill_disc_id(const void* header32);
 void xsdk_card_dispatch(CARDCallback callback, s32 chan, s32 result);
 void xsdk_log_raw(const char* text);   /* log.c: no newline added */

@@ -95,6 +95,9 @@ static struct {
 
 static void sig_recompute(void);
 static void plan_kinds(Plan* p, int vtxfmt);
+#if XGX_DYN_VERIFY
+static uint32_t s_snowv_quads, s_snowv_bad;   /* GXPortSnowQuads checked against the per-vertex calls */
+#endif
 void gx_vtx_reset(void) {
     memset(&B, 0, sizeof B);
     sig_recompute();
@@ -364,20 +367,46 @@ static uint32_t out_count(uint32_t prim, uint32_t n) {
     return n;
 }
 
+/* vertices (whole words: every stride is a multiple of 4) as word moves:
+ * memcpy of a variable size is a call whose rep movs start in microcode,
+ * three a quad here (the snow, every particle: round hw9's profile had 8%
+ * of the CPU on memcpy's small copies) */
+static inline void vcopy(uint8_t* d, const uint8_t* s, uint32_t bytes) {
+    uint32_t i;
+    for (i = 0; i < bytes; i += 4) {
+        uint32_t w;
+        memcpy(&w, s + i, 4);
+        memcpy(d + i, &w, 4);
+    }
+}
+
 /* n vertices of `prim` at src, stride s, as out_prim(prim) at dst; returns
  * the bytes written */
 static uint32_t copy_prim(uint8_t* dst, const uint8_t* src, uint32_t prim, uint32_t n, uint32_t s) {
     uint8_t* d = dst;
     uint32_t i;
-    if (prim == XGX_QUADS) {
+    if (prim == XGX_QUADS && !(s & 3)) {
         for (i = 0; i + 4 <= n; i += 4, src += 4 * s) {   /* 0 1 2, 0 2 3 */
+            vcopy(d, src, 3 * s);
+            vcopy(d + 3 * s, src, s);
+            vcopy(d + 4 * s, src + 2 * s, 2 * s);
+            d += 6 * s;
+        }
+    } else if (prim == XGX_QUADS) {
+        for (i = 0; i + 4 <= n; i += 4, src += 4 * s) {
             memcpy(d, src, 3 * s);
             memcpy(d + 3 * s, src, s);
             memcpy(d + 4 * s, src + 2 * s, 2 * s);
             d += 6 * s;
         }
-    } else if (prim == XGX_TRIFAN) {
+    } else if (prim == XGX_TRIFAN && !(s & 3)) {
         for (i = 1; i + 1 < n; i++) {                   /* 0 i i+1 */
+            vcopy(d, src, s);
+            vcopy(d + s, src + i * s, 2 * s);
+            d += 3 * s;
+        }
+    } else if (prim == XGX_TRIFAN) {
+        for (i = 1; i + 1 < n; i++) {
             memcpy(d, src, s);
             memcpy(d + s, src + i * s, 2 * s);
             d += 3 * s;
@@ -589,19 +618,20 @@ static void seg_list(void) {
     }
     memcpy(tmp, B.base + B.seg_start * s, m * s);
     d = B.base + B.seg_start * s;
+    /* strides are whole words (make_plan): vcopy, not a memcpy call a vertex */
     if (B.seg_prim == XGX_TRISTRIP) {
         for (i = 0; i + 2 < m; i++, d += 3 * s, out += 3) {   /* every other one turned, as GX winds them */
-            memcpy(d, tmp + (i + (i & 1)) * s, s);
-            memcpy(d + s, tmp + (i + 1 - (i & 1)) * s, s);
-            memcpy(d + 2 * s, tmp + (i + 2) * s, s);
+            vcopy(d, tmp + (i + (i & 1)) * s, s);
+            vcopy(d + s, tmp + (i + 1 - (i & 1)) * s, s);
+            vcopy(d + 2 * s, tmp + (i + 2) * s, s);
         }
     } else if (B.seg_prim == XGX_TRIFAN) {
         for (i = 1; i + 1 < m; i++, d += 3 * s, out += 3) {   /* 0 i i+1 */
-            memcpy(d, tmp, s);
-            memcpy(d + s, tmp + i * s, 2 * s);
+            vcopy(d, tmp, s);
+            vcopy(d + s, tmp + i * s, 2 * s);
         }
     } else {                                                    /* LINESTRIP: i i+1 */
-        for (i = 0; i + 1 < m; i++, d += 2 * s, out += 2) memcpy(d, tmp + i * s, 2 * s);
+        for (i = 0; i + 1 < m; i++, d += 2 * s, out += 2) vcopy(d, tmp + i * s, 2 * s);
     }
     B.done = B.expected = B.seg_start + out;
     B.prim = seg_list_prim(B.seg_prim, m);
@@ -909,7 +939,9 @@ void GXColor4u8(u8 r, u8 g, u8 b, u8 a) {
     imm_color(r, g, b, a);
 }
 void GXColor3u8(u8 r, u8 g, u8 b) { imm_color(r, g, b, 255); }
-void GXColor1u32(u32 c) { imm_color((u8)(c >> 24), (u8)(c >> 16), (u8)(c >> 8), (u8)c); }
+/* GXColor4u8's fast path (an RGBA8 slot next) too: every particle corner
+ * (CElementGen::RenderBasicParticles*) writes its colour this way */
+void GXColor1u32(u32 c) { GXColor4u8((u8)(c >> 24), (u8)(c >> 16), (u8)(c >> 8), (u8)c); }
 void GXColor1u16(u16 c) {
     uint8_t b[2] = { (uint8_t)(c >> 8), (uint8_t)c }, out[4];
     read_color(b, g_gx.vat[B.vtxfmt][GX_VA_CLR0].type, 1, out);
@@ -955,10 +987,32 @@ void GXTexCoord2f32(f32 s, f32 t) {
     }
     imm_tex(s, t);
 }
-void GXTexCoord2u16(u16 s, u16 t) { imm_tex(tq(s), tq(t)); }
-void GXTexCoord2s16(s16 s, s16 t) { imm_tex(tq(s), tq(t)); }
-void GXTexCoord2u8(u8 s, u8 t) { imm_tex(tq(s), tq(t)); }
-void GXTexCoord2s8(s8 s, s8 t) { imm_tex(tq(s), tq(t)); }
+/* imm_tex(tq(s), tq(t)) when the vertex's next slot is a direct texture
+ * coordinate: that slot is the one imm_tex would pick (the plan is in GX
+ * order), and tq's division by 2^frac is k_frac_scale's product. The snow's
+ * GXTexCoord2u8 per corner went through both loops (Phendrana: ~7% of the
+ * console's CPU in round hw7). */
+static inline int tex2_fast(int s, int t) {
+    const Slot* sl = cur_slot();
+    int a;
+    if (!sl || sl->attr < GX_VA_TEX0 || sl->attr > GX_VA_TEX7 || sl->type != GX_DIRECT) return 0;
+    for (a = GX_VA_TEX0; a <= GX_VA_TEX7; a++)
+        if (g_gx.desc[a] != GX_NONE) break;
+    if (a != sl->attr) return 0;
+    if (sl->dst >= 0) {
+        const float sc = k_frac_scale[g_gx.vat[B.vtxfmt][a].frac & 31];
+        float* o = (float*)(B.cur + sl->dst);
+        o[0] = (float)s * sc;
+        o[1] = (float)t * sc;
+    }
+    B.cursor++;
+    after_attr();
+    return 1;
+}
+void GXTexCoord2u16(u16 s, u16 t) { if (!tex2_fast(s, t)) imm_tex(tq(s), tq(t)); }
+void GXTexCoord2s16(s16 s, s16 t) { if (!tex2_fast(s, t)) imm_tex(tq(s), tq(t)); }
+void GXTexCoord2u8(u8 s, u8 t) { if (!tex2_fast(s, t)) imm_tex(tq(s), tq(t)); }
+void GXTexCoord2s8(s8 s, s8 t) { if (!tex2_fast(s, t)) imm_tex(tq(s), tq(t)); }
 /* GXTexCoord1f32 is a plain f32 write to the FIFO: the float is the next
  * component of whatever attribute comes next in the vertex. The Classic
  * team card primes its depth plane with a position-only quad written as
@@ -1088,6 +1142,9 @@ static uint32_t s_vat_term[8][GX_VA_MAX_ATTR], s_vat_sum[8];
 static uint8_t s_vat_on[GX_VA_MAX_ATTR];   /* attribute a's terms are in s_vat_sum */
 static uint32_t s_arr_term[GX_VA_MAX_ATTR], s_arr_sum;       /* indexed arrays: base, stride, byte order */
 static uint32_t s_arrs_term[GX_VA_MAX_ATTR], s_arrs_sum;     /* the same without the base */
+/* bumped whenever s_desc_sum, s_arrs_sum or a s_vat_sum changes: fmt_key's
+ * cache (an array base alone, every model's GXSetArray, leaves it) */
+static uint32_t s_sig_gen = 1;
 
 static uint32_t mix32(uint32_t h) {   /* murmur3's finalizer */
     h ^= h >> 16;
@@ -1100,6 +1157,7 @@ static uint32_t mix32(uint32_t h) {   /* murmur3's finalizer */
 static void sig_desc(uint32_t a) {
     uint32_t t = mix32(0x01000000u | a << 8 | g_gx.desc[a]), f;
     uint8_t on = g_gx.desc[a] != GX_NONE;
+    s_sig_gen++;
     s_desc_sum += t - s_desc_term[a];
     s_desc_term[a] = t;
     if (on != s_vat_on[a]) {   /* the attribute's formats join or leave the key */
@@ -1111,6 +1169,7 @@ static void sig_desc(uint32_t a) {
 static void sig_vat(uint32_t f, uint32_t a) {
     const GxAttrFmt* v = &g_gx.vat[f][a];
     uint32_t t = mix32(0x02000000u ^ f << 29 ^ a << 24 ^ (uint32_t)v->cnt << 16 ^ (uint32_t)v->type << 8 ^ v->frac);
+    if (s_vat_on[a] && t != s_vat_term[f][a]) s_sig_gen++;
     if (s_vat_on[a]) s_vat_sum[f] += t - s_vat_term[f][a];
     s_vat_term[f][a] = t;
 }
@@ -1124,6 +1183,7 @@ static void sig_arr(uint32_t a) {
     }
     s_arr_sum += t - s_arr_term[a];
     s_arr_term[a] = t;
+    if (ts != s_arrs_term[a]) s_sig_gen++;
     s_arrs_sum += ts - s_arrs_term[a];
     s_arrs_term[a] = ts;
 }
@@ -1135,6 +1195,7 @@ static void sig_recompute(void) {
     memset(s_arr_term, 0, sizeof s_arr_term);
     memset(s_arrs_term, 0, sizeof s_arrs_term);
     s_desc_sum = s_arr_sum = s_arrs_sum = 0;
+    s_sig_gen++;
     memset(s_vat_sum, 0, sizeof s_vat_sum);
     memset(s_vat_on, 0, sizeof s_vat_on);
     for (a = 0; a < GX_VA_MAX_ATTR; a++) {
@@ -1318,16 +1379,31 @@ static void call_display_list(const void* list, u32 nbytes) {
 #define DLC_MAX_BATCH 4096      /* Fountain of Dreams' stage: one 104 KB list of more than 512 */
 #define DLC_MAX_RANGE 12
 #define DLC_VOLATILE 4          /* rebuilds before a list goes dynamic */
+#ifndef DLC_DYN_BUDGET   /* (test builds may shrink it: index-only lists under -DXGX_DYN_VERIFY=1) */
 #define DLC_DYN_BUDGET (1024u * 1024)   /* template + index bytes for all dynamic lists */
+#endif
 /* and 1 MB more while the Xbox has DLC_DYN_EXTRA_FREE free: 1 MB left the
  * ship's save station (Samus up close) decoded every call, 12-14 fps on the
  * console (round hw5), but the memory is the game's to have first. At 6 MB
  * the pause screen's Samus (4.6 MB free there) decoded every call, 14-17
  * fps on the console (round hw8); 4 MB keeps a full extra above
  * XHW_MEM_LOW_KB (3 MB), where the reclaimers start */
+#ifndef DLC_DYN_EXTRA
 #define DLC_DYN_EXTRA (1024u * 1024)
+#endif
 #define DLC_DYN_EXTRA_FREE (4u * 1024)  /* KB */
 #define DLC_DYN_RETRY 120       /* frames before a list the budget turned away tries again */
+#define DLC_BUILD_RETRY 30      /* frames before a list that found no room in the pool is built again */
+/* -DXGX_DYN_INDEX_ONLY=0: a list over the dynamic budget goes volatile, as
+ * before index-only dynamic lists (dyn_build) */
+#ifndef XGX_DYN_INDEX_ONLY
+#define XGX_DYN_INDEX_ONLY 1
+#endif
+/* what index-only lists may take beyond the budget (their plans and
+ * indices: ~0.5 KB a batch plus 2 bytes an index) */
+#ifndef DLC_DYN_IO_EXTRA
+#define DLC_DYN_IO_EXTRA (256u * 1024)
+#endif
 
 typedef struct {
     uint32_t prim, count, offset;   /* offset: bytes into the entry's buffer */
@@ -1353,11 +1429,12 @@ typedef struct {
     uint32_t idx;                  /* first index (uint16) of this batch */
     uint8_t ncol;                  /* indexed slots that land in the vertex */
     uint8_t col_slot[N_ORDER];     /* their plan slots */
-    Plan plan;
+    const Plan* plan;              /* in the list's plans: its batches share a few (one a vertex format) */
 } DynBatch;
 
 typedef struct {
     DynBatch* batch;
+    Plan* plans;                   /* the batches' distinct plans (at most one a vertex format) */
     DlBatch* view;                 /* the batches as DlBatch, then the draws they merge into */
     uint16_t* gfirst;              /* each draw's first batch */
     uint8_t* tmpl;
@@ -1396,7 +1473,8 @@ typedef struct __attribute__((aligned(32))) {
     uint16_t lay1, count1;         /* its layout (s_dlc_lay) and vertex count */
     /* 64: the rest */
     uint8_t rebuilds;
-    uint32_t vol_retry;            /* volatile for want of budget: the frame to try dyn_build again (0: never) */
+    uint32_t vol_retry;            /* volatile for want of budget: the frame to try dyn_build again (0: never);
+                                      not volatile, no mem: the frame to try dlc_build again (0: now) */
     uint32_t mem_bytes;
     float bmin[3], bmax[3];
     DlRange range[DLC_MAX_RANGE];
@@ -1437,6 +1515,8 @@ static uint32_t s_dyn_bytes;
 static uint32_t s_st_dl_hits, s_st_dl_builds, s_st_dl_direct, s_st_dyn_calls, s_st_dyn_fetch, s_st_dyn_builds;
 static uint32_t s_st_chg_sig, s_st_chg_data;   /* why cached lists were rebuilt: formats/arrays, or contents */
 static uint32_t s_st_dl_joined;               /* batches drawn as part of the one before */
+static uint32_t s_st_dyn_io;                  /* dynamic builds without a template (index-only) */
+static const char* s_dyn_why = "no dynamic form";   /* why dyn_build last refused, for log_volatile */
 static const char* s_build_why;               /* why the last build failed, for log_uncached */
 
 /* FNV-1a, 32-bit words (the tail a byte at a time) */
@@ -1534,6 +1614,7 @@ static void dyn_free(DlEntry* e) {
     free(d->view);
     free(d->gfirst);
     free(d->batch);
+    free(d->plans);
     free(d->tmpl);
     free(d->idx);
     free(d);
@@ -1759,9 +1840,18 @@ static uint32_t fmt_key(uint32_t fmts) {
      * the same list from the disc's arrays (big-endian) in one frame; under
      * one key each draw rebuilt the other's entry until it went volatile
      * (the Frigate: 58 lists decoded on every call) */
-    uint32_t h = mix32(s_desc_sum ^ s_arrs_sum * 0x9E3779B1u), f;
+    /* every display-list call asks (dlc_find): cached per formats mask until
+     * the descriptor, a format or an array's stride or byte order changes */
+    static uint32_t s_fk_val[256], s_fk_gen[256];
+    uint32_t h, f, m = fmts & 0xFF;
+    if (fmts < 0x100 && s_fk_gen[m] == s_sig_gen) return s_fk_val[m];
+    h = mix32(s_desc_sum ^ s_arrs_sum * 0x9E3779B1u);
     for (f = 0; f < 8; f++)
         if (fmts & (1u << f)) h = mix32(h + s_vat_sum[f]);
+    if (fmts < 0x100) {
+        s_fk_val[m] = h;
+        s_fk_gen[m] = s_sig_gen;
+    }
     return h;
 }
 
@@ -1861,6 +1951,29 @@ static void range_reset(IdxRange* r) {
 }
 
 /* pass 2: decode the draws found by dl_scan into out (template or buffer) */
+/* a dynamic call's batch vertices, staged (dyn_batch_verts); also where an
+ * index-only dynamic list's build decodes each batch (dl_decode_all) */
+static uint8_t s_dyn_scratch[16384] __attribute__((aligned(32)));
+/* and for an index-only list's batches too big for it: reserved by the build
+ * that needs it (dyn_io_reserve), so a call never lacks it; at most
+ * DYN_IO_BIG, kept for the session */
+#define DYN_IO_BIG (128u * 1024)
+static uint8_t* s_dyn_big;
+static uint32_t s_dyn_big_cap;
+
+static int dyn_io_reserve(uint32_t bytes) {
+    uint8_t* p;
+    if (bytes <= sizeof s_dyn_scratch || bytes <= s_dyn_big_cap) return 1;
+    if (bytes > DYN_IO_BIG || !(p = (uint8_t*)realloc(s_dyn_big, bytes))) return 0;
+    s_dyn_big = p;
+    s_dyn_big_cap = bytes;
+    return 1;
+}
+
+static uint8_t* dyn_io_buf(uint32_t bytes) { return bytes <= sizeof s_dyn_scratch ? s_dyn_scratch : s_dyn_big; }
+
+/* out NULL: each batch into dyn_io_buf (reserved for the largest), for its
+ * indices only */
 static void dl_decode_all(const uint8_t* dl, uint32_t nbytes, const DlBatch* batch, int nb, uint8_t* out, IdxRange* r,
                           uint16_t* idx, const uint32_t* idx_first) {
     Plan plan;
@@ -1870,7 +1983,8 @@ static void dl_decode_all(const uint8_t* dl, uint32_t nbytes, const DlBatch* bat
         uint8_t cmd = dl[at];
         if (cmd >= 0x80 && cmd < 0xC0) {
             make_plan(&plan, cmd & 7);
-            at = decode_verts(dl, at + 3, &plan, batch[i].count, out + batch[i].offset, r,
+            at = decode_verts(dl, at + 3, &plan, batch[i].count,
+                              out ? out + batch[i].offset : dyn_io_buf(batch[i].count * plan.layout.stride), r,
                               idx ? idx + idx_first[i] : NULL);
             i++;
             continue;
@@ -2087,17 +2201,22 @@ static int dyn_build(DlEntry* e, uint32_t frame) {
     static IdxRange r;
     DlBatch* batch;
     uint32_t* idx_first;
-    uint32_t total, nidx = 0, a, bytes, budget;
+    uint32_t total, nidx = 0, a, bytes, budget, io_max = 0;
     uint8_t fmts;
     DynList* d;
-    int nb = dl_scan(e->dl, e->nbytes, &total, &fmts), i, k;
+    int nb = dl_scan(e->dl, e->nbytes, &total, &fmts), i, k, io_direct = 0, io = 0, np = 0;
+    Plan *plans, tp;
+    s_dyn_why = "no dynamic form";
     if (!nb) return 0;
     batch = s_sc_batch;
     idx_first = s_sc_idx;
     d = (DynList*)calloc(1, sizeof *d);
     if (!d) return 0;
     d->batch = (DynBatch*)calloc((size_t)nb, sizeof(DynBatch));
-    if (!d->batch) {
+    plans = (Plan*)malloc(sizeof(Plan) * 8);
+    if (!d->batch || !plans) {
+        free(plans);
+        free(d->batch);
         free(d);
         return 0;
     }
@@ -2113,14 +2232,27 @@ static int dyn_build(DlEntry* e, uint32_t frame) {
             uint8_t cmd = e->dl[at];
             if (cmd >= 0x80 && cmd < 0xC0) {
                 DynBatch* b = &d->batch[i];
-                make_plan(&b->plan, cmd & 7);
-                for (k = 0; k < b->plan.n; k++) {
-                    const Slot* sl = &b->plan.slot[k];
-                    if (sl->type != GX_DIRECT && sl->dst >= 0) b->col_slot[b->ncol++] = (uint8_t)k;
+                const Plan* pl;
+                int j;
+                memset(&tp, 0, sizeof tp);   /* padding too: plans compare as bytes */
+                make_plan(&tp, cmd & 7);
+                for (j = 0; j < np && memcmp(&plans[j], &tp, sizeof tp) != 0; j++) {
                 }
+                if (j == np) {
+                    if (np == 8) break;   /* can't happen: a plan is a function of the vertex format */
+                    plans[np++] = tp;
+                }
+                pl = &plans[j];
+                b->plan = (const Plan*)(uintptr_t)j;   /* an index until the plans are final */
+                for (k = 0; k < pl->n; k++) {
+                    const Slot* sl = &pl->slot[k];
+                    if (sl->type != GX_DIRECT && sl->dst >= 0) b->col_slot[b->ncol++] = (uint8_t)k;
+                    if (sl->type == GX_DIRECT && sl->dst >= 0) io_direct = 1;
+                }
+                if (b->count * pl->layout.stride > io_max) io_max = b->count * pl->layout.stride;
                 b->idx = idx_first[i] = nidx;
                 nidx += b->count * b->ncol;
-                at += 3 + b->count * dl_vertex_bytes(&b->plan);
+                at += 3 + b->count * dl_vertex_bytes(pl);
                 i++;
                 continue;
             }
@@ -2128,12 +2260,17 @@ static int dyn_build(DlEntry* e, uint32_t frame) {
             if (!at) break;
         }
         if (i != nb) {
+            free(plans);
             free(d->batch);
             free(d);
             return 0;
         }
+        d->plans = (Plan*)realloc(plans, sizeof(Plan) * (size_t)np);   /* shrinks: can't fail, but keep it if it does */
+        if (!d->plans) d->plans = plans;
+        for (i = 0; i < nb; i++) d->batch[i].plan = &d->plans[(uintptr_t)d->batch[i].plan];
     }
-    bytes = total + nidx * 2 + (uint32_t)nb * (sizeof(DynBatch) + 2 * sizeof(DlBatch) + sizeof(uint16_t));
+    bytes = total + nidx * 2 + (uint32_t)np * sizeof(Plan) +
+            (uint32_t)nb * (sizeof(DynBatch) + 2 * sizeof(DlBatch) + sizeof(uint16_t));
     /* over the budget: make room by dropping the dynamic lists no draw has
      * used for a while (a model from a room left behind keeps its template
      * otherwise, and every list after it goes volatile: Phendrana, ~80) */
@@ -2141,21 +2278,42 @@ static int dyn_build(DlEntry* e, uint32_t frame) {
     while (s_dyn_bytes + bytes > budget && dyn_evict_idle(frame, e)) {
     }
     if (s_dyn_bytes + bytes > budget) {
-        free(d->batch);
-        free(d);
-        return 0;
+        /* Index-only: no template, every indexed attribute fetched on every
+         * call, in the scratch buffer. A few bytes a vertex instead of a
+         * whole one, so a fight's skinned models (the Frigate's pirates and
+         * Parasite Queen, round hw9: 16 lists over the budget, decoded from
+         * the list on every call, 10-15 fps) still skip the list's parse and
+         * plans. Not for lists with direct data in the vertex (the template
+         * holds it) or a batch over DYN_IO_BIG. */
+        bytes = nidx * 2 + (uint32_t)np * sizeof(Plan) +
+                (uint32_t)nb * (sizeof(DynBatch) + 2 * sizeof(DlBatch) + sizeof(uint16_t));
+        s_dyn_why = !XGX_DYN_INDEX_ONLY                              ? "no dynamic form"
+                    : io_direct                                       ? "no dynamic form (direct data)"
+                    : s_dyn_bytes + bytes > budget + DLC_DYN_IO_EXTRA ? "no dynamic form (index-only allowance full)"
+                    : io_max > DYN_IO_BIG                             ? "no dynamic form (a batch over 128 KB)"
+                                                                      : "no dynamic form (no memory)";
+        if (!XGX_DYN_INDEX_ONLY || io_direct || s_dyn_bytes + bytes > budget + DLC_DYN_IO_EXTRA ||
+            !dyn_io_reserve(io_max)) {
+            free(d->plans);
+            free(d->batch);
+            free(d);
+            return 0;
+        }
+        io = 1;
     }
-    d->tmpl = (uint8_t*)malloc(total);
+    d->tmpl = io ? NULL : (uint8_t*)malloc(total);
     d->idx = (uint16_t*)malloc(nidx ? nidx * 2 : 2);
-    if (!d->tmpl || !d->idx) {
+    if ((!io && !d->tmpl) || !d->idx) {
         free(d->tmpl);
         free(d->idx);
+        free(d->plans);
         free(d->batch);
         free(d);
         return 0;
     }
     range_reset(&r);
     dl_decode_all(e->dl, e->nbytes, batch, nb, d->tmpl, &r, d->idx, idx_first);
+    if (io) s_st_dyn_io++;
     d->nbatch = (uint16_t)nb;
     d->total = total;
     d->bytes = bytes;
@@ -2171,7 +2329,7 @@ static int dyn_build(DlEntry* e, uint32_t frame) {
             d->view[i].prim = d->batch[i].prim;
             d->view[i].count = d->batch[i].count;
             d->view[i].offset = d->batch[i].offset;
-            d->view[i].layout = d->batch[i].plan.layout;
+            d->view[i].layout = d->batch[i].plan->layout;
         }
         d->ndraw = (uint16_t)merge_plan(d->view, nb, d->view + nb, d->gfirst, &mtotal);
     }
@@ -2184,6 +2342,7 @@ static int dyn_build(DlEntry* e, uint32_t frame) {
             x->hi = r.hi[a];
             x->base = g_gx.array[a];
             x->hash = dyn_array_hash(x, x->base);
+            x->always = (uint8_t)io;   /* no template to keep it: fetched every call */
         }
     d->sig = vtx_sig(fmts, 0);
     e->fkey = fmt_key(fmts);
@@ -2207,22 +2366,59 @@ static int dyn_build(DlEntry* e, uint32_t frame) {
 #define XGX_DYN_PREFETCH 8   /* 0: no prefetch */
 #endif
 #define DYN_PREFETCH XGX_DYN_PREFETCH
+/* The skinning's output is native floats: positions and normals take a
+ * loop of their own (a 12-byte move, or the normal's CMP pack) instead of
+ * store()'s per-element switch through the stack (round hw9's Main Plaza:
+ * ~5% of the CPU in that loop). The values are store()'s. */
 static void dyn_fetch_batch(const DynList* d, const DynBatch* b, uint8_t attr, const uint8_t* base, uint8_t* out) {
     uint32_t stride = g_gx.array_stride[attr];
     int be = !g_gx.array_le[attr], c;
     for (c = 0; c < b->ncol; c++) {
-        const Slot* sl = &b->plan.slot[b->col_slot[c]];
+        const Slot* sl = &b->plan->slot[b->col_slot[c]];
         const uint16_t* idx = d->idx + b->idx + c;
-        uint8_t* v = out;
-        uint32_t k, n = b->count, vs = b->plan.layout.stride, ahead = DYN_PREFETCH * b->ncol;
+        uint8_t* v;
+        uint32_t k, n = b->count, vs = b->plan->layout.stride, nc = b->ncol, ahead = DYN_PREFETCH * nc;
         if (array_attr(sl) != attr) continue;
-        for (k = 0; k < DYN_PREFETCH && k < n; k++) __builtin_prefetch(base + idx[k * b->ncol] * stride);
-        for (k = 0; k < n; k++, idx += b->ncol, v += vs) {
-            if (DYN_PREFETCH && k + DYN_PREFETCH < n) __builtin_prefetch(base + idx[ahead] * stride);
-            store(sl, base + *idx * stride, be, v);
+        if (sl->dst < 0) continue;   /* consumed only: store() writes nothing */
+        v = out + sl->dst;
+        for (k = 0; k < DYN_PREFETCH && k < n; k++) __builtin_prefetch(base + idx[k * nc] * stride);
+        if (sl->kind == SK_F32_3 && !be) {
+            for (k = 0; k < n; k++, idx += nc, v += vs) {
+                if (DYN_PREFETCH && k + DYN_PREFETCH < n) __builtin_prefetch(base + idx[ahead] * stride);
+                memcpy(v, base + *idx * stride, 12);
+            }
+        } else if (sl->kind == SK_NRM_F32 && !be) {
+            for (k = 0; k < n; k++, idx += nc, v += vs) {
+                float nv[3];
+                if (DYN_PREFETCH && k + DYN_PREFETCH < n) __builtin_prefetch(base + idx[ahead] * stride);
+                memcpy(nv, base + *idx * stride, 12);
+                put_nrm(v, nv);
+            }
+        } else {
+            v = out;
+            for (k = 0; k < n; k++, idx += nc, v += vs) {
+                if (DYN_PREFETCH && k + DYN_PREFETCH < n) __builtin_prefetch(base + idx[ahead] * stride);
+                store_fast(sl, base + *idx * stride, be, v);
+            }
         }
     }
 }
+
+#if XGX_DYN_VERIFY
+/* the reference: store() per vertex, as before the fast loops */
+static void dyn_fetch_batch_ref(const DynList* d, const DynBatch* b, uint8_t attr, const uint8_t* base, uint8_t* out) {
+    uint32_t stride = g_gx.array_stride[attr];
+    int be = !g_gx.array_le[attr], c;
+    for (c = 0; c < b->ncol; c++) {
+        const Slot* sl = &b->plan->slot[b->col_slot[c]];
+        const uint16_t* idx = d->idx + b->idx + c;
+        uint8_t* v = out;
+        uint32_t k, n = b->count, vs = b->plan->layout.stride;
+        if (array_attr(sl) != attr) continue;
+        for (k = 0; k < n; k++, idx += b->ncol, v += vs) store(sl, base + *idx * stride, be, v);
+    }
+}
+#endif
 
 /* The arrays a dynamic call fetches again. Skinned models (Samus's arm
  * cannon; the Landing Site's dynamic lists are 800 KB) fetch positions and
@@ -2239,15 +2435,21 @@ typedef struct {
     uint8_t attr;
     const uint8_t* base;
 } DynFetch;
-static uint8_t s_dyn_scratch[16384] __attribute__((aligned(32)));
 
 /* batch i's vertices with this call's arrays fetched: in the scratch buffer,
  * or fetched into the template itself when the batch doesn't fit it */
 static const uint8_t* dyn_batch_verts(DynList* d, int i, const DynFetch* f, int nf) {
     const DynBatch* b = &d->batch[i];
-    uint32_t bytes = b->count * b->plan.layout.stride;
-    uint8_t* out = d->tmpl + b->offset;
+    uint32_t bytes = b->count * b->plan->layout.stride;
+    uint8_t* out;
     int k;
+    if (!d->tmpl) {   /* index-only: zeroes, then every array (decode_verts' vertices) */
+        out = dyn_io_buf(bytes);
+        memset(out, 0, bytes);
+        for (k = 0; k < nf; k++) dyn_fetch_batch(d, b, f[k].attr, f[k].base, out);
+        return out;
+    }
+    out = d->tmpl + b->offset;
     if (!nf) return out;
     if (bytes <= sizeof s_dyn_scratch) {
         memcpy(s_dyn_scratch, out, bytes);
@@ -2262,7 +2464,7 @@ static const uint8_t* dyn_batch_verts(DynList* d, int i, const DynFetch* f, int 
  * vertex of the one before, kept here: dst is write-combined, and reading
  * it back is an uncached read. */
 static void dyn_emit_group(DynList* d, int from, int end, uint8_t* dst, const DynFetch* f, int nf) {
-    uint32_t s = d->batch[from].plan.layout.stride, have = 0, k;
+    uint32_t s = d->batch[from].plan->layout.stride, have = 0, k;
     uint8_t last[128] __attribute__((aligned(16)));
     int i;
     for (i = from; i < end; i++) {
@@ -2295,9 +2497,10 @@ static uint8_t* dyn_ref(DynList* d, int from, int end, uint32_t bytes, int merge
     uint8_t* want = (uint8_t*)malloc(bytes);
     int i, k;
     if (t && want) {
-        memcpy(t, d->tmpl, d->total);
+        if (d->tmpl) memcpy(t, d->tmpl, d->total);
+        else memset(t, 0, d->total);
         for (i = from; i < end; i++)
-            for (k = 0; k < nf; k++) dyn_fetch_batch(d, &d->batch[i], f[k].attr, f[k].base, t + d->batch[i].offset);
+            for (k = 0; k < nf; k++) dyn_fetch_batch_ref(d, &d->batch[i], f[k].attr, f[k].base, t + d->batch[i].offset);
         if (merged) merge_copy_group(d->view, from, end, t, want);
         else memcpy(want, t + d->batch[from].offset, bytes);
     } else {
@@ -2325,7 +2528,7 @@ static void dyn_verify(DynList* d, int from, int end, uint8_t* want0, const uint
                          memcmp(mine, got, bytes) ? "differs from" : "matches");
                 free(mine);
             }
-            uint32_t at = 0, s = d->batch[from].plan.layout.stride, ndiff = 0, o;
+            uint32_t at = 0, s = d->batch[from].plan->layout.stride, ndiff = 0, o;
             while (want[at] == got[at]) at++;
             for (o = at; o < bytes; o++) ndiff += want[o] != got[o];
             xhw_logf("[DLC] dyn verify: batches %d-%d (%u bytes, %d fetched) differ: first at %u (vertex %u byte %u of "
@@ -2399,9 +2602,9 @@ static int dyn_call(DlEntry* e, uint32_t frame) {
     }
     for (i = d->view && i < d->ndraw ? d->gfirst[i] : d->view ? d->nbatch : 0; i < d->nbatch; i++) {
         const DynBatch* b = &d->batch[i];
-        uint32_t bytes = b->count * b->plan.layout.stride;
+        uint32_t bytes = b->count * b->plan->layout.stride;
         uint8_t* v;
-        if (!b->count || !(v = (uint8_t*)xgx_vtx_alloc(b->count, b->plan.layout.stride))) continue;
+        if (!b->count || !(v = (uint8_t*)xgx_vtx_alloc(b->count, b->plan->layout.stride))) continue;
 #if XGX_DYN_VERIFY
         want0 = dyn_ref(d, i, i + 1, bytes, 0, fetch, nf);
 #endif
@@ -2409,7 +2612,7 @@ static int dyn_call(DlEntry* e, uint32_t frame) {
 #if XGX_DYN_VERIFY
         dyn_verify(d, i, i + 1, want0, v, bytes, 0, fetch, nf);
 #endif
-        xgx_draw(b->prim, b->count, &b->plan.layout, &g_xgx);
+        xgx_draw(b->prim, b->count, &b->plan->layout, &g_xgx);
         g_xgx.dirty = 0;
     }
     e->last_used = s_dlc_lru[e - s_dlc] = frame;
@@ -2464,7 +2667,7 @@ static int dlc_call(const uint8_t* dl, uint32_t nbytes) {
         dlc_release(e);   /* changed: rebuild below */
         if (++e->rebuilds >= DLC_VOLATILE) {
             if (dyn_build(e, frame)) return dyn_call(e, frame);
-            log_volatile(e, "no dynamic form");
+            log_volatile(e, s_dyn_why);
             e->is_volatile = 1;
             e->vol_retry = frame + DLC_DYN_RETRY;
             return 0;
@@ -2488,10 +2691,17 @@ static int dlc_call(const uint8_t* dl, uint32_t nbytes) {
         s_dlc_n++;
     }
     if (!e->mem) {
+        /* A build that found no room tries again only DLC_BUILD_RETRY frames
+         * on: with the vertex pool full (the Frigate's fights, round hw9) a
+         * failed build had scanned, decoded and tried evictions on every
+         * call, and the list was then decoded again to draw. */
+        if (!e->is_volatile && e->vol_retry && (int32_t)(frame - e->vol_retry) < 0) return 0;
         if (!dlc_build(e, frame)) {
             log_uncached(dl, nbytes, s_build_why);
+            if (!e->is_volatile) e->vol_retry = frame + DLC_BUILD_RETRY;
             return 0;
         }
+        e->vol_retry = 0;
 #if XGX_CENSUS
         cen_build(e, (int)(e - s_dlc));
 #endif
@@ -2540,20 +2750,22 @@ static void memb_log(void) {
 void gx_vtx_frame_end(void) {
     if (XHW_MEMB && xhw_mem_breakdown_due(XHW_MEMB)) memb_log();
     if (xgx_present_count() % XGX_STATS_EVERY == 0 && s_dlc_ready) {
-        int i, vol = 0, dyn = 0;
+        int i, vol = 0, dyn = 0, io = 0;
         for (i = 0; i < DLC_MAX; i++) {
             vol += s_dlc[i].dl && s_dlc[i].is_volatile;
             dyn += s_dlc[i].dl && s_dlc[i].dyn;
+            io += s_dlc[i].dl && s_dlc[i].dyn && !s_dlc[i].dyn->tmpl;
         }
-        xhw_logf("[DLC] %d of %d lists (%d dynamic, %u KB; %d volatile), vertex pool %u of %u KB free | per %u: %u "
-                 "cached calls, %u builds (%u after a format/array change, %u after a content change; %u batches "
-                 "joined), %u dynamic calls (%u array fetches, %u builds), %u decoded | immediate: %u batches, %u "
-                 "joined, %u short",
-                 s_dlc_n, DLC_MAX, dyn, s_dyn_bytes / 1024, vol, xgx_vbuf_pool_free_kb(), xgx_vbuf_pool_kb(),
+        xhw_logf("[DLC] %d of %d lists (%d dynamic, %d of them index-only, %u KB; %d volatile), vertex pool %u of %u "
+                 "KB free | per %u: %u cached calls, %u builds (%u after a format/array change, %u after a content "
+                 "change; %u batches joined), %u dynamic calls (%u array fetches, %u builds, %u index-only), %u "
+                 "decoded | immediate: %u batches, %u joined, %u short",
+                 s_dlc_n, DLC_MAX, dyn, io, s_dyn_bytes / 1024, vol, xgx_vbuf_pool_free_kb(), xgx_vbuf_pool_kb(),
                  XGX_STATS_EVERY, s_st_dl_hits, s_st_dl_builds, s_st_chg_sig, s_st_chg_data, s_st_dl_joined,
-                 s_st_dyn_calls, s_st_dyn_fetch, s_st_dyn_builds, s_st_dl_direct, s_st_imm_batches, s_st_imm_joined,
-                 s_st_imm_short);
+                 s_st_dyn_calls, s_st_dyn_fetch, s_st_dyn_builds, s_st_dyn_io, s_st_dl_direct, s_st_imm_batches,
+                 s_st_imm_joined, s_st_imm_short);
         s_st_dl_hits = s_st_dl_builds = s_st_dl_direct = s_st_dyn_calls = s_st_dyn_fetch = s_st_dyn_builds = 0;
+        s_st_dyn_io = 0;
         s_st_chg_sig = s_st_chg_data = s_st_dl_joined = s_st_imm_batches = s_st_imm_joined = s_st_imm_short = 0;
         {
             char line[256];
@@ -2578,6 +2790,7 @@ void gx_vtx_frame_end(void) {
 #if XGX_DYN_VERIFY
         xhw_logf("[DLC] dyn verify: %u draws, %u differ (%u more with arrays that changed during the call)",
                  s_dynv_draws, s_dynv_bad, s_dynv_moved);
+        xhw_logf("[DLC] snow verify: %u quads, %u calls differ", s_snowv_quads, s_snowv_bad);
 #endif
     }
 }
@@ -2703,6 +2916,88 @@ int GXPortRainLines(const short* xyz, unsigned n, short dz, unsigned short c0, u
     }
     B.done += 2 * n;
     if (n && B.done < B.expected) memset(B.cur, 0, s);   /* after_attr's clear of the next vertex */
+    return 1;
+}
+
+/* port_xbox_gx.h: the snow's (and the underwater flakes') quads in one call,
+ * where the open batch is exactly a direct S16 position then a direct U8
+ * TEX0 (vertex format 6 as CEnvFxManagerGrid::RenderSnowParticles sets it):
+ * four GXPosition3s16 + GXTexCoord2u8 pairs a flake, ~10% of the console's
+ * CPU in Phendrana (round hw7). Flakes go last to first, as the game's
+ * loop; corners p, p + up, p + up + right, p + right in the game's short
+ * sums; texture corners (0,0) (0,2) (2,2) (2,0). */
+int GXPortSnowQuads(const short* xyz, unsigned n, const short up[3], const short right[3]) {
+    const Slot *ps, *ts;
+    uint32_t i, k;
+    float sc, tc2;
+    if (!B.open || !B.base || B.cursor != 0 || B.plan.n != 2 || B.done > B.expected ||
+        B.expected - B.done < 4 * n)
+        return 0;
+    ps = &B.plan.slot[0];
+    ts = &B.plan.slot[1];
+    if (ps->attr != GX_VA_POS || ps->type != GX_DIRECT || ps->kind != SK_S16_3 || ps->dst != 0) return 0;
+    if (ts->attr != GX_VA_TEX0 || ts->type != GX_DIRECT || ts->dst != 12 || B.plan.layout.stride != 20) return 0;
+    for (k = GX_VA_TEX0; k <= GX_VA_TEX7; k++)   /* tq's format: the first texture coordinate in the descriptor */
+        if (g_gx.desc[k] != GX_NONE) break;
+    if (k != GX_VA_TEX0) return 0;
+    sc = ps->scale;
+    tc2 = 2.0f * k_frac_scale[g_gx.vat[B.vtxfmt][GX_VA_TEX0].frac & 31];
+#if XGX_DYN_VERIFY
+    uint8_t* v_start = B.cur;
+    uint32_t v_done = B.done;
+#endif
+    for (i = n; i-- > 0;) {
+        const short* p = xyz + 3 * i;
+        s16 c[4][3];
+        float* o = (float*)B.cur;
+        for (k = 0; k < 3; k++) {
+            c[0][k] = p[k];
+            c[1][k] = (s16)(c[0][k] + up[k]);
+            c[2][k] = (s16)(c[1][k] + right[k]);
+            c[3][k] = (s16)(c[2][k] - up[k]);
+        }
+        for (k = 0; k < 4; k++, o += 5) {
+            o[0] = c[k][0] * sc;
+            o[1] = c[k][1] * sc;
+            o[2] = c[k][2] * sc;
+            o[3] = k >= 2 ? tc2 : 0.0f;
+            o[4] = k == 1 || k == 2 ? tc2 : 0.0f;
+        }
+        B.cur += 4 * 20;
+    }
+    B.done += 4 * n;
+    if (n && B.done < B.expected) memset(B.cur, 0, 20);   /* after_attr's clear of the next vertex */
+#if XGX_DYN_VERIFY
+    {   /* the same quads again through the calls' old paths, compared */
+        uint32_t bytes = 4 * n * 20;
+        uint8_t* mine = (uint8_t*)malloc(bytes);
+        if (mine) {
+            memcpy(mine, v_start, bytes);
+            B.cur = v_start;
+            B.done = v_done;
+            B.cursor = 0;
+            memset(B.cur, 0, 20);
+            for (i = n; i-- > 0;) {
+                const short* p = xyz + 3 * i;
+                s16 x = p[0], y = p[1], z = p[2];
+                GXPosition3s16(x, y, z);
+                imm_tex(tq(0), tq(0));
+                x += up[0], y += up[1], z += up[2];
+                GXPosition3s16(x, y, z);
+                imm_tex(tq(0), tq(2));
+                x += right[0], y += right[1], z += right[2];
+                GXPosition3s16(x, y, z);
+                imm_tex(tq(2), tq(2));
+                x -= up[0], y -= up[1], z -= up[2];
+                GXPosition3s16(x, y, z);
+                imm_tex(tq(2), tq(0));
+            }
+            s_snowv_quads += n;
+            if (memcmp(mine, v_start, bytes) != 0) s_snowv_bad++;
+            free(mine);
+        }
+    }
+#endif
     return 1;
 }
 

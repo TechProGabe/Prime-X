@@ -489,7 +489,7 @@ static uint16_t codec_power_up(int* wrote) {
 /* [AUDIO] found: the AC97 and the APU as the previous XBE left them. The
  * moving parts (CIV, PICB, the APU's sample counter, the DSPs' output
  * FIFO positions) are read twice, 5 ms apart: what moves is running. */
-static void audio_found(void) {
+static void audio_found(int xemu) {
     volatile uint32_t* m = (volatile uint32_t*)ACI;
     volatile uint8_t* apu = apu_io();
     uint32_t pci_aci = pci_read32(PCI_ACI, 0x04), pci_apu = pci_read32(PCI_APU, 0x04);
@@ -527,7 +527,13 @@ static void audio_found(void) {
     else
         xhw_logf("[AUDIO] found: apu not mapped (pci %08x bar %08x)", (unsigned)pci_apu,
                  (unsigned)pci_read32(PCI_APU, 0x10));
-    if (codec_ready())
+    /* Round hw9: the sixth XBE of a chain froze on these reads, before the
+     * idle step (the CPU held on the bus, no hang.log), as hw7's did on the
+     * first read after the reset. They read 0000 on the console in every
+     * boot logged, so only xemu's codec is read here too. */
+    if (!xemu)
+        xhw_log("[AUDIO] found: codec not read on the console");
+    else if (codec_ready())
         xhw_logf("[AUDIO] found: codec 26 %04x 2a %04x 2c %04x 02 %04x 18 %04x vendor %04x%04x", codec_read(0x26),
                  codec_read(0x2A), codec_read(0x2C), codec_read(0x02), codec_read(0x18), codec_read(0x7C),
                  codec_read(0x7E));
@@ -583,7 +589,7 @@ int xhw_audio_init(uint32_t rate) {
         memset(s_outbuf[i], 0, OUT_FRAMES * 4);
     }
     xemu = running_in_xemu();
-    audio_found();
+    audio_found(xemu);
     /* Round hw4: the third XBE of a chain froze here (after "found", before
      * "idle"), with no hang.log. Each step is on disk before it runs, so the
      * next one says which. */
