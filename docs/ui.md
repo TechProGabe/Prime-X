@@ -97,6 +97,7 @@ from Melee and Animal Crossing, all the typical stuff in settings", and
 | Display | Widescreen HUD | Inner / Edges ("Centred" overlapped the divider, round hw5) | `[game] hud_wide` |
 | Display | Field of View | 55 (retail) / 65 / 75 | `[game] fov` |
 | Display | Frame Rate | Hide / Show (the counter in the corner) | `[video] fps` |
+| Display | Game Timing | Fixed (retail: 60 game updates a second, catching up after a slow frame) / Flex (one update a frame with dt = the frame's time, MetroidPrimePort's adaptive mode, at most 1/30 s: more fps on a CPU-bound console) | `[game] game_timing` |
 | Display | Video Mode | 480i / 480p / 720p, each only where the dashboard allows it | `[video] 720p`, `progressive` |
 | Controller | Rumble Strength | Low / Medium / Full (40 / 70 / 100%; the retail Rumble row stays On/Off) | `[input] rumble` |
 | Controller | Stick Dead Zone | Low / Medium / High (10 / 20 / 30%) | `[portN] stick_deadzone` (all four) |
@@ -126,7 +127,7 @@ frame has four categories of five rows and doesn't scroll):
 |---|---|
 | Video | Video (Next Start), Widescreen, Widescreen HUD, Field of View, Frame Rate |
 | Controller | Rumble Strength, Stick Dead Zone, C-Stick Dead Zone, Trigger Click |
-| Gameplay | Skip Cutscenes (Off / On: randomprime's skippable-cutscene patches, from MetroidPrimePort, applied to each room as it loads; START skips any cinematic) |
+| Gameplay | Skip Cutscenes (Off / On: randomprime's skippable-cutscene patches, from MetroidPrimePort, applied to each room as it loads; START skips any cinematic), Game Timing (Fixed / Flex) |
 | System | Screen Capture, Fusion Suit (Off / On: the GBA-link bonus, which an Xbox can't link for; kept in the game's save as on the GameCube). Check Disc was removed: L+R+Y at boot does it |
 
 It is also a row of the main menu itself, in place of "Metroid Fusion

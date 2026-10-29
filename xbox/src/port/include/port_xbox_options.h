@@ -25,6 +25,7 @@ enum EOption {
   kXO_Screenshots,               // Off / On (Back saves shotNN.bmp)
   kXO_FusionSuit,                // Off / On: the GBA-link bonus, unlocked here (title screen)
   kXO_SkipCutscenes,             // Off / On: every cutscene skippable (from the next room)
+  kXO_GameTiming,                // Fixed / Flex: game updates 60 a second, or one per frame
   // Buttons: what each Xbox button does, a carousel of the game's actions
   // (IsList): A, B, X, Y, White, Black, Start, Back, the stick clicks
   kXO_BindFirst,
