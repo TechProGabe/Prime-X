@@ -148,7 +148,8 @@ Done 2026-10-28 (afternoon and evening), newest first:
    cannon in Chozo (dark metal with its reflection, not white), the view
    after Morph Ball, the title's Port Options Video rows, fps against hw5
    (Main Plaza 21-46), then the same with **Game Timing: Flex**. The
-   profile is fresh (2026-10-29); retrain again only if much code moved.
+   profile is fresh (retrained after the display-list changes, `a445123`,
+   2026-10-29); retrain again only if much code moved.
 2. If memory still runs out on red: another reclaimer is easy to add
    (`xhw_mem_add_reclaim`); left: the display lists' dynamic templates
    (malloc: freed memory mostly stays in the heap).
