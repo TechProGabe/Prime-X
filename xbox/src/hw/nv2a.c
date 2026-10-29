@@ -364,6 +364,7 @@ uint32_t xgx_vbuf_pool_free_kb(void) { return (s_vb.bytes - s_vb.used) / 1024; }
 
 static uint8_t* s_ring;
 static uint32_t s_ring_pos;
+static uint32_t s_ring_gen = 1;   /* bumped whenever the ring starts over: older vertices may be overwritten */
 static const uint8_t* s_draw_base;   /* the next draw's vertices: ring or a cached buffer */
 
 /* ======================================================================
@@ -1387,6 +1388,7 @@ static void frame_open(void) {
         pb_end(p);
     }
     s_ring_pos = 0;
+    s_ring_gen++;
     s_frame_open = 1;
     s_open_ns = xhw_time_ns();
     /* the bars outside the content rect, and a defined EFB. Not when the
@@ -1414,6 +1416,7 @@ static void pb_budget(void) {
     pb_reset();
     s_pb_base = pb_begin();
     s_ring_pos = 0;
+    s_ring_gen++;
 }
 
 #ifndef XGX_STATS_EVERY
@@ -2654,6 +2657,7 @@ void* xgx_vtx_alloc(uint32_t count, uint32_t stride) {
         wait_idle();   /* the GPU still reads the older part */
         pb_open();
         s_ring_pos = 0;
+        s_ring_gen++;
     }
     /* at a multiple of the stride from the ring's start: see xgx_draw */
     s_draw_base = s_ring + (s_ring_pos + stride - 1) / stride * stride;
@@ -2661,10 +2665,13 @@ void* xgx_vtx_alloc(uint32_t count, uint32_t stride) {
         wait_idle();
         pb_open();
         s_draw_base = s_ring;
+        s_ring_gen++;
     }
     s_ring_pos = (uint32_t)(s_draw_base - s_ring) + bytes;
     return (void*)s_draw_base;
 }
+
+uint32_t xgx_vtx_ring_gen(void) { return s_ring_gen; }
 
 uint32_t xgx_vbuf_offset(const void* p) { return (uint32_t)((const uint8_t*)p - s_vb.base); }
 

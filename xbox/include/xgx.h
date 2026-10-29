@@ -186,6 +186,9 @@ int xgx_init(void);
 /* Vertex space for up to `count` vertices of `stride` bytes; the pointer
  * stays valid until the matching xgx_draw. NULL: too many (split the draw). */
 void* xgx_vtx_alloc(uint32_t count, uint32_t stride);
+/* changes whenever the vertex ring starts over (a new frame, a wrap): ring
+ * vertices allocated under one value stay intact while it holds */
+uint32_t xgx_vtx_ring_gen(void);
 void xgx_draw(uint32_t prim, uint32_t count, const XgxLayout* layout, XgxState* st);
 /* Clear the current EFB region (logical rect) to the given colour / depth. */
 void xgx_clear(const int32_t rect[4], const uint8_t rgba[4], uint32_t z24, int color, int alpha, int depth);

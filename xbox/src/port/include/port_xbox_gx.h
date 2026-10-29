@@ -24,6 +24,13 @@ int GXPortRainLines(const short* xyz, unsigned n, short dz, unsigned short c0, u
 // that layout and nothing was written (make the calls).
 int GXPortSnowQuads(const short* xyz, unsigned n, const short up[3], const short right[3]);
 
+// The CPU skinning wrote these buffers (positions, normals; either may be
+// null): a display list drawn from them again in the same frame may reuse
+// the vertices it sent before only while they haven't been written since.
+void GXPortSkinWritten(const void* verts, const void* normals);
+// The buffers are freed: forget them (their memory may become anything).
+void GXPortSkinForget(const void* verts, const void* normals);
+
 #ifdef __cplusplus
 }
 #endif

@@ -10,6 +10,9 @@
 #include "Kyoto/Graphics/CModelFlags.hpp"
 
 #include <dolphin/PPCArch.h>
+#ifdef TARGET_XBOX
+#include "port_xbox_gx.h" // PORT_XBOX: GXPortSkinWritten, GXPortSkinForget
+#endif
 #include <dolphin/gx.h>
 #include <dolphin/os.h>
 #include <dolphin/os/OSCache.h>
@@ -191,7 +194,15 @@ CSkinnedModel::CSkinnedModel(const CSkinnedModel& other)
   Construct();
 }
 
-CSkinnedModel::~CSkinnedModel() { Skinning::DelSkinnedRef(); }
+CSkinnedModel::~CSkinnedModel() {
+#ifdef TARGET_XBOX
+  // PORT_XBOX: the workspace goes; the GX layer stops trusting its contents
+  if (!x38_owned && !x28_vertWorkspace.null()) {
+    GXPortSkinForget(x28_vertWorkspace.get(), x30_normalWorkspace.get());
+  }
+#endif
+  Skinning::DelSkinnedRef();
+}
 
 #ifdef TARGET_PC
 // Bytes per skinned normal: nine floats (N, B, T) when the model has NBT normals, fifteen with a second frame.
@@ -386,6 +397,13 @@ void CSkinnedModel::Calculate(const CPoseAsTransforms& pose,
     DCFlushRange(verts, alignedVertSize);
   }
 
+#ifdef TARGET_XBOX
+  // PORT_XBOX: tell the GX layer these buffers changed (GXPortSkinWritten):
+  // a display list drawn from them again this frame must send them again
+  if (!portSkinSame) {
+    GXPortSkinWritten(verts, reinterpret_cast< uchar* >(verts) + alignedVertSize);
+  }
+#endif
   if (sPointGen != nullptr) {
     const CVector3f* positions = reinterpret_cast< const CVector3f* >(verts);
     sPointGen(sPointGenData, positions, positions + x10_skinRules->GetNumPoints(),

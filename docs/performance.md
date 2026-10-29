@@ -224,6 +224,15 @@ of it measured on a console yet (no more console rounds, the user's call):
   transforms over the same source arrays (a hash a model; not for owned
   workspaces or morphs). Lockstep shots of the Frigate-crash pirate show
   its pose changing frame to frame as before.
+- Two dynamic-list calls in three in Main Plaza (the arm cannon's
+  instances and passes) drew a list already drawn that frame, fetching and
+  copying the same skinned vertices again. The skinning now reports the
+  buffers it writes (`GXPortSkinWritten`, a generation each); a call from
+  the same arrays, unwritten since, in the same frame and ring generation,
+  draws the earlier call's ring vertices (four kept a list, by arrays).
+  xemu: 9600 of 11400 repeat calls reused in Main Plaza, verify 0 differ.
+  Pirates use shared skin buffers taken per draw and don't qualify.
+  `-DXGX_DYN_REUSE=0` turns it off.
 - Found, not changed: the HUD minimap (`CMapWorld::Draw`) is 150-300
   immediate draws every frame of play (each surface's fill and outline,
   alternating triangles and lines, a `GXSetTevKColor` between each).

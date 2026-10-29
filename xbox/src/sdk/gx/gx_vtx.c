@@ -1460,6 +1460,18 @@ typedef struct {
     const Plan* plan;              /* in the list's plans: its batches share a few (one a vertex format) */
 } DynBatch;
 
+/* one call's vertices left in the ring: its draws' pointers, the frame and
+ * ring generation, and each fetched array with its skin generation
+ * (dyn_skin_gen) */
+#define DYN_RU_SLOTS 4
+typedef struct {
+    const void** v;
+    uint32_t frame, ring;
+    const uint8_t* base[DLC_MAX_RANGE];
+    uint32_t gen[DLC_MAX_RANGE];
+    uint8_t nf, ok;
+} DynReuse;
+
 typedef struct {
     DynBatch* batch;
     Plan* plans;                   /* the batches' distinct plans (at most one a vertex format) */
@@ -1471,6 +1483,11 @@ typedef struct {
     uint32_t bytes;                /* charged to the budget */
     uint32_t sig, dl_hash, dl_qhash;
     uint16_t dl_stable;            /* the list's own checks passed in a row (dyn_dl_changed) */
+    /* the last calls' vertices in the ring, for another call of the list in
+     * the same frame from the same arrays (dyn_call): one per model instance
+     * drawing it (the arm cannon's several), round robin */
+    DynReuse ru[DYN_RU_SLOTS];
+    uint8_t ru_next;
     DynArray arr[DLC_MAX_RANGE];
     uint8_t narr;
     uint16_t nbatch, ndraw;
@@ -1545,6 +1562,8 @@ static uint32_t s_st_dl_hits, s_st_dl_builds, s_st_dl_direct, s_st_dyn_calls, s_
 static uint32_t s_st_chg_sig, s_st_chg_data;   /* why cached lists were rebuilt: formats/arrays, or contents */
 static uint32_t s_st_dl_joined;               /* batches drawn as part of the one before */
 static uint32_t s_st_dyn_io;                  /* dynamic builds without a template (index-only) */
+static uint32_t s_st_dyn_again;               /* dynamic calls of a list already called this frame */
+static uint32_t s_st_dyn_reused;              /* ... that drew the earlier call's vertices again */
 static const char* s_dyn_why = "no dynamic form";   /* why dyn_build last refused, for log_volatile */
 static const char* s_build_why;               /* why the last build failed, for log_uncached */
 
@@ -1644,6 +1663,10 @@ static void dyn_free(DlEntry* e) {
     free(d->gfirst);
     free(d->batch);
     free(d->plans);
+    {
+        int k;
+        for (k = 0; k < DYN_RU_SLOTS; k++) free(d->ru[k].v);
+    }
     free(d->tmpl);
     free(d->idx);
     free(d);
@@ -2600,6 +2623,91 @@ static void log_volatile(const DlEntry* e, const char* why) {
              e->nbytes, e->fmts, e->rebuilds, why);
 }
 
+/* ---- skin workspaces (port_xbox_gx.h GXPortSkinWritten) ----
+ * The game's CPU skinning tells which buffers it writes and when; each gets
+ * a generation that changes with every write. A dynamic list drawn again
+ * in the same frame (the arm cannon's passes: two calls in three in Main
+ * Plaza) draws the earlier call's ring vertices again when every array it
+ * fetches is such a buffer, unwritten since. Open addressing, tombstones
+ * reused. */
+#ifndef XGX_DYN_REUSE
+#define XGX_DYN_REUSE 1   /* 0: fetch and copy on every call, as before */
+#endif
+#define SKIN_REG 256
+#define SKIN_GONE ((const void*)1)
+typedef struct {
+    const void* p;
+    uint32_t gen;
+} SkinReg;
+static SkinReg s_skinreg[SKIN_REG];
+static uint32_t s_skin_gen = 1;
+
+static SkinReg* skin_slot(const void* p, int add) {
+    uint32_t h = ((uint32_t)(uintptr_t)p >> 5) * 2654435761u >> 24, k;
+    SkinReg* free_slot = NULL;
+    for (k = 0; k < SKIN_REG; k++) {
+        SkinReg* r = &s_skinreg[(h + k) & (SKIN_REG - 1)];
+        if (r->p == p) return r;
+        if (r->p == SKIN_GONE) {
+            if (!free_slot) free_slot = r;
+            continue;
+        }
+        if (!r->p) {
+            if (!add) return NULL;
+            if (!free_slot) free_slot = r;
+            break;
+        }
+    }
+    if (!add || !free_slot) return NULL;
+    free_slot->p = p;
+    return free_slot;
+}
+
+void GXPortSkinWritten(const void* verts, const void* normals) {
+    SkinReg* r;
+    if (verts && (r = skin_slot(verts, 1))) r->gen = ++s_skin_gen;
+    if (normals && (r = skin_slot(normals, 1))) r->gen = ++s_skin_gen;
+}
+
+void GXPortSkinForget(const void* verts, const void* normals) {
+    SkinReg* r;
+    if (verts && (r = skin_slot(verts, 0))) r->p = SKIN_GONE;
+    if (normals && (r = skin_slot(normals, 0))) r->p = SKIN_GONE;
+}
+
+/* 0: a is not a skin buffer (it may change without a word) */
+static uint32_t dyn_skin_gen(const uint8_t* a) {
+    const SkinReg* r = skin_slot(a, 0);
+    return r ? r->gen : 0;
+}
+
+/* an earlier call's vertices from these arrays, still right and still in
+ * the ring; NULL: none */
+static const DynReuse* dyn_reusable(const DynList* d, uint32_t frame, const DynFetch* f, int nf) {
+    uint32_t ring = xgx_vtx_ring_gen();
+    int j, k;
+    if (!XGX_DYN_REUSE) return NULL;
+    for (j = 0; j < DYN_RU_SLOTS; j++) {
+        const DynReuse* r = &d->ru[j];
+        if (!r->ok || r->frame != frame || r->ring != ring || nf != r->nf) continue;
+        for (k = 0; k < nf; k++)
+            if (f[k].base != r->base[k] || dyn_skin_gen(f[k].base) != r->gen[k]) break;
+        if (k == nf) return r;
+    }
+    return NULL;
+}
+
+/* where this call's vertices are kept: the slot of the same arrays, else
+ * the next in turn */
+static DynReuse* dyn_reuse_slot(DynList* d, const DynFetch* f, int nf) {
+    int j;
+    for (j = 0; j < DYN_RU_SLOTS; j++)
+        if (d->ru[j].nf == nf && nf && d->ru[j].base[0] == f[0].base) return &d->ru[j];
+    j = d->ru_next;
+    d->ru_next = (uint8_t)((j + 1) % DYN_RU_SLOTS);
+    return &d->ru[j];
+}
+
 /* 1: drawn from the dynamic template */
 static int dyn_call(DlEntry* e, uint32_t frame) {
     DynList* d = e->dyn;
@@ -2641,36 +2749,92 @@ static int dyn_call(DlEntry* e, uint32_t frame) {
         fetch[nf++].base = base;
         s_st_dyn_fetch++;
     }
-    for (i = 0; d->view && i < d->ndraw; i++) {
-        const DlBatch* b = &d->view[d->nbatch + i];
-        int end = i + 1 < d->ndraw ? d->gfirst[i + 1] : d->nbatch;
-        uint8_t* v = (uint8_t*)xgx_vtx_alloc(b->count, b->layout.stride);
-        if (!v) break;   /* too big for the ring as one: batch by batch below */
+    const DynReuse* ru = dyn_reusable(d, frame, fetch, nf);
+    if (ru) {
+        /* the same draws over the vertices the earlier call left in the ring */
+        for (i = 0; d->view && i < d->ndraw; i++) {
+            const DlBatch* b = &d->view[d->nbatch + i];
 #if XGX_DYN_VERIFY
-        want0 = dyn_ref(d, d->gfirst[i], end, b->count * b->layout.stride, 1, fetch, nf);
+            int end = i + 1 < d->ndraw ? d->gfirst[i + 1] : d->nbatch;
+            dyn_verify(d, d->gfirst[i], end, dyn_ref(d, d->gfirst[i], end, b->count * b->layout.stride, 1, fetch, nf),
+                       (const uint8_t*)ru->v[i], b->count * b->layout.stride, 1, fetch, nf);
 #endif
-        dyn_emit_group(d, d->gfirst[i], end, v, fetch, nf);
+            xgx_vtx_use(ru->v[i]);
+            xgx_draw(b->prim, b->count, &b->layout, &g_xgx);
+            g_xgx.dirty = 0;
+        }
+        for (i = d->view ? d->nbatch : 0; i < d->nbatch; i++) {
+            const DynBatch* b = &d->batch[i];
+            if (!b->count) continue;
 #if XGX_DYN_VERIFY
-        dyn_verify(d, d->gfirst[i], end, want0, v, b->count * b->layout.stride, 1, fetch, nf);
+            dyn_verify(d, i, i + 1, dyn_ref(d, i, i + 1, b->count * b->plan->layout.stride, 0, fetch, nf),
+                       (const uint8_t*)ru->v[d->ndraw + i], b->count * b->plan->layout.stride, 0, fetch, nf);
 #endif
-        xgx_draw(b->prim, b->count, &b->layout, &g_xgx);
-        g_xgx.dirty = 0;
+            xgx_vtx_use(ru->v[d->ndraw + i]);
+            xgx_draw(b->prim, b->count, &b->plan->layout, &g_xgx);
+            g_xgx.dirty = 0;
+        }
+        s_st_dyn_reused++;
+    } else {
+        uint32_t ring = xgx_vtx_ring_gen();
+        int ok = XGX_DYN_REUSE;
+        DynReuse* keep = ok ? dyn_reuse_slot(d, fetch, nf) : NULL;
+        if (keep) keep->ok = 0;
+        if (ok && !keep->v) {
+            keep->v = (const void**)calloc((size_t)d->ndraw + d->nbatch, sizeof *keep->v);
+            ok = keep->v != NULL;
+        }
+        for (i = 0; d->view && i < d->ndraw; i++) {
+            const DlBatch* b = &d->view[d->nbatch + i];
+            int end = i + 1 < d->ndraw ? d->gfirst[i + 1] : d->nbatch;
+            uint8_t* v = (uint8_t*)xgx_vtx_alloc(b->count, b->layout.stride);
+            if (!v) break;   /* too big for the ring as one: batch by batch below */
+#if XGX_DYN_VERIFY
+            want0 = dyn_ref(d, d->gfirst[i], end, b->count * b->layout.stride, 1, fetch, nf);
+#endif
+            dyn_emit_group(d, d->gfirst[i], end, v, fetch, nf);
+#if XGX_DYN_VERIFY
+            dyn_verify(d, d->gfirst[i], end, want0, v, b->count * b->layout.stride, 1, fetch, nf);
+#endif
+            if (ok) keep->v[i] = v;
+            xgx_draw(b->prim, b->count, &b->layout, &g_xgx);
+            g_xgx.dirty = 0;
+        }
+        if (d->view && i < d->ndraw) ok = 0;   /* batch by batch: not kept */
+        for (i = d->view && i < d->ndraw ? d->gfirst[i] : d->view ? d->nbatch : 0; i < d->nbatch; i++) {
+            const DynBatch* b = &d->batch[i];
+            uint32_t bytes = b->count * b->plan->layout.stride;
+            uint8_t* v;
+            if (!b->count) continue;
+            if (!(v = (uint8_t*)xgx_vtx_alloc(b->count, b->plan->layout.stride))) {
+                ok = 0;
+                continue;
+            }
+#if XGX_DYN_VERIFY
+            want0 = dyn_ref(d, i, i + 1, bytes, 0, fetch, nf);
+#endif
+            memcpy(v, dyn_batch_verts(d, i, fetch, nf), bytes);
+#if XGX_DYN_VERIFY
+            dyn_verify(d, i, i + 1, want0, v, bytes, 0, fetch, nf);
+#endif
+            if (ok) keep->v[d->ndraw + i] = v;
+            xgx_draw(b->prim, b->count, &b->plan->layout, &g_xgx);
+            g_xgx.dirty = 0;
+        }
+        /* kept only if every array is a skin buffer and the ring didn't
+         * start over while the vertices went in */
+        for (i = 0; ok && i < nf; i++) {
+            keep->base[i] = fetch[i].base;
+            if (!(keep->gen[i] = dyn_skin_gen(fetch[i].base))) ok = 0;
+        }
+        if (keep) {
+            keep->ok = (uint8_t)(ok && xgx_vtx_ring_gen() == ring);
+            keep->nf = (uint8_t)nf;
+            keep->frame = frame;
+            keep->ring = ring;
+        }
     }
-    for (i = d->view && i < d->ndraw ? d->gfirst[i] : d->view ? d->nbatch : 0; i < d->nbatch; i++) {
-        const DynBatch* b = &d->batch[i];
-        uint32_t bytes = b->count * b->plan->layout.stride;
-        uint8_t* v;
-        if (!b->count || !(v = (uint8_t*)xgx_vtx_alloc(b->count, b->plan->layout.stride))) continue;
-#if XGX_DYN_VERIFY
-        want0 = dyn_ref(d, i, i + 1, bytes, 0, fetch, nf);
-#endif
-        memcpy(v, dyn_batch_verts(d, i, fetch, nf), bytes);
-#if XGX_DYN_VERIFY
-        dyn_verify(d, i, i + 1, want0, v, bytes, 0, fetch, nf);
-#endif
-        xgx_draw(b->prim, b->count, &b->plan->layout, &g_xgx);
-        g_xgx.dirty = 0;
-    }
+    s_st_dyn_again += e->last_used == frame;
     e->last_used = s_dlc_lru[e - s_dlc] = frame;
     s_st_dyn_calls++;
     return 1;
@@ -2814,14 +2978,14 @@ void gx_vtx_frame_end(void) {
         }
         xhw_logf("[DLC] %d of %d lists (%d dynamic, %d of them index-only, %u KB; %d volatile), vertex pool %u of %u "
                  "KB free | per %u: %u cached calls, %u builds (%u after a format/array change, %u after a content "
-                 "change; %u batches joined), %u dynamic calls (%u array fetches, %u builds, %u index-only), %u "
+                 "change; %u batches joined), %u dynamic calls (%u array fetches, %u builds, %u index-only, %u again, %u reused), %u "
                  "decoded | immediate: %u batches, %u joined, %u short",
                  s_dlc_n, DLC_MAX, dyn, io, s_dyn_bytes / 1024, vol, xgx_vbuf_pool_free_kb(), xgx_vbuf_pool_kb(),
                  XGX_STATS_EVERY, s_st_dl_hits, s_st_dl_builds, s_st_chg_sig, s_st_chg_data, s_st_dl_joined,
-                 s_st_dyn_calls, s_st_dyn_fetch, s_st_dyn_builds, s_st_dyn_io, s_st_dl_direct, s_st_imm_batches,
+                 s_st_dyn_calls, s_st_dyn_fetch, s_st_dyn_builds, s_st_dyn_io, s_st_dyn_again, s_st_dyn_reused, s_st_dl_direct, s_st_imm_batches,
                  s_st_imm_joined, s_st_imm_short);
         s_st_dl_hits = s_st_dl_builds = s_st_dl_direct = s_st_dyn_calls = s_st_dyn_fetch = s_st_dyn_builds = 0;
-        s_st_dyn_io = 0;
+        s_st_dyn_io = s_st_dyn_again = s_st_dyn_reused = 0;
         s_st_chg_sig = s_st_chg_data = s_st_dl_joined = s_st_imm_batches = s_st_imm_joined = s_st_imm_short = 0;
         {
             char line[256];
