@@ -204,6 +204,10 @@ static uint NormalStride(const CModel&) { return 12; }
 
 void CSkinnedModel::Construct() {
   Skinning::AddSkinnedRef();
+#ifdef TARGET_XBOX
+  xPortSkinHash = 0;
+  xPortSkinVerts = nullptr;
+#endif
   if (!x38_owned) {
     // `Calculate` writes points and then normals into one contiguous buffer, so
     // the normal workspace must alias the tail of the vertex workspace.
@@ -270,6 +274,27 @@ void CSkinnedModel::Draw(const float* positions, const float* normals,
   PostDrawFunc();
 }
 
+#ifdef TARGET_XBOX
+// PORT_XBOX: the virtual bones' accumulated transforms (x20_xf, x50_rotation:
+// 84 bytes a bone, contiguous) and the model's source arrays, FNV-1a. Equal
+// to the last skinning's, with the same workspace, the result is already
+// there: an actor drawn twice a frame (its body and its projected shadow,
+// or its unsorted and sorted parts) was skinned twice.
+static uint PortSkinHash(const CSkinRules& rules, const CModel& model) {
+  uint h = 2166136261u;
+  const rstl::vector< CVirtualBone >& bones = rules.GetVirtualBones();
+  for (int b = 0; b < bones.size(); ++b) {
+    const uint* w = reinterpret_cast< const uint* >(&bones[b].GetTransform());
+    for (int k = 0; k < 21; ++k) {
+      h = (h ^ w[k]) * 16777619u;
+    }
+  }
+  h = (h ^ static_cast< uint >(reinterpret_cast< uintptr_t >(model.GetPositions()))) * 16777619u;
+  h = (h ^ static_cast< uint >(reinterpret_cast< uintptr_t >(model.GetNormals()))) * 16777619u;
+  return h ? h : 1u;
+}
+#endif
+
 void CSkinnedModel::Calculate(const CPoseAsTransforms& pose,
                               const rstl::optional_object< CVertexMorphEffect >& morphEffect,
                               const float* averagedNormals, float* workVerts) {
@@ -310,6 +335,19 @@ void CSkinnedModel::Calculate(const CPoseAsTransforms& pose,
   x10_skinRules->InitLockedCacheState(**x4_model);
 #endif
   x10_skinRules->BuildAccumulatedTransforms(pose, **x1c_layoutInfo);
+#ifdef TARGET_XBOX
+  // PORT_XBOX: the workspace already holds this pose's skin (PortSkinHash)
+  bool portSkinSame = false;
+  if (workVerts == nullptr && !x38_owned && !legacy && !morphEffect.valid()) {
+    const uint h = PortSkinHash(**x10_skinRules, **x4_model);
+    portSkinSame = h == xPortSkinHash && verts == xPortSkinVerts;
+    xPortSkinHash = h;
+    xPortSkinVerts = verts;
+  } else {
+    xPortSkinHash = 0;   // a morph rewrites the workspace after; an owned one moves
+    xPortSkinVerts = nullptr;
+  }
+#endif
 #ifdef __MWERKS__
   x10_skinRules->BuildPoints(pipe);
 
@@ -323,7 +361,11 @@ void CSkinnedModel::Calculate(const CPoseAsTransforms& pose,
 #else
   if (legacy) {
     PortBuildLegacy(pipe);
-  } else {
+  } else
+#ifdef TARGET_XBOX
+  if (!portSkinSame)
+#endif
+  {
     float* normals = reinterpret_cast< float* >(reinterpret_cast< uchar* >(verts) + alignedVertSize);
     x10_skinRules->PortBuildPointsAndNormals(**x4_model, verts, normals);
     memset(reinterpret_cast< uchar* >(verts) + vertSize, 0, alignedVertSize - vertSize);

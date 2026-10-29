@@ -82,6 +82,12 @@ private:
   mutable rstl::auto_ptr< float[] > x30_normalWorkspace;
   bool x38_owned;
   bool x39_disableWorkspaces;
+#ifdef TARGET_XBOX
+  // PORT_XBOX: what the workspace holds (Calculate): a hash of the virtual
+  // bones' transforms and the source arrays, and the workspace it went to
+  uint xPortSkinHash;
+  const float* xPortSkinVerts;
+#endif
 };
 
 class CSkinnedModelWithAvgNormals {
