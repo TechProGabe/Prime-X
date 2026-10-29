@@ -254,9 +254,18 @@ the console before (the save, settings, hw6's xbe) in `logs-hw7pre`.
 - **The user's note:** in the Landing cinematic, as the gunship comes into
   the atmosphere, a black box around its glow texture. r7b's frame 600 shot
   (`shot_Prime-X-r7b_01.bmp`) shows the quad's square around the sprite.
-  Next: find that particle or sprite's texture format and blend (an alpha
-  that isn't reaching the blend, or I4/IA4 read as opaque) in xemu with a
-  trace build of the cinematic.
+  Lead (xemu trace build, lockstep, `/c/xemu/px/ab-landtrace3`, frame
+  460, ship still a few pixels): the ship's engine particles are additive
+  (`blend 1 4 1`, alpha = texture x vertex) with the area's fog on (type 2,
+  colour `6d7e85`) and a 64x64 DXT1 texture. Fog replaces the colour, not
+  the alpha, so any texel whose alpha is 1 adds the fog colour: a square
+  where the texture's edge blocks are opaque. Check those blocks' alpha
+  (CMPR's punch-through after the DXT1 conversion) and the fog factor at
+  that distance against Dolphin. In xemu the moment lies between lockstep
+  frames 460 and 465 (`PX_LOCKSTEP=1`; frame 465 is already in the cloud).
+  Also seen: in the cloud whiteout (lockstep 590) the letterbox goes grey:
+  the bars are a camera filter pass and the whiteout's additive full-screen
+  pass is drawn after them, so probably retail; compare with Dolphin.
 
 ## Console round hw5 (red, 2026-10-28)
 
