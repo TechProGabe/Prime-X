@@ -541,7 +541,10 @@ static void clip_lines(void) {
             memcpy(base + out * s, tmp[0], s);
             memcpy(base + (out + 1) * s, tmp[1], s);
         } else if (out != i) {
-            memcpy(base + out * s, v0, 2 * s);   /* out < i: the ranges don't meet */
+            /* out < i: the ranges don't meet. The rain's 16-byte vertices
+             * as a fixed-size copy (moves, not a call per line) */
+            if (s == 16) __builtin_memcpy(base + out * 16, v0, 32);
+            else memcpy(base + out * s, v0, 2 * s);
         }
         out += 2;
     }
@@ -2651,6 +2654,33 @@ int GXPortRainLines(const short* xyz, unsigned n, short dz, unsigned short c0, u
     }
     s = B.plan.layout.stride;
     sc = ps->scale;
+    /* Position and colour fill the whole vertex (12 + 4 bytes, the rain's
+     * layout): every byte is stored, so no clears, and the colour is one
+     * word. memset and memcpy calls per vertex were ~4% of the console's CPU
+     * in the Landing Site's rain (round hw7). */
+    if (s == 16 && ((ps->dst == 0 && cs->dst == 12) || (ps->dst == 4 && cs->dst == 0))) {
+        uint32_t w0, w1;
+        memcpy(&w0, col[0], 4);
+        memcpy(&w1, col[1], 4);
+        for (i = 0; i < n; i++, xyz += 3) {
+            uint8_t* v = B.cur;
+            float* o = (float*)(v + ps->dst);
+            o[0] = xyz[0] * sc;
+            o[1] = xyz[1] * sc;
+            o[2] = xyz[2] * sc;
+            *(uint32_t*)(v + cs->dst) = w0;
+            v += 16;
+            o = (float*)(v + ps->dst);
+            o[0] = xyz[0] * sc;
+            o[1] = xyz[1] * sc;
+            o[2] = (s16)(xyz[2] + dz) * sc;   /* the game's short sum, as the call's s16 took it */
+            *(uint32_t*)(v + cs->dst) = w1;
+            B.cur = v + 16;
+        }
+        B.done += 2 * n;
+        if (n && B.done < B.expected) memset(B.cur, 0, s);   /* after_attr's clear of the next vertex */
+        return 1;
+    }
     for (i = 0; i < n; i++, xyz += 3) {
         uint8_t* v = B.cur;
         float* o = (float*)(v + ps->dst);
