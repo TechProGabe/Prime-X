@@ -118,14 +118,20 @@ static Entry* entry_add(const uint8_t* data) {
  * the GPU): the overflow pool goes when the Xbox runs low. Melee let it go
  * at every scene change (gx_tex_scene_leave); Prime has no such call, so a
  * pool grown while memory was plentiful (a menu) was kept for good. */
-void gx_tex_scene_leave(void);
+static int is_bound(uint32_t tex);
+static void drop_at(int i);
 
 static uint32_t tex_reclaim(uint32_t want_kb, int urgent) {
     uint32_t before;
+    int i;
     (void)want_kb;
     if (urgent || !xgx_tex_pool_overflow_kb()) return 0;
     before = xhw_mem_free_kb();
-    gx_tex_scene_leave();
+    /* the overflow pool's textures, but none a map holds (gx_tex_frame_end:
+     * the game wouldn't load it again); the pool goes once it is empty */
+    for (i = s_count - 1; i >= 0; i--)
+        if (xgx_tex_in_overflow(s_cache[i].tex) && !is_bound(s_cache[i].tex)) drop_at(i);
+    xgx_tex_pool_shrink();
     return xhw_mem_free_kb() > before ? xhw_mem_free_kb() - before : 0;
 }
 
@@ -1080,8 +1086,14 @@ void gx_tex_frame_end(void) {
         s_st_chg_data = s_st_chg_tlut = s_chg_logged = 0;
     }
     s_frame++;
+    /* never one a map still holds: Prime's CTexture::Load skips the load
+     * when it believes the texture is still in that texmap (as it is on the
+     * GameCube), so a texture drawn every frame from a map nothing else
+     * loads (the arm cannon's reflection map) is never bound again, looks
+     * idle, and was released: the map went empty and the stage read white
+     * (the white gun "after a while" in a room, round hw1/hw6) */
     for (i = 0; i < s_count; i++)
-        if (!s_cache[i].efb && s_frame - s_cache[i].last_used > TEX_IDLE_FRAMES) {
+        if (!s_cache[i].efb && s_frame - s_cache[i].last_used > TEX_IDLE_FRAMES && !is_bound(s_cache[i].tex)) {
             drop_at(i);
             i--;
         }
