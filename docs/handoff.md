@@ -95,6 +95,12 @@ No hardware rounds until they say.
   `-DXGX_DYN_VERIFY=1` checks the dynamic path against the old one: no
   draw differed (Landing Site, Main Plaza). Main Plaza: 1633 of 1933
   cached lists are one draw, 4 layouts in all. Not measured on red.
+- **Save round trip in xemu** (`eb03882`): a save station offers nothing
+  to an `MP_BOOT_WORLD` game (no card serial: retail); `env
+  PX_CARD_FILE=0` makes it card file A. Save Station 1 (Chozo, Samus
+  starts on the pad: step off, step back) saved; a fresh boot's main menu
+  listed "[Samus A] Chozo Ruins" and Continue loaded it there.
+  Scenarios: `tools/xbox/scenarios/save`, then `load` on the same slot.
 
 ## Where it stood before (2026-10-28, evening)
 
@@ -158,8 +164,8 @@ Done 2026-10-28 (afternoon and evening), newest first:
    The peach rectangle seen once in Twin Fires was a fog volume (now left
    out, see above).
 6. Gate leftovers: the 128 MB hold needs a 128 MB-aware BIOS in xemu;
-   the save round trip and Dolphin `.gci` (phase
-   4); Docker/CI (the workflow exists, `gh` isn't logged in here).
+   the save round trip on red and Dolphin `.gci` (phase 4; xemu's round
+   trip works); Docker/CI (the workflow exists, `gh` isn't logged in here).
 
 ## Session 2026-10-28 (night and morning)
 
