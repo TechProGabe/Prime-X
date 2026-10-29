@@ -159,7 +159,7 @@ free).
 
 2026-10-29 (evening), from round hw9 (profiler chain r9a-r9e and the
 user's ship-build free play through the Frigate to Parasite Queen); none
-of it measured on a console yet (no more console rounds, the user's call):
+of it measured on a console (no console round after hw9, the user's call):
 
 - **The game clock** (`OSGetTime`, `os.c`): whole seconds plus the rest at
   40 ticks a microsecond (`OS_TIMER_CLOCK / 1000000`, 40.5 truncated), so
@@ -231,8 +231,22 @@ of it measured on a console yet (no more console rounds, the user's call):
   the same arrays, unwritten since, in the same frame and ring generation,
   draws the earlier call's ring vertices (four kept a list, by arrays).
   xemu: 9600 of 11400 repeat calls reused in Main Plaza, verify 0 differ.
-  Pirates use shared skin buffers taken per draw and don't qualify.
   `-DXGX_DYN_REUSE=0` turns it off.
+- Characters (every `CCharacterFactory` model is "owned") skinned into
+  the shared skinning ring, given back with a draw sync token that passes
+  at once here: every model skinned to the ring's first bytes, so a
+  pirate drawn again in the frame was skinned again (another model had
+  used the ring in between) and its lists couldn't reuse their vertices.
+  An owned model can ask once for a workspace of its own
+  (`GXPortSkinKeep`: `XGX_SKIN_KEEP_KB` in all, and only while 6 MB stays
+  free; else the ring as before) and keep it; the skin skip and the list
+  reuse then work for it (xemu: pirate room 1011 reused calls a run). **Off
+  by default** (`XGX_SKIN_KEEP_KB=0`): with 3072, the pirate room's verify
+  build found 2-8 reused calls a run whose ring vertices no longer matched
+  their arrays (a few normals, low bits; Main Plaza 0 of 9600); with the
+  reuse off (`-DXGX_DYN_REUSE=0`) the same scene verified clean. Not found
+  why (handoff, Next 1). The ring's buffers count for their frame only
+  (`GXPortSkinWrittenThisFrame`); the skin registry holds 1024 buffers.
 - Found, not changed: the HUD minimap (`CMapWorld::Draw`) is 150-300
   immediate draws every frame of play (each surface's fill and outline,
   alternating triangles and lines, a `GXSetTevKColor` between each).

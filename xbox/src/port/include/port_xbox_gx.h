@@ -28,8 +28,17 @@ int GXPortSnowQuads(const short* xyz, unsigned n, const short up[3], const short
 // null): a display list drawn from them again in the same frame may reuse
 // the vertices it sent before only while they haven't been written since.
 void GXPortSkinWritten(const void* verts, const void* normals);
+// Written, and only the skinning writes this memory, but the buffers are
+// handed out again after the frame (the shared skinning ring): kept track
+// of for this frame only.
+void GXPortSkinWrittenThisFrame(const void* verts, const void* normals);
 // The buffers are freed: forget them (their memory may become anything).
 void GXPortSkinForget(const void* verts, const void* normals);
+// A skinning workspace of a model's own (32-byte aligned), in place of the
+// shared ring's; null: none (over budget or memory short): use the ring.
+void* GXPortSkinKeep(unsigned bytes);
+// Give it back (and forget it, as GXPortSkinForget).
+void GXPortSkinUnkeep(void* verts, const void* normals, unsigned bytes);
 
 #ifdef __cplusplus
 }

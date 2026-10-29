@@ -3,14 +3,63 @@
 Update this at the end of every session: what was done, what's next,
 what's broken, anything the next agent would otherwise rediscover.
 
+## Where it stands (2026-10-29, end of day)
+
+The game plays through every world in xemu (room sweep: 14 rooms, no
+failure) and on the red console (~35-45 fps in most rooms at 480i, fights
+lower). Everything is committed and pushed on `dev`. **No hardware round
+is planned**: after hw9 the user called hardware testing over; a hw10
+round was staged the same evening and then called off ("I don't want to
+do a hardware test"), so nothing below has been measured on a console.
+Verify builds (`-DXGX_DYN_VERIFY=1`) check every new GX path against the
+old one draw by draw in xemu.
+
+Ship builds are `XBOX_LTO=1 XBOX_PGO=xbox/prime.profdata` (`docs/pgo.md`);
+deploy with `tools/xbox/console.py` (console FTP 192.168.158.113,
+`PX_HW=/c/xemu/hw/prime`; back up `E:\UDATA\50580001` first). The
+profile predates the 2026-10-29 work: retrain before a release. Console
+rounds and their files: `C:\xemu\hw\prime\ROUNDS.md`.
+
+## Next session, in order
+
+1. **Fights** (the user's complaint after hw9: "fps got really bad
+   fighting the pirates" on the Frigate). What's in: skinned lists over the
+   dynamic budget go index-only instead of being decoded every call;
+   same-frame reuse of skinned vertices (arm cannon, swarms). What's not:
+   characters skin into the shared ring, so a pirate drawn twice a frame is
+   skinned twice. `GXPortSkinKeep` (a workspace per model) is written but
+   **off** (`XGX_SKIN_KEEP_KB=0`): with it on, xemu's pirate room
+   (`39F2DE28:B9ABCD56`, lockstep, verify build) showed 2-8 reused calls a
+   run whose ring vertices no longer matched the arrays (a few normals,
+   low bits); the same image without the reuse verified clean, so
+   something writes kept workspaces without going through `Calculate`, or
+   the reuse's checks miss a case. The verify build now logs whether a
+   mismatch was a reused call and counts reused calls whose ring bytes
+   changed since kept (`[DLC] dyn verify` line): run it with
+   `-DXGX_SKIN_KEEP_KB=3072` in the pirate room to tell the two apart.
+   GPU skinning (a matrix palette: Prime's virtual bones are one matrix a
+   vertex) is the bigger lever.
+2. The HUD minimap is 150-300 draws a frame (fill and outline alternate per
+   surface, `GXSetTevKColor` between): only a different draw method would
+   join them; only if it keeps the retail look exactly.
+3. LTO + PGO ship build, retrained profile and the room sweep before
+   calling anything a release.
+4. If memory runs out on red again: another reclaimer is easy to add
+   (`xhw_mem_add_reclaim`); left: the display lists' dynamic templates.
+5. Not done, by choice: `GXSetDstAlpha` and the EFB pixel format (Morph
+   Ball's shadow IDs, fog volumes, thermal's DSTALPHA blends) and
+   Magmoor's heat-haze warp on the GPU (new render-to-texture passes: the
+   console has faulted on those before).
+6. Visors and parity: no Dolphin reference frames yet (`docs/renderer.md`).
+7. Gate leftovers: the 128 MB hold needs a 128 MB-aware BIOS in xemu; the
+   save round trip on red and Dolphin `.gci` (phase 4); Docker/CI (the
+   workflow exists, `gh` isn't logged in here).
+
 ## Session 2026-10-29 (evening): hw9 read, FPS from the logs, xemu only
 
-**Hardware testing is over** (the user, after round hw9: "We will not be
-doing any more hardware testing"). Everything below is checked in xemu
-only: verify builds (`-DXGX_DYN_VERIFY=1`) compare the new paths with the
-old ones draw by draw, and shots. Round hw9's logs: `C:\xemu\hw\prime\logs-hw9`
-(chain r9a-r9e, `boot_freeplay.log` = the user's ship-build play from a new
-game through the Frigate to Parasite Queen, map `prime_x.hw9ship.map`).
+Round hw9's logs: `C:\xemu\hw\prime\logs-hw9` (chain r9a-r9e,
+`boot_freeplay.log` = the user's ship-build play from a new game through
+the Frigate to Parasite Queen, map `prime_x.hw9ship.map`).
 
 What hw9 said:
 
@@ -24,46 +73,46 @@ What hw9 said:
 - **r9f froze** at `[AUDIO] found:` on the codec register reads before the
   idle step (hw7's freeze was the first read after the reset). Fixed: no
   codec reads on the console at all (`xhw_audio.c`). r9e's audio was stuck
-  ("silent until the Xbox is switched off"): roadmap item 9, not fixable
-  without a console.
+  ("silent until the Xbox is switched off"): roadmap known issue, not
+  fixable without a console.
 - Chain fps against hw7: front end about the same, Landing Site and
   Phendrana a little up (hw8's prefetches), Main Plaza flat. Profiles:
   memcpy's small-copy `rep movs` 8% (Main Plaza), the dynamic lists' fetch
   ~6%, the world-model cull loop ~3%, the object-list walks ~4%, snow
   ~10% (Phendrana), skinning 3-4%.
 
-Done (`docs/performance.md`, "2026-10-29 (evening)", has the details):
+Done (`docs/performance.md`, "2026-10-29 (evening)", has the details;
+commits `70a4294` .. the session's last):
 
 - `OSGetTime`'s sawtooth (a 12.3 ms jump every second: an extra
   simulation tick, a hitch a second) and its two 64-bit divisions; lockstep
-  frames now exactly 1/60 s of OS ticks (probably why lockstep runs weren't
-  frame-exact).
+  frames now exactly 1/60 s of OS ticks.
 - memcpy/memset small paths, vertex copies as words.
 - Dynamic lists: fast fetch loops; **index-only dynamic lists** when a
   template doesn't fit the budget (own 256 KB allowance, big batches through
-  a reserved buffer up to 128 KB). Verify: 0 differ (Landing Site, Main
-  Plaza, Phendrana, with the budget forced down to 192 KB so lists go
-  index-only: `-DDLC_DYN_BUDGET=196608u -DDLC_DYN_EXTRA=0u`).
-- Snow quads in one call (`GXPortSnowQuads`; verify: 335k quads, 0 differ),
+  a reserved buffer up to 128 KB); the vertex plan cached per format; a
+  failed build backs off 30 frames. Verify: 0 differ (Landing Site, Main
+  Plaza, Phendrana, Frigate, pirate room; also with the budget forced down
+  so lists go index-only: `-DDLC_DYN_BUDGET=196608u -DDLC_DYN_EXTRA=0u`).
+- Snow quads in one call (`GXPortSnowQuads`; verify: 4M quads, 0 differ),
   `GXTexCoord2u8` & co. fast path.
 - Prefetches: world models (cull loop), entities (state manager walks),
-  skinning streams. `derive_vk`'s light scan cached until a light changes.
+  skinning streams, model surfaces, particles. `derive_vk`'s light scan
+  cached until a light changes; the HUD's interference check cached.
+- Skinning: a pose already in a model's own workspace isn't skinned again
+  (`PortSkinHash`); the skinning reports the buffers it writes
+  (`GXPortSkinWritten`, and `GXPortSkinWrittenThisFrame` for the shared
+  ring and the swarms' buffers) and a dynamic list drawn again in the same
+  frame from unwritten buffers reuses the vertices already in the ring.
+  xemu Main Plaza: 9600 of 11400 repeat calls reused, verify 0 differ;
+  pirate room 0 differ.
+- Per-model skin workspaces (`GXPortSkinKeep`): written, off (Next, 1).
+- The audio codec is no longer read on the console (r9f's freeze).
 
-The ship image of `7bd3b85` (LTO + PGO, the old profile) is in
-`build-xbox-lto-pgo/xbe/default.xbe`; it boots to the title in xemu. The
-user hasn't asked for it on the console. Game Timing: Flex measured +10%
-over Fixed on red (hw7/hw8) and is the user's own choice in Port Options.
-
-Next:
-
-1. The HUD minimap is 150-300 draws a frame (fill and outline alternate per
-   surface, `GXSetTevKColor` between): only a different draw method would
-   join them; look at it only if it keeps the retail look exactly.
-2. GPU skinning (the biggest lever left on fights: skinning and the dynamic
-   lists ~10-15% with pirates on screen); Prime's virtual bones are one
-   matrix a vertex, so a matrix palette in constants could do it.
-3. LTO + PGO ship build and the room sweep before calling this a release;
-   the PGO profile predates this session (retrain, `docs/pgo.md`).
+The room sweep (plain and LTO + PGO) passed 14/14 on `7bd3b85`; later
+commits were checked with verify runs, not a sweep. Game Timing: Flex
+measured +10% over Fixed on red (hw7/hw8) and is the user's own choice in
+Port Options.
 
 ## Session 2026-10-28 (night, unattended): fixes in xemu, not on red yet
 
@@ -167,77 +216,6 @@ No hardware rounds until they say.
   starts on the pad: step off, step back) saved; a fresh boot's main menu
   listed "[Samus A] Chozo Ruins" and Continue loaded it there.
   Scenarios: `tools/xbox/scenarios/save`, then `load` on the same slot.
-
-## Where it stood before (2026-10-28, evening)
-
-The game plays through every world in xemu (room sweep: 14 rooms, no
-failure) and on the red console (~35-45 fps in most rooms at 480i). Red
-has round hw6's ship build (`7bdef5e`, LTO + PGO): it still ran out of
-memory in free play (290 s), and two bugs came back from it (below).
-Everything is committed and pushed on `dev`. Ship builds are `XBOX_LTO=1
-XBOX_PGO=xbox/prime.profdata` (`docs/pgo.md`); deploy with
-`tools/xbox/console.py` (stage folder `stage-v<name>`, console FTP
-192.168.158.113, `PX_HW=/c/xemu/hw/prime`).
-
-Done 2026-10-28 (afternoon and evening), newest first:
-
-- **Texture pool 8 -> 7 MB** at 480 (`1d7071c`): Main Plaza's lowest free
-  in xemu 5.2 -> 6.6 MB, nothing dropped. Not on the console yet.
-- **A failed commit logs its size** (`[MEM] out of memory committing`); one
-  in a page fault shows the Out of memory screen, not a crash. The display
-  lists' second MB of dynamic templates only while 6 MB is free.
-- **The rain's streaks in one call** (`GXPortRainLines`): xemu Landing Site
-  17.3 -> 18.5 fps.
-- **GXInit's lighting channels take the material from the vertex**
-  (`0b407ad`): ours were zeroed, so every vertex-alpha fade drew at full
-  strength. Fixed the landing cinematic's white frames, the visor steam in
-  the ship, Main Plaza's yellow hit flash, opaque steam and rain, and the
-  title Options' missing slider.
-- **Game `new` in `CGameAllocator`** (plan 0.6, `6d9f022`): one heap
-  instead of two, MEM1 reserved 32 MB (the game told 24), freed blocks
-  give their whole 64 KB chunks back. Main Plaza's lowest free in xemu
-  2.6 -> 4.7 MB (6.6 with the smaller texture pool).
-- Display-list dynamic budget doubled, with retries (the ship's save
-  station decoded 7 lists every call on the console).
-- The GX FIFO the game allocates, 384 -> 128 KB (never read here).
-- Port Options: the Widescreen HUD row reads "Inner / Edges".
-- Dolphin 2609 is at `C:\xemu\dolphin\Dolphin-x64` (portable); no
-  reference frames yet: the scenes worth comparing need a save there, and
-  our saves live in xemu's HDD.
-
-## Next session, in order
-
-1. **Console round hw9, on red since 2026-10-29** (the user asked; what was
-   there before in `logs-hw9pre`):
-   `tools/xbox/scenarios/hw9` (README there): hw7's chain again on the
-   charge beam fix, the Port Options grid and the 4 MB dynamic budget, with
-   hw8's prefetch and rain changes (only r8g ran in hw8). Images
-   `C:\xemu\hw\prime\stage-hw9` (laid out by console path in `console`),
-   maps `prime_x.hw9.map`, `prime_x.hw9ship.map`; round index
-   `C:\xemu\hw\prime\ROUNDS.md`. Back up `E:\UDATA\50580001` first
-   (save, settings), then upload; launch `Prime-X-r9a`. In free play: hold
-   fire (charge), the pause screen's fps, Port Options' rows, the hw6 path
-   for memory. Compare with `logs-hw7`; each prefetch has a switch to turn
-   it off if it loses (`XGX_DYN_PREFETCH=0`, `XHW_COPY_PREFETCH=0`). The
-   title's retail Options screen restore (after a Port Options visit) is
-   untested: the main menu has no retail Options row to reach it by.
-2. If memory still runs out on red: another reclaimer is easy to add
-   (`xhw_mem_add_reclaim`); left: the display lists' dynamic templates
-   (malloc: freed memory mostly stays in the heap).
-3. FPS (console profile, hw5 Main Plaza, read at the instruction level):
-   what is left in `GXCallDisplayList` after this session's changes is the
-   batch table (its own allocation per list: a miss a call) and the
-   dynamic lists' template copies; `xgx_draw` ~8%; `CStateManager::Update`.
-4. Not done, by choice: `GXSetDstAlpha` and the EFB pixel format (Morph
-   Ball's shadow IDs, fog volumes, thermal's DSTALPHA blends) and
-   Magmoor's heat-haze warp on the GPU (a new render-to-texture pass: the
-   console has faulted on those before, so it wants a console round).
-5. Visors and parity: no Dolphin reference frames yet (`docs/renderer.md`).
-   The peach rectangle seen once in Twin Fires was a fog volume (now left
-   out, see above).
-6. Gate leftovers: the 128 MB hold needs a 128 MB-aware BIOS in xemu;
-   the save round trip on red and Dolphin `.gci` (phase 4; xemu's round
-   trip works); Docker/CI (the workflow exists, `gh` isn't logged in here).
 
 ## Session 2026-10-28 (night and morning)
 

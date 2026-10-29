@@ -54,6 +54,10 @@ line under it says how far it got.
 - Out of memory on red (hw5 at 215 s, hw6 at 290 s): gone in hw8's free
   play where hw6 ran out (one reclaim, 16 chunks to the swap file); keep
   an eye on longer sessions.
+- Fights are slow on red (hw9 free play, Frigate pirates to Parasite
+  Queen: 10-20 fps): skinned lists over the dynamic budget were decoded
+  every call (index-only now, not measured on red) and every character is
+  skinned again per pass (handoff, Next 1).
 - Fixed, not yet seen on red: the pause screen at 14-17 fps (hw8: Samus's
   lists over the dynamic budget; the extra budget opens at 4 MB free now),
   the charge beam (hw8, `188fb44`), Port Options' value cells off their
@@ -67,7 +71,10 @@ line under it says how far it got.
 - The audio start-up freeze after a chained launch (hw4 r4c) came back in
   hw7 (r7e, the codec read after the cold reset, the CPU held: no watchdog
   reboot); `f73d0d7` no longer reads the codec after the reset on the
-  console. r7e then started cleanly once; to be watched.
+  console. hw9's r9f froze on the reads before the idle step: since
+  2026-10-29 the console reads no codec register at all (not seen on red).
+  hw9's r9e had its audio stuck (silent until the console was switched
+  off).
 - Landing cinematic (Tallon Overworld), the gunship coming down through
   the atmosphere: a box around its glow sprite (the user saw it black on
   red in hw7; hw7's r7b shot at frame 600 has a lighter square around the
@@ -86,6 +93,9 @@ line under it says how far it got.
 | 2026-10-27 | hw4 | red | Landing Site 27-41 fps (ThinLTO + PGO); r4c froze in audio start-up |
 | 2026-10-28 | hw5 | red | five-scene profile chain, back to the dashboard by itself; no freeze; landing streaks gone |
 | 2026-10-28 | hw6 | red | free play: the alpha fix's visuals; out of memory at 290 s; too bright after Morph Ball; Options divider on the text |
+| 2026-10-29 | hw7 | red | seven-scene chain r7a-g; r7e froze in audio start-up (fixed `f73d0d7`) |
+| 2026-10-29 | hw8 | red | r8g only (Flex, Landing Site 40.2 fps median); free play: no out of memory, pause screen 14-17 fps, charge beam dead |
+| 2026-10-29 | hw9 | red | chain r9a-e (r9f froze in audio start-up); free play to Parasite Queen: visuals fine, fights 10-20 fps. The last round: hardware testing over (the user) |
 
 ## Performance per build
 
