@@ -63,7 +63,7 @@ To be measured in phase 2 and kept current, as Melee-X's table is.
 |---|---|---|
 | XBE image (game + MusyX + Xbox layer) | est. 8-10 MB | GameCube `main.dol` is ~4 MB of PowerPC; x86 C++ at `-O2` with ThinLTO is bigger. Measure in phase 1 |
 | MEM1 (game heaps) | 32 MB reserved (the game told 24), committed on demand in 64 KB chunks, freed blocks' chunks given back | Prime's `CGameAllocator`, as on the GameCube; game `new` routed here (plan 0.6). Measured in xemu: ~20 MB live in the Landing Site, Main Plaza leaves 4.7 MB of the Xbox free at its lowest (2.6 MB with `new` in malloc) |
-| ARAM | 16 MB reserved, committed on demand | MusyX sample groups and Prime's ARAM use; disc-backed pages as Melee-X |
+| ARAM | 16 MB reserved, committed on demand; ~4 MB committed in play | MusyX sample groups and the world PAKs' resource tables (`CPakFile`); disc-backed pages as Melee-X, the rest swapped to `aram.swp` in the save folder when memory runs low (`ar.c`) |
 | NV2A framebuffers | 4.9 MB at 480 (32-bit x3 + Z), 9.1 MB at 720p (R5G6B5 x3 + Z24S8) | as Melee-X |
 | NV2A texture pool | 6 MB at 720p, 7 MB at 480 (8 until round hw6 ran out of memory) | Prime's textures are already in MEM1 (`CTexture`); the pool is a second copy in NV2A formats |
 | pushbuffer + vertex ring | 2.5 MB | |
@@ -72,6 +72,16 @@ To be measured in phase 2 and kept current, as Melee-X's table is.
 
 That adds up to more than the ~60 MB free once the kernel is up, so the
 commit-on-demand and disc-backed-ARAM tricks are required, not optional.
+
+Memory pressure (`xhw_mem_reclaim`, `xhw_sys.c`): below 3 MB free the
+game thread asks the reclaimers for up to 1 MB a frame (`xhw_mem_tick`),
+and a commit that fails asks them again, without blocking, before the Out
+of memory screen. ARAM is the reclaimer today: chunks wholly on the disc
+go back at once, the rest after a 64 KB write to the swap file; a touch
+brings them back as disc pages come back. In xemu with 7 MB held back
+(`env PX_MEM_BALLOON_KB=7000`, test builds) Main Plaza ran with free
+memory down to 0.9 MB and no failure; ARAM went from ~3.6 MB committed to
+~1.5 MB.
 Melee-X's `[MEM]` lines and `crash.log` report what's committed; the burn
 test (phase 7) watches it.
 

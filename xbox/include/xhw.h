@@ -83,6 +83,7 @@ typedef struct xhw_mutex xhw_mutex;
 xhw_mutex* xhw_mutex_create(void);   /* recursive */
 void xhw_mutex_lock(xhw_mutex* m);
 void xhw_mutex_unlock(xhw_mutex* m);
+int xhw_mutex_trylock(xhw_mutex* m);   /* 1: locked (unlock it), 0: another thread holds it */
 typedef struct xhw_event xhw_event;
 xhw_event* xhw_event_create(void);   /* auto-reset */
 void xhw_event_signal(xhw_event* e);
@@ -117,6 +118,21 @@ void xhw_lazy_set_fill(const void* base, void (*fill)(void* chunk));
 int xhw_lazy_is_committed(const void* p);
 void xhw_lazy_decommit(void* chunk);
 uint32_t xhw_mem_free_kb(void);
+/* Memory pressure. A reclaimer gives memory back (decommits chunks whose
+ * data can be had again, drops caches) and returns the KB it freed; asked
+ * for `want_kb`. `urgent`: called from a failed commit, on any thread and
+ * with any locks held: it must not block on a lock (try-lock and skip) and
+ * must not malloc or free. xhw_mem_reclaim asks each in the order added.
+ * xhw_mem_tick (the game thread, once a frame, no locks held) reclaims
+ * while less than XHW_MEM_LOW_KB is free. */
+typedef uint32_t (*xhw_reclaim_fn)(uint32_t want_kb, int urgent);
+void xhw_mem_add_reclaim(xhw_reclaim_fn fn);
+uint32_t xhw_mem_reclaim(uint32_t want_kb, int urgent);
+#ifndef XHW_MEM_LOW_KB
+#define XHW_MEM_LOW_KB (3u * 1024)
+#endif
+void xhw_mem_tick(void);
+void xhw_mem_log_reclaim(void);   /* [MEM] failed commits a reclaim rescued, if any */
 /* Memory breakdown (-DXHW_MEMB=<secs>, docs/testing.md): _due is 1 once
  * every `secs` seconds; _log writes a [MEMB] line with the kernel's buckets,
  * the malloc heap and the thread count, then `extra` (the caller's own). */
@@ -166,6 +182,10 @@ void* xhw_file_open(const char* path);
 int xhw_file_read(void* file, uint32_t off, void* dst, uint32_t len);
 /* size in bytes and last-write time (100 ns units), for the disc check's cache */
 int xhw_file_stamp(void* file, uint64_t* size, uint64_t* written);
+/* Read-write scratch file, created empty (truncated if it was there);
+ * xhw_file_write returns 1 if all `len` bytes were written. */
+void* xhw_file_create_rw(const char* path);
+int xhw_file_write(void* file, uint32_t off, const void* src, uint32_t len);
 
 /* ---- controllers ---- */
 typedef struct xhw_pad {

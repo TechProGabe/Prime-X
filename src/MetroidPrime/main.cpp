@@ -233,7 +233,13 @@ static void ApplyAspectMode() {
 #else
 #define GRAPHICS_FIFO_SIZE 0x60000
 #endif
+#ifdef TARGET_XBOX
+// PORT_XBOX: never read or written (GXInit and the FIFO calls ignore it); the
+// size is only arithmetic, so no 128 KB of the image behind it
+static uchar sGraphicsFifo[32] ATTRIBUTE_ALIGN(32);
+#else
 static uchar sGraphicsFifo[GRAPHICS_FIFO_SIZE];
+#endif
 ALIGNAS(CMain) static uchar sMainSpace[sizeof(CMain)];
 
 // Generated includes belong only to the matching console build. Native builds

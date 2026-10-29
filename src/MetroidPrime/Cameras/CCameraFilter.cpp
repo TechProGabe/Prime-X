@@ -317,10 +317,20 @@ void* RandomStaticTextureData() {
   // rounded-up extent rather than width * height.
   constexpr uint kMaxOffset = ((RAND_MAX & 0x7fff) + 0x1f) & ~0x1f;
   constexpr uint kMaxSize = ((kMaxWidth + 7) & ~7) * ((kMaxHeight + 3) & ~3) + kMaxOffset;
+#ifdef TARGET_XBOX
+  // PORT_XBOX: allocated the first time static shows, not 338 KB of the
+  // image for the whole session (Xbox .bss is committed at load)
+  static uchar* sBuffer = nullptr;
+  static bool sInitialized = false;
+  if (!sInitialized) {
+    sBuffer = reinterpret_cast< uchar* >((reinterpret_cast< uintptr_t >(new uchar[kMaxSize + 31]) + 31) & ~uintptr_t(31));
+    sInitialized = true;
+#else
   alignas(32) static uchar sBuffer[kMaxSize];
   static bool sInitialized = false;
   if (!sInitialized) {
     sInitialized = true;
+#endif
     uint state = 0x9e3779b9u;
     for (uint i = 0; i + sizeof(u32) <= kMaxSize; i += sizeof(u32)) {
       state ^= state << 13;
@@ -961,7 +971,15 @@ void CCameraBlurPass::AllocatePersistentFbTexture() {
   // Remastered glass copies the scene into the spare buffer each frame (helmet
   // included), so the pause screen's held copy would load that one, at another
   // size, and read black (#208).
+#ifdef TARGET_XBOX
+  // PORT_XBOX: allocated at the first pause, not 280 KB of the image for good
+  static uchar* sPersistentBuf = nullptr;
+  if (!sPersistentBuf)
+    sPersistentBuf =
+        reinterpret_cast< uchar* >((reinterpret_cast< uintptr_t >(new uchar[640 * 448 + 31]) + 31) & ~uintptr_t(31));
+#else
   static uchar sPersistentBuf[640 * 448] ATTRIBUTE_ALIGN(32);
+#endif
   x30_persistentBuf = sPersistentBuf;
 #else
   x30_persistentBuf = CGraphics::GetDolphinSpareBuffer();

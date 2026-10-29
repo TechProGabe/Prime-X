@@ -41,6 +41,8 @@ void xsdk_arq_deliver(void);
 void* xsdk_aram_base(void);
 u32 xsdk_aram_size(void);
 u32 xsdk_aram_disc_kb(void);   /* ARAM contents left on the disc image */
+u32 xsdk_aram_swap_kb(void);   /* ARAM contents in the swap file (ar.c) */
+void xsdk_aram_log(void);      /* [AR] disc, swap file, swap-outs and fills */
 
 /* pad.c: a controller as PADRead last read it (NULL: not connected) */
 struct xhw_pad;
