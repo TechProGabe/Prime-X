@@ -93,7 +93,10 @@ break games in three ways. Prime-X handles each:
    count is logged and the `MAX_OTHER` limit checked against Prime's image.
 2. **Code that counts on 733 MHz.** Game time, `OSGetTime`/`OSGetTick`, the
    frame pacer and the watchdog come from the ACPI timer
-   (`KeQueryPerformanceCounter`, 3.375 MHz) and VBlank, never the TSC.
+   (`KeQueryPerformanceCounter`, 3.375 MHz) and VBlank, never the TSC
+   alone. `xhw_time_ns` reads the timer every 100 ms and interpolates in
+   between with the TSC at the rate measured against the timer at boot
+   (reading the timer's I/O port on every call cost ~3% of the CPU).
    Where the TSC is still used for cheap intervals (the interrupt lock's
    delivery throttle, `os.c` `DELIVERY_TSC`; the profiler), its rate is
    measured at boot against the ACPI timer and the constants are scaled by
