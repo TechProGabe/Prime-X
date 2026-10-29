@@ -9,6 +9,22 @@
 #include <stddef.h>
 #include <stdint.h>
 
+/* Big copies, in blocks: the console's Pentium III (Coppermine) has no
+ * hardware prefetcher, so rep movsl waits on every 32-byte line of a source
+ * that isn't cached (the display lists' templates, round hw7: memcpy 5-9%
+ * of the CPU). The next block's lines are prefetched before the current
+ * block is copied, so their misses overlap the copy. */
+#ifndef XHW_COPY_PREFETCH
+#define XHW_COPY_PREFETCH 1   /* 0: plain rep movsl */
+#endif
+#define COPY_BLOCK 1024
+#define COPY_BIG (2 * COPY_BLOCK)
+
+static void prefetch_block(const char* p) {
+    int i;
+    for (i = 0; i < COPY_BLOCK; i += 32) __builtin_prefetch(p + i, 0, 3);
+}
+
 void* memcpy(void* dst, const void* src, size_t n) {
     void* ret = dst;
     size_t head, words;
@@ -18,6 +34,15 @@ void* memcpy(void* dst, const void* src, size_t n) {
         words = n >> 2;
         n &= 3;
         __asm__ volatile("rep movsb" : "+D"(dst), "+S"(src), "+c"(head) : : "memory");
+        if (XHW_COPY_PREFETCH && words >= COPY_BIG / 4) {
+            prefetch_block((const char*)src);
+            while (words >= 2 * (COPY_BLOCK / 4)) {
+                size_t block = COPY_BLOCK / 4;
+                prefetch_block((const char*)src + COPY_BLOCK);
+                __asm__ volatile("rep movsl" : "+D"(dst), "+S"(src), "+c"(block) : : "memory");
+                words -= COPY_BLOCK / 4;
+            }
+        }
         __asm__ volatile("rep movsl" : "+D"(dst), "+S"(src), "+c"(words) : : "memory");
     }
     __asm__ volatile("rep movsb" : "+D"(dst), "+S"(src), "+c"(n) : : "memory");

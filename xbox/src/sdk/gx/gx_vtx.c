@@ -2190,7 +2190,17 @@ static int dyn_build(DlEntry* e, uint32_t frame) {
 }
 
 /* fetch attribute array `attr` again for the vertices of batch b, into out
- * (the batch's vertices: in the template, or a copy of them) */
+ * (the batch's vertices: in the template, or a copy of them). The arrays
+ * are the skinning's output, written just before and far larger than the
+ * L2, and the Pentium III has no hardware prefetch for an indexed walk:
+ * round hw7's Landing Site spent a quarter of GXCallDisplayList's samples
+ * on this loop's array load. The indices are known ahead, so each element
+ * is prefetched DYN_PREFETCH vertices before it is read (a hint: it never
+ * faults, whatever the address). */
+#ifndef XGX_DYN_PREFETCH
+#define XGX_DYN_PREFETCH 8   /* 0: no prefetch */
+#endif
+#define DYN_PREFETCH XGX_DYN_PREFETCH
 static void dyn_fetch_batch(const DynList* d, const DynBatch* b, uint8_t attr, const uint8_t* base, uint8_t* out) {
     uint32_t stride = g_gx.array_stride[attr];
     int be = !g_gx.array_le[attr], c;
@@ -2198,9 +2208,13 @@ static void dyn_fetch_batch(const DynList* d, const DynBatch* b, uint8_t attr, c
         const Slot* sl = &b->plan.slot[b->col_slot[c]];
         const uint16_t* idx = d->idx + b->idx + c;
         uint8_t* v = out;
-        uint32_t k, vs = b->plan.layout.stride;
+        uint32_t k, n = b->count, vs = b->plan.layout.stride, ahead = DYN_PREFETCH * b->ncol;
         if (array_attr(sl) != attr) continue;
-        for (k = 0; k < b->count; k++, idx += b->ncol, v += vs) store(sl, base + *idx * stride, be, v);
+        for (k = 0; k < DYN_PREFETCH && k < n; k++) __builtin_prefetch(base + idx[k * b->ncol] * stride);
+        for (k = 0; k < n; k++, idx += b->ncol, v += vs) {
+            if (DYN_PREFETCH && k + DYN_PREFETCH < n) __builtin_prefetch(base + idx[ahead] * stride);
+            store(sl, base + *idx * stride, be, v);
+        }
     }
 }
 
