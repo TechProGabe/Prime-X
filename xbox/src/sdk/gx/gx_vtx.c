@@ -1321,9 +1321,12 @@ static void call_display_list(const void* list, u32 nbytes) {
 #define DLC_DYN_BUDGET (1024u * 1024)   /* template + index bytes for all dynamic lists */
 /* and 1 MB more while the Xbox has DLC_DYN_EXTRA_FREE free: 1 MB left the
  * ship's save station (Samus up close) decoded every call, 12-14 fps on the
- * console (round hw5), but the memory is the game's to have first */
+ * console (round hw5), but the memory is the game's to have first. At 6 MB
+ * the pause screen's Samus (4.6 MB free there) decoded every call, 14-17
+ * fps on the console (round hw8); 4 MB keeps a full extra above
+ * XHW_MEM_LOW_KB (3 MB), where the reclaimers start */
 #define DLC_DYN_EXTRA (1024u * 1024)
-#define DLC_DYN_EXTRA_FREE (6u * 1024)  /* KB */
+#define DLC_DYN_EXTRA_FREE (4u * 1024)  /* KB */
 #define DLC_DYN_RETRY 120       /* frames before a list the budget turned away tries again */
 
 typedef struct {
