@@ -1,7 +1,7 @@
 xbox/prime.profdata: PGO profile for XBOX_PGO=xbox/prime.profdata builds (docs/pgo.md)
-trained on: a445123 + local changes (2026-10-29)
+trained on: 6218d26 + local changes (2026-10-29)
 scenarios: tallon frigate phendrana magmoor chozo (tools/xbox/scenarios/pgo, xemu)
 llvm: LLVM version 21.1.8
-Total functions: 18254
-Maximum function count: 161593626
-Total count: 15013885300
+Total functions: 18255
+Maximum function count: 282974722
+Total count: 16872899802
