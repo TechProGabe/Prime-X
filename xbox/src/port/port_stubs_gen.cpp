@@ -115,7 +115,6 @@ bool PortFx::gTiming{};
 bool PortRoomGeo::sReplacingArea{};
 bool PortActorCollisionBounds::ReadOriginalModelBounds(std::type_identity_t< unsigned int > a0, std::type_identity_t< float*const > a1) { PX_STUB("PortActorCollisionBounds::ReadOriginalModelBounds"); return px_stub_value< bool >(); }
 bool PortActorShadow::Active() { PX_STUB("PortActorShadow::Active"); return px_stub_value< bool >(); }
-bool PortAp::ChargeBeamRule(std::type_identity_t< int > a0) { PX_STUB("PortAp::ChargeBeamRule"); return px_stub_value< bool >(); }
 bool PortAp::MapDoors(std::type_identity_t< unsigned int > a0, std::type_identity_t< std::vector<std::pair<unsigned int, int>, std::allocator<std::pair<unsigned int, int>>>& > a1) { PX_STUB("PortAp::MapDoors"); return px_stub_value< bool >(); }
 bool PortAp::NewGameStart(std::type_identity_t< unsigned int& > a0, std::type_identity_t< unsigned int& > a1) { PX_STUB("PortAp::NewGameStart"); return px_stub_value< bool >(); }
 bool PortAp::OwnsMemo(std::type_identity_t< unsigned int > a0, std::type_identity_t< unsigned int > a1, std::type_identity_t< unsigned int > a2) { PX_STUB("PortAp::OwnsMemo"); return px_stub_value< bool >(); }
