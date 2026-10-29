@@ -145,8 +145,14 @@ Done 2026-10-28 (afternoon and evening), newest first:
 
 ## Next session, in order
 
-1. **A console round when the user says** (none until then): an LTO + PGO
-   ship build of `dev` on red, the hw6 path (Landing Site, save in the
+1. **Console round hw7, staged 2026-10-29** (the user asked): chain
+   `tools/xbox/scenarios/hw7` (hw5's five scenes, then Main Plaza and the
+   Landing Site with Game Timing: Flex), the files laid out by console path
+   in `C:\xemu\hw\prime\stage-hw7\console` (`F/Applications/Prime-X-r7a`..`g`
+   with the profiler build, `F/Applications/Prime-X` the ship build,
+   `E/UDATA/50580001` its icon), maps `prime_x.hw7.map` (profiler) and
+   `prime_x.hw7ship.map`. Built from `4473399` plus the scenarios. Free
+   play on the ship build: an LTO + PGO ship build of `dev` on red, the hw6 path (Landing Site, save in the
    ship, walk on, then Chozo and Magmoor). Check: no Out of memory (look
    for `[MEM] low` and `[AR]` lines: reclaims and swap-outs), the arm
    cannon in Chozo (dark metal with its reflection, not white), the view
