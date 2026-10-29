@@ -267,11 +267,11 @@ Pentium III (16 KB L1 code cache, 128 KB L2), not promises.
 
 | step | what | expected | state |
 |---|---|---|---|
-| builtins back | nxdk's wrapper passes `-ffreestanding -fno-builtin`: in game code `fabsf`, `sqrtf`, `floorf` and fixed-size `memcpy`/`memset`/`memcmp` were library calls (`fabsf` alone ~1% of the Landing Site's samples). `-fhosted -fbuiltin -fno-math-errno` after the wrapper's flags makes them `andps`, `sqrtss` and inline moves; results don't change (both are correctly rounded) | 3-6% of game CPU | in progress |
+| builtins back | nxdk's wrapper passes `-ffreestanding -fno-builtin`: in game code `fabsf`, `sqrtf`, `floorf` and fixed-size `memcpy`/`memset`/`memcmp` were library calls (`fabsf` alone ~1% of the Landing Site's samples). `-fhosted -fbuiltin -fno-math-errno` after the wrapper's flags makes them `andps`, `sqrtss` and inline moves; results don't change (both are correctly rounded) | 3-6% of game CPU | done (2026-10-27) |
 | ThinLTO | cross-module inlining of the decomp's many small accessors (`rstl`, `CVector3f`, `CTransform4f`, `CGX` state) | 5-10% | built (`docs/pgo.md`) |
 | PGO | branch layout, hot/cold splitting, inlining by measured counts; trained in xemu on the benchmark rooms | 10-20% | first profile (Tallon, Frigate, Phendrana) |
 | import limit with PGO | lld's default import limit grows `.text` 1.75 MB; 30 with the profile keeps it at +0.3 MB | keeps memory | default |
-| profile-ordered link | hot functions packed together (`xbox/order.txt` from the PGO counts, `/order`): fewer L2 and TLB misses with 5 MB of code | ~10% (Melee-X +13%) | next |
+| profile-ordered link | hot functions packed together (`xbox/order.txt` from the PGO counts, `/order`): fewer L2 and TLB misses with 5 MB of code | ~10% (Melee-X +13%) | done: `pgo_train.sh` writes it with the profile |
 | frame pointers | already omitted at `-O2` on this triple (checked) | - | done |
 | `-fno-strict-aliasing`, `-fwrapv`, `-ffp-contract=off` | kept: the decomp's type punning, and Gekko-like float results | - | kept |
 | SSE intrinsics by hand | `CTransform4f`/`CMatrix4f` products, skinning (`BuildBoneRange`), particle updates; SSE1 only | per hot spot, measured | later levers (`docs/performance.md`) |
