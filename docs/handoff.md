@@ -32,6 +32,24 @@ No hardware rounds until they say.
 - `xhw_time_ns` reads the ACPI timer every 100 ms and interpolates with the
   TSC (was an I/O-port read and three 64-bit divisions per call, ~3% of
   the console's CPU in Main Plaza).
+- Display-list CPU (`ad202e8`): `DlEntry` hot fields in two cache lines,
+  normals packed as CMP (13% more lists fit the vertex pool), rarer
+  content checks for long-stable lists, perf buckets inline, no PBR-record
+  parse per material, batch tables prefetched. The texture overflow pool
+  is a memory reclaimer (Prime never let it go).
+- **Port Options > Game Timing: Fixed / Flex** (`f2e78fd`): Flex runs one
+  game update per drawn frame (MetroidPrimePort's adaptive mode, dt at
+  most 1/30 s); Fixed (default) is 60 a second with catch-up, ~1.5 updates
+  per frame at ~40 fps on red. Likely the biggest fps lever left, but
+  xemu is too slow to show it: **ask the user to try Flex on red** (and
+  watch for physics/timing oddities: MetroidPrimePort calls the mode
+  experimental).
+- Gate 2 shown in xemu: doctored images (wrong ID, other revision,
+  trimmed, a changed file) each stop at their screen; the code repair
+  self-test. Fixed on the way: the error card ran off the screen, the
+  mismatch card said "1 files" and offered the dashboard under its A/B.
+- Options: "FPS Counter" is "Frame Rate" (ran past its button); the
+  title's value tables sit at the selected row's own offset.
 
 ## Where it stood before (2026-10-28, evening)
 
