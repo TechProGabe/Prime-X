@@ -1421,7 +1421,8 @@ typedef struct {
     uint8_t always;                /* seen changing: fetched every call */
     uint32_t lo, hi;               /* index range */
     const uint8_t* base;           /* g_gx.array[attr] when fetched */
-    uint32_t hash;
+    uint32_t hash, qhash;          /* sample_hash and quick_hash of its range at the build */
+    uint16_t stable;               /* checks passed in a row (dyn_call: then every 8th frame, quick_hash) */
 } DynArray;
 
 typedef struct {
@@ -1441,7 +1442,8 @@ typedef struct {
     uint16_t* idx;
     uint32_t total;                /* template bytes */
     uint32_t bytes;                /* charged to the budget */
-    uint32_t sig, dl_hash;
+    uint32_t sig, dl_hash, dl_qhash;
+    uint16_t dl_stable;            /* the list's own checks passed in a row (dyn_dl_changed) */
     DynArray arr[DLC_MAX_RANGE];
     uint8_t narr;
     uint16_t nbatch, ndraw;
@@ -2195,6 +2197,25 @@ static uint32_t dyn_array_hash(const DynArray* a, const uint8_t* base) {
     return sample_hash(2166136261u, base + a->lo * stride, (a->hi - a->lo) * stride);
 }
 
+static uint32_t dyn_array_qhash(const DynArray* a, const uint8_t* base) {
+    uint32_t stride = g_gx.array_stride[a->attr];
+    return quick_hash(2166136261u, base + a->lo * stride, (a->hi - a->lo) * stride);
+}
+
+/* A dynamic list's own bytes, once a frame, and its arrays not yet seen
+ * changing, on every call, were checked with 64 sampled words each (cache
+ * misses: ~50 hashes a frame in Main Plaza). As for the cached lists
+ * (dlc_content_changed): after DLC_STABLE checks in a row, every eighth
+ * frame and with a quarter of the samples. */
+static int dyn_dl_changed(const DlEntry* e, DynList* d, uint32_t frame) {
+    if (d->dl_stable >= DLC_STABLE && ((frame + (uint32_t)(e - s_dlc)) & 7)) return 0;
+    if (d->dl_stable >= DLC_STABLE ? quick_hash(2166136261u, e->dl, e->nbytes) != d->dl_qhash
+                                   : sample_hash(2166136261u, e->dl, e->nbytes) != d->dl_hash)
+        return 1;
+    if (d->dl_stable < DLC_STABLE) d->dl_stable++;
+    return 0;
+}
+
 /* the dynamic form of e (see the comment above DLC_MAX); 0: over budget or
  * not cacheable */
 static int dyn_build(DlEntry* e, uint32_t frame) {
@@ -2342,11 +2363,13 @@ static int dyn_build(DlEntry* e, uint32_t frame) {
             x->hi = r.hi[a];
             x->base = g_gx.array[a];
             x->hash = dyn_array_hash(x, x->base);
+            x->qhash = dyn_array_qhash(x, x->base);
             x->always = (uint8_t)io;   /* no template to keep it: fetched every call */
         }
     d->sig = vtx_sig(fmts, 0);
     e->fkey = fmt_key(fmts);
     d->dl_hash = sample_hash(2166136261u, e->dl, e->nbytes);
+    d->dl_qhash = quick_hash(2166136261u, e->dl, e->nbytes);
     e->dyn = d;
     e->fmts = fmts;
     e->checked = frame;
@@ -2560,7 +2583,7 @@ static int dyn_call(DlEntry* e, uint32_t frame) {
 #endif
     int sig_changed = d->sig != vtx_sig(e->fmts, 0);
     if (sig_changed ||
-        (e->checked != frame && (e->checked = frame, d->dl_hash != sample_hash(2166136261u, e->dl, e->nbytes)))) {
+        (e->checked != frame && (e->checked = frame, dyn_dl_changed(e, d, frame)))) {
         dyn_free(e);
         if (++e->rebuilds >= DLC_VOLATILE * 4 || !dyn_build(e, frame)) {
             log_volatile(e, e->rebuilds >= DLC_VOLATILE * 4 ? (sig_changed ? "formats changed" : "contents changed")
@@ -2576,8 +2599,14 @@ static int dyn_call(DlEntry* e, uint32_t frame) {
         const uint8_t* base = g_gx.array[x->attr];
         if (!base) continue;
         if (!x->always) {
-            uint32_t h;
-            if (base == x->base && (h = dyn_array_hash(x, base)) == x->hash) continue;
+            if (base == x->base) {
+                if (x->stable >= DLC_STABLE && ((frame + (uint32_t)(e - s_dlc) + (uint32_t)i) & 7)) continue;
+                if (x->stable >= DLC_STABLE ? dyn_array_qhash(x, base) == x->qhash
+                                            : dyn_array_hash(x, base) == x->hash) {
+                    if (x->stable < DLC_STABLE) x->stable++;
+                    continue;
+                }
+            }
             x->always = 1;
         }
         x->base = base;

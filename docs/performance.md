@@ -191,6 +191,13 @@ of it measured on a console yet (no more console rounds, the user's call):
   decoded again to draw. It tries again 30 frames on (`DLC_BUILD_RETRY`).
 - `derive_vk`'s scan of the eight lights' attenuation (48 float compares a
   draw, xgx_draw's busiest spot) runs only after a light changed.
+- A dynamic list's checks (its own bytes once a frame, each array not yet
+  seen changing on every call: 64 sampled words each, cache misses, ~50
+  a frame in Main Plaza) follow the cached lists' policy: after 120
+  passes, every eighth frame with 16 samples. `fmt_key` (two hash mixes a
+  call) is cached until the descriptor, a format or an array's stride
+  changes; `GXColor1u32` (every particle corner) takes `GXColor4u8`'s
+  fast path.
 - **Snow** (Phendrana ~10%): `GXPortSnowQuads`, one call for a grid's
   flakes; `GXTexCoord2u8` & co. take a fast path when the next slot is a
   direct texture coordinate.
@@ -199,6 +206,13 @@ of it measured on a console yet (no more console rounds, the user's call):
   in the state manager's object-list walks (~4%), and ~8 vertices ahead
   in `BuildBoneRange`'s streams (the Pentium III has no hardware
   prefetcher).
+- More misses taken off: the next surface's header (`CCubeModel`'s draw
+  loops), the particle two ahead (`UpdateExistingParticles`), the rain and
+  snow grids' arrays (rewritten whole every tick; the loops also reloaded
+  the vector's pointer per particle: ~3% of a rainy or snowy frame).
+  `PortHasHudInterference` (every HUD model's materials, three times a
+  frame) is kept per frame; the vertex constants' and programs' method
+  headers are written inline (pbkit's `pb_push` is two unoptimised calls).
 - Found, not changed: the HUD minimap (`CMapWorld::Draw`) is 150-300
   immediate draws every frame of play (each surface's fill and outline,
   alternating triangles and lines, a `GXSetTevKColor` between each).

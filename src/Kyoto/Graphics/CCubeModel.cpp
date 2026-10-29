@@ -1346,6 +1346,21 @@ bool CCubeModel::TryLockTextures() const {
   return !!x40_24_loadTextures;
 }
 
+#ifdef TARGET_XBOX
+// PORT_XBOX: the next surface's header asked for while this one draws: each
+// is a cache miss when DrawSurface reads its material index (~1.4% of the
+// console's CPU in Main Plaza, round hw9). A prefetch is only a hint.
+static inline void PortPrefetchNextSurface(const CCubeSurface& surface) {
+  const CCubeSurface next = surface.GetNextSurface();
+  if (next.IsValid()) {
+    __builtin_prefetch(&next.GetCenter());
+  }
+}
+#define PORT_PREFETCH_NEXT_SURFACE(s) PortPrefetchNextSurface(s)
+#else
+#define PORT_PREFETCH_NEXT_SURFACE(s)
+#endif
+
 void CCubeModel::DrawSurfaces(const CModelFlags& flags) const {
   if (sDrawingWireframe) {
     for (CCubeSurface surface = GetNormalSurfaces(); surface.IsValid();
@@ -1359,10 +1374,12 @@ void CCubeModel::DrawSurfaces(const CModelFlags& flags) const {
   } else if ((flags.GetOtherFlags() & CModelFlags::kF_NoTextureLock) || TryLockTextures()) {
     for (CCubeSurface surface = GetNormalSurfaces(); surface.IsValid();
          surface = surface.GetNextSurface()) {
+      PORT_PREFETCH_NEXT_SURFACE(surface);
       DrawSurface(surface, flags);
     }
     for (CCubeSurface surface = GetAlphaSurfaces(); surface.IsValid();
          surface = surface.GetNextSurface()) {
+      PORT_PREFETCH_NEXT_SURFACE(surface);
       DrawSurface(surface, flags);
     }
   }
@@ -1377,6 +1394,7 @@ void CCubeModel::DrawNormalSurfaces(const CModelFlags& flags) const {
   } else if (TryLockTextures()) {
     for (CCubeSurface surface = GetNormalSurfaces(); surface.IsValid();
          surface = surface.GetNextSurface()) {
+      PORT_PREFETCH_NEXT_SURFACE(surface);
       DrawSurface(surface, flags);
     }
   }
@@ -1391,6 +1409,7 @@ void CCubeModel::DrawAlphaSurfaces(const CModelFlags& flags) const {
   } else if (TryLockTextures()) {
     for (CCubeSurface surface = GetAlphaSurfaces(); surface.IsValid();
          surface = surface.GetNextSurface()) {
+      PORT_PREFETCH_NEXT_SURFACE(surface);
       DrawSurface(surface, flags);
     }
   }

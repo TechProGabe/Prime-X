@@ -588,6 +588,27 @@ void CEnvFxManager::UpdateBlockedGrids(CStateManager& mgr, EEnvFxType type,
 }
 
 void CEnvFxManager::UpdateSnowParticles(rstl::reserved_vector< CVectorFixed8_8, 256 >& snowForces) {
+#ifdef TARGET_XBOX
+  // PORT_XBOX: the same sums through local pointers, with the particles
+  // ~20 ahead asked for in the cache (the grids' arrays are read and
+  // written whole every tick; no hardware prefetcher on the Pentium III, and
+  // the vector's pointer was reloaded per particle: ~3% of a snowy or rainy
+  // frame on the console, round hw9)
+  for (int i = x50_grids.size() - 1; i >= 0; --i) {
+    int forceIdx = static_cast< int >(x28_firstSnowForce);
+    if (x50_grids[i].GetVisibility().first) {
+      CVectorFixed8_8* const parts = x50_grids[i].x1c_particles.data();
+      for (int j = x50_grids[i].x1c_particles.size() - 1; j >= 0; --j) {
+        __builtin_prefetch(reinterpret_cast< const char* >(parts + j) - 128);
+        CVectorFixed8_8 newP = parts[j] + snowForces[forceIdx];
+        newP.z &= 0x3FFF;
+        parts[j] = newP;
+        forceIdx = (forceIdx + 1) & 0xFF;
+      }
+    }
+  }
+  return;
+#endif
   for (int i = x50_grids.size() - 1; i >= 0; --i) {
     int forceIdx = static_cast< int >(x28_firstSnowForce);
     if (x50_grids[i].GetVisibility().first) {
@@ -604,6 +625,19 @@ void CEnvFxManager::UpdateSnowParticles(rstl::reserved_vector< CVectorFixed8_8, 
 void CEnvFxManager::UpdateRainParticles(const CVectorFixed8_8& zVec, const CVector3f& oopbtws,
                                         float dt) {
   short deltaZ = zVec.GetZ() + real_to_fixed8_8(-40.f * dt * oopbtws.GetZ());
+#ifdef TARGET_XBOX
+  // PORT_XBOX: as UpdateSnowParticles
+  for (int i = x50_grids.size() - 1; i >= 0; --i) {
+    if (x50_grids[i].GetVisibility().first) {
+      CVectorFixed8_8* const parts = x50_grids[i].x1c_particles.data();
+      for (int j = x50_grids[i].x1c_particles.size() - 1; j >= 0; --j) {
+        __builtin_prefetch(reinterpret_cast< const char* >(parts + j) - 128);
+        parts[j].z = (deltaZ + parts[j].z) & 0x3fff;
+      }
+    }
+  }
+  return;
+#endif
   for (int i = x50_grids.size() - 1; i >= 0; --i) {
     if (x50_grids[i].GetVisibility().first) {
       for (int j = x50_grids[i].x1c_particles.size() - 1; j >= 0; --j) {

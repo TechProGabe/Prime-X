@@ -485,6 +485,11 @@ static int s_stress_kind;
 #define PCRTC_START_REG (*(volatile uint32_t*)0xFD600800)
 
 static inline void put1(uint32_t m, uint32_t v) { P[0] = (1u << 18) | m; P[1] = v; P += 2; }
+/* pbkit's pb_push(P++, m, n) inline: its method header for n words to
+ * follow (subchannel 0). pbkit is built unoptimised, and pb_push is two
+ * calls deep (pb_push_to): ~2% of the console's CPU from the constant
+ * uploads alone (round hw9's Main Plaza). */
+static inline void put_hdr(uint32_t m, uint32_t n) { *P++ = n << 18 | m; }
 static inline void putf(uint32_t m, float v) { union { float f; uint32_t u; } c; c.f = v; put1(m, c.u); }
 
 static void pb_open(void) {
@@ -1853,7 +1858,7 @@ static void vp_upload(const VpEntry* e, int start) {
     put1(NV097_SET_TRANSFORM_PROGRAM_LOAD, (uint32_t)start);
     for (i = 0; i < e->prog.n; i += 8) {
         uint32_t n = e->prog.n - i < 8 ? e->prog.n - i : 8;
-        pb_push(P++, NV097_SET_TRANSFORM_PROGRAM, n * 4);
+        put_hdr(NV097_SET_TRANSFORM_PROGRAM, (uint32_t)(n * 4));
         memcpy(P, &e->prog.words[i * 4], n * 16);
         P += n * 4;
     }
@@ -2170,7 +2175,7 @@ static void push_vc_rows(int first, int n) {
     put1(NV097_SET_TRANSFORM_CONSTANT_LOAD, (uint32_t)first);
     for (i = 0; i < words; i += 32) {
         int k = words - i < 32 ? words - i : 32;
-        pb_push(P++, NV097_SET_TRANSFORM_CONSTANT, k);
+        put_hdr(NV097_SET_TRANSFORM_CONSTANT, (uint32_t)k);
         memcpy(P, w + i, (size_t)k * 4);
         P += k;
     }
