@@ -245,6 +245,12 @@ the console before (the save, settings, hw6's xbe) in `logs-hw7pre`.
   hw4's r4c froze around the same reads. Fixed in `f73d0d7`: on the
   console, no codec access after the reset (it never had anything to power
   up there). Melee-X has the same code.
+- r7e-r7g rerun on the fix (`stage-hw7b`, map `prime_x.hw7b.map`): each
+  logged `codec not read after the reset`, played audio (no `AC97 stuck`)
+  and chained on; back to the dashboard. Phendrana 41.8 -> 45.3 (p10 36 ->
+  38). Game Timing: Flex against Fixed on the same build: Main Plaza 31.9
+  -> 35.3 (p10 25 -> 27, sim 18.4 -> 16.7 ms), Landing Site 34.9 -> 37.9
+  (p10 17 -> 20.5, sim 23.6 -> 19.3). No memory warnings; shots right.
 - **The user's note:** in the Landing cinematic, as the gunship comes into
   the atmosphere, a black box around its glow texture. r7b's frame 600 shot
   (`shot_Prime-X-r7b_01.bmp`) shows the quad's square around the sprite.
