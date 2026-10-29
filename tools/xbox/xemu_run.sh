@@ -53,7 +53,8 @@ fi
 for ((i=0; i<secs; i++)); do
   sleep 1
   kill -0 $pid 2>/dev/null || break
-  grep -qE "$stop" "$log" 2>/dev/null && break
+  # screenshots go out as base64 lines, which can spell a stop word by chance
+  grep -av '^\[FBDUMP\]' "$log" 2>/dev/null | grep -qE "$stop" && break
   # the last screenshot is out: the rest of the scenario (results screen) is idle time
   [ "$shots" -gt 0 ] && [ "$(tr -d '\r' < "$log" | grep -cx '\[FBDUMP\] END')" -ge "$shots" ] && break
 done

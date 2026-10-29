@@ -41,7 +41,7 @@ one() {   # name world run xemu-args
   PX_XBE="$work/default.xbe" PX_RUN="$run" PX_XEMU_ARGS="$args" PX_STAGE_EXTRA="$st" \
     timeout 1300 tools/xbox/xemu_run.sh 1200 'FATAL|THROW' > "$OUT/$name.out" 2>&1
   python tools/xbox/fbdump_to_png.py "$run/serial.log" "$OUT/$name" > /dev/null 2>&1
-  grep -a "FATAL\|THROW\|\[TEX\] drop\|NEW\] out" "$OUT/$name.out" | head -3 | sed "s/^/$name: /"
+  grep -a "FATAL\|THROW\|\[TEX\] drop\|NEW\] out" "$OUT/$name.out" | grep -v '^\[FBDUMP\]' | head -3 | sed "s/^/$name: /"
 }
 i=0
 while [ $i -lt ${#rooms[@]} ]; do
