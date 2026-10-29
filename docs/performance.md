@@ -218,6 +218,12 @@ of it measured on a console yet (no more console rounds, the user's call):
   a frame: plans are cached per vertex format until the descriptor or a
   format changes (`cached_plan`), and the copy skipped when the batch
   already holds it.
+- An actor drawn twice a frame (its body and its projected shadow, or its
+  unsorted and sorted parts) was skinned twice: `CSkinnedModel::Calculate`
+  now skips the skin when its workspace already holds the same virtual-bone
+  transforms over the same source arrays (a hash a model; not for owned
+  workspaces or morphs). Lockstep shots of the Frigate-crash pirate show
+  its pose changing frame to frame as before.
 - Found, not changed: the HUD minimap (`CMapWorld::Draw`) is 150-300
   immediate draws every frame of play (each surface's fill and outline,
   alternating triangles and lines, a `GXSetTevKColor` between each).
