@@ -1466,6 +1466,9 @@ typedef struct {
 #define DYN_RU_SLOTS 4
 typedef struct {
     const void** v;
+#if XGX_DYN_VERIFY
+    uint32_t* vh;   /* each draw's ring bytes hashed when kept: the ring changed, or the arrays? */
+#endif
     uint32_t frame, ring;
     const uint8_t* base[DLC_MAX_RANGE];
     uint32_t gen[DLC_MAX_RANGE];
@@ -1665,7 +1668,12 @@ static void dyn_free(DlEntry* e) {
     free(d->plans);
     {
         int k;
-        for (k = 0; k < DYN_RU_SLOTS; k++) free(d->ru[k].v);
+        for (k = 0; k < DYN_RU_SLOTS; k++) {
+            free(d->ru[k].v);
+#if XGX_DYN_VERIFY
+            free(d->ru[k].vh);
+#endif
+        }
     }
     free(d->tmpl);
     free(d->idx);
@@ -2565,6 +2573,14 @@ static void dyn_emit_group(DynList* d, int from, int end, uint8_t* dst, const Dy
  * draw and once after, and compared. The two references differing means
  * the arrays changed under the call (counted apart: not this code's) */
 static uint32_t s_dynv_draws, s_dynv_bad, s_dynv_moved;
+static int s_dynv_reuse;   /* verifying a reused call (dyn_call) */
+static uint32_t s_dynv_ring_moved;   /* reused calls whose ring bytes changed since kept */
+static uint32_t dynv_hash(const void* p, uint32_t n) {
+    const uint8_t* b = (const uint8_t*)p;
+    uint32_t h = 2166136261u;
+    while (n--) h = (h ^ *b++) * 16777619u;
+    return h;
+}
 static uint8_t* dyn_ref(DynList* d, int from, int end, uint32_t bytes, int merged, const DynFetch* f, int nf) {
     uint8_t* t = (uint8_t*)malloc(d->total);
     uint8_t* want = (uint8_t*)malloc(bytes);
@@ -2596,7 +2612,8 @@ static void dyn_verify(DynList* d, int from, int end, uint8_t* want0, const uint
             if (mine) {
                 if (merged) dyn_emit_group(d, from, end, mine, f, nf);
                 else memcpy(mine, dyn_batch_verts(d, from, f, nf), bytes);
-                xhw_logf("[DLC] dyn verify: emitted again into cached memory: %s the reference, %s the ring",
+                xhw_logf("[DLC] dyn verify: %s list %08x, emitted again into cached memory: %s the reference, %s the ring",
+                         s_dynv_reuse ? "reused" : "fresh", (unsigned)(uintptr_t)d,
                          memcmp(mine, want, bytes) ? "differs from" : "matches",
                          memcmp(mine, got, bytes) ? "differs from" : "matches");
                 free(mine);
@@ -2633,22 +2650,31 @@ static void log_volatile(const DlEntry* e, const char* why) {
 #ifndef XGX_DYN_REUSE
 #define XGX_DYN_REUSE 1   /* 0: fetch and copy on every call, as before */
 #endif
-#define SKIN_REG 256
+#define SKIN_REG 1024   /* two entries a buffer (positions, normals) */
 #define SKIN_GONE ((const void*)1)
 typedef struct {
     const void* p;
     uint32_t gen;
+    uint32_t frame;      /* transient entries: the frame they hold for (+1; 0: kept) */
 } SkinReg;
 static SkinReg s_skinreg[SKIN_REG];
 static uint32_t s_skin_gen = 1;
 
+/* a transient entry from an earlier frame is as good as gone */
+static int skin_stale(const SkinReg* r, uint32_t frame) { return r->frame && r->frame != frame + 1; }
+
 static SkinReg* skin_slot(const void* p, int add) {
-    uint32_t h = ((uint32_t)(uintptr_t)p >> 5) * 2654435761u >> 24, k;
+    uint32_t h = ((uint32_t)(uintptr_t)p >> 5) * 2654435761u >> 24, k, frame = xgx_present_count();
     SkinReg* free_slot = NULL;
     for (k = 0; k < SKIN_REG; k++) {
         SkinReg* r = &s_skinreg[(h + k) & (SKIN_REG - 1)];
-        if (r->p == p) return r;
-        if (r->p == SKIN_GONE) {
+        if (r->p == p) {
+            if (!skin_stale(r, frame)) return r;
+            if (!add) return NULL;
+            r->frame = 0;   /* the caller sets it again */
+            return r;
+        }
+        if (r->p == SKIN_GONE || (r->p && skin_stale(r, frame))) {
             if (!free_slot) free_slot = r;
             continue;
         }
@@ -2660,6 +2686,7 @@ static SkinReg* skin_slot(const void* p, int add) {
     }
     if (!add || !free_slot) return NULL;
     free_slot->p = p;
+    free_slot->frame = 0;
     return free_slot;
 }
 
@@ -2669,10 +2696,66 @@ void GXPortSkinWritten(const void* verts, const void* normals) {
     if (normals && (r = skin_slot(normals, 1))) r->gen = ++s_skin_gen;
 }
 
+void GXPortSkinWrittenThisFrame(const void* verts, const void* normals) {
+    uint32_t f = xgx_present_count() + 1;
+    SkinReg* r;
+    if (verts && (r = skin_slot(verts, 1))) {
+        r->gen = ++s_skin_gen;
+        r->frame = f;
+    }
+    if (normals && (r = skin_slot(normals, 1))) {
+        r->gen = ++s_skin_gen;
+        r->frame = f;
+    }
+}
+
 void GXPortSkinForget(const void* verts, const void* normals) {
     SkinReg* r;
     if (verts && (r = skin_slot(verts, 0))) r->p = SKIN_GONE;
     if (normals && (r = skin_slot(normals, 0))) r->p = SKIN_GONE;
+}
+
+/* ---- kept skin workspaces (port_xbox_gx.h GXPortSkinKeep) ----
+ * Retail skins every animated model into one shared ring, given back with
+ * the draw sync token after the draw; this GX copies a draw's vertices as
+ * it is made, so the token passes at once and every model skins to the
+ * ring's first bytes. A model drawn again in the same frame (its body, then
+ * its shadow, thermal, sorted or multipass parts) was skinned again, and
+ * its dynamic lists fetched again, because another model had used the ring
+ * in between. A workspace of its own, while memory allows, lets both be
+ * skipped (CSkinnedModel's PortSkinHash, dyn_reusable). */
+#ifndef XGX_SKIN_KEEP_KB
+/* all kept workspaces together; 0: none, the ring as retail. Off: with it,
+ * xemu's pirate room (verify build) showed reused calls whose vertices no
+ * longer matched their kept arrays (a few normals, low bits), cause not
+ * found; without the reuse it verified clean. See docs/performance.md. */
+#define XGX_SKIN_KEEP_KB 0
+#endif
+#ifndef XGX_SKIN_KEEP_FREE_KB
+#define XGX_SKIN_KEEP_FREE_KB (XHW_MEM_LOW_KB + 3u * 1024)   /* free memory a new one must leave */
+#endif
+static uint32_t s_keep_bytes, s_keep_n, s_keep_refused;
+
+void* GXPortSkinKeep(unsigned bytes) {
+    uint8_t *raw, *p;
+    if (!XGX_SKIN_KEEP_KB || s_keep_bytes + bytes > XGX_SKIN_KEEP_KB * 1024u ||
+        xhw_mem_free_kb() < XGX_SKIN_KEEP_FREE_KB + bytes / 1024 || !(raw = (uint8_t*)malloc(bytes + 32))) {
+        s_keep_refused++;
+        return NULL;
+    }
+    p = (uint8_t*)(((uintptr_t)raw + 32) & ~(uintptr_t)31);
+    ((void**)p)[-1] = raw;
+    s_keep_bytes += bytes;
+    s_keep_n++;
+    return p;
+}
+
+void GXPortSkinUnkeep(void* verts, const void* normals, unsigned bytes) {
+    if (!verts) return;
+    GXPortSkinForget(verts, normals);
+    s_keep_bytes -= bytes;
+    s_keep_n--;
+    free(((void**)verts)[-1]);
 }
 
 /* 0: a is not a skin buffer (it may change without a word) */
@@ -2683,17 +2766,32 @@ static uint32_t dyn_skin_gen(const uint8_t* a) {
 
 /* an earlier call's vertices from these arrays, still right and still in
  * the ring; NULL: none */
+static uint32_t s_ru_why[6];   /* not ok, frame, ring, nf, base, gen: why the slots matching most didn't */
 static const DynReuse* dyn_reusable(const DynList* d, uint32_t frame, const DynFetch* f, int nf) {
     uint32_t ring = xgx_vtx_ring_gen();
-    int j, k;
+    int j, k, why = 0;
     if (!XGX_DYN_REUSE) return NULL;
     for (j = 0; j < DYN_RU_SLOTS; j++) {
         const DynReuse* r = &d->ru[j];
-        if (!r->ok || r->frame != frame || r->ring != ring || nf != r->nf) continue;
-        for (k = 0; k < nf; k++)
-            if (f[k].base != r->base[k] || dyn_skin_gen(f[k].base) != r->gen[k]) break;
-        if (k == nf) return r;
+        int w;
+        if (!r->ok) w = 0;
+        else if (r->frame != frame) w = 1;
+        else if (r->ring != ring) w = 2;
+        else if (nf != r->nf) w = 3;
+        else {
+            for (k = 0; k < nf; k++)
+                if (f[k].base != r->base[k]) break;
+            if (k < nf) w = 4;
+            else {
+                for (k = 0; k < nf; k++)
+                    if (dyn_skin_gen(f[k].base) != r->gen[k]) break;
+                if (k == nf) return r;
+                w = 5;
+            }
+        }
+        if (w > why) why = w;
     }
+    s_ru_why[why]++;
     return NULL;
 }
 
@@ -2752,10 +2850,14 @@ static int dyn_call(DlEntry* e, uint32_t frame) {
     const DynReuse* ru = dyn_reusable(d, frame, fetch, nf);
     if (ru) {
         /* the same draws over the vertices the earlier call left in the ring */
+#if XGX_DYN_VERIFY
+        s_dynv_reuse = 1;
+#endif
         for (i = 0; d->view && i < d->ndraw; i++) {
             const DlBatch* b = &d->view[d->nbatch + i];
 #if XGX_DYN_VERIFY
             int end = i + 1 < d->ndraw ? d->gfirst[i + 1] : d->nbatch;
+            if (ru->vh && dynv_hash(ru->v[i], b->count * b->layout.stride) != ru->vh[i]) s_dynv_ring_moved++;
             dyn_verify(d, d->gfirst[i], end, dyn_ref(d, d->gfirst[i], end, b->count * b->layout.stride, 1, fetch, nf),
                        (const uint8_t*)ru->v[i], b->count * b->layout.stride, 1, fetch, nf);
 #endif
@@ -2767,6 +2869,8 @@ static int dyn_call(DlEntry* e, uint32_t frame) {
             const DynBatch* b = &d->batch[i];
             if (!b->count) continue;
 #if XGX_DYN_VERIFY
+            if (ru->vh && dynv_hash(ru->v[d->ndraw + i], b->count * b->plan->layout.stride) != ru->vh[d->ndraw + i])
+                s_dynv_ring_moved++;
             dyn_verify(d, i, i + 1, dyn_ref(d, i, i + 1, b->count * b->plan->layout.stride, 0, fetch, nf),
                        (const uint8_t*)ru->v[d->ndraw + i], b->count * b->plan->layout.stride, 0, fetch, nf);
 #endif
@@ -2775,6 +2879,9 @@ static int dyn_call(DlEntry* e, uint32_t frame) {
             g_xgx.dirty = 0;
         }
         s_st_dyn_reused++;
+#if XGX_DYN_VERIFY
+        s_dynv_reuse = 0;
+#endif
     } else {
         uint32_t ring = xgx_vtx_ring_gen();
         int ok = XGX_DYN_REUSE;
@@ -2784,6 +2891,9 @@ static int dyn_call(DlEntry* e, uint32_t frame) {
             keep->v = (const void**)calloc((size_t)d->ndraw + d->nbatch, sizeof *keep->v);
             ok = keep->v != NULL;
         }
+#if XGX_DYN_VERIFY
+        if (ok && !keep->vh) keep->vh = (uint32_t*)calloc((size_t)d->ndraw + d->nbatch, sizeof *keep->vh);
+#endif
         for (i = 0; d->view && i < d->ndraw; i++) {
             const DlBatch* b = &d->view[d->nbatch + i];
             int end = i + 1 < d->ndraw ? d->gfirst[i + 1] : d->nbatch;
@@ -2797,6 +2907,9 @@ static int dyn_call(DlEntry* e, uint32_t frame) {
             dyn_verify(d, d->gfirst[i], end, want0, v, b->count * b->layout.stride, 1, fetch, nf);
 #endif
             if (ok) keep->v[i] = v;
+#if XGX_DYN_VERIFY
+            if (ok && keep->vh) keep->vh[i] = dynv_hash(v, b->count * b->layout.stride);
+#endif
             xgx_draw(b->prim, b->count, &b->layout, &g_xgx);
             g_xgx.dirty = 0;
         }
@@ -2818,6 +2931,9 @@ static int dyn_call(DlEntry* e, uint32_t frame) {
             dyn_verify(d, i, i + 1, want0, v, bytes, 0, fetch, nf);
 #endif
             if (ok) keep->v[d->ndraw + i] = v;
+#if XGX_DYN_VERIFY
+            if (ok && keep->vh) keep->vh[d->ndraw + i] = dynv_hash(v, bytes);
+#endif
             xgx_draw(b->prim, b->count, &b->plan->layout, &g_xgx);
             g_xgx.dirty = 0;
         }
@@ -3000,6 +3116,11 @@ void gx_vtx_frame_end(void) {
                 if (s_begin_n[i]) n += snprintf(line + n, sizeof line - (size_t)n, " %08x:%u", s_begin_who[i], s_begin_n[i]);
             xhw_logf("[DLC] immediate batches begun from:%s", n ? line : " -");
             xhw_logf("[DLC] lines %u: %u outside the view, %u clipped", s_st_lines, s_st_line_drop, s_st_line_clip);
+            xhw_logf("[DLC] dynamic reuse misses (best slot): not kept %u, other frame %u, ring %u, arrays %u/%u, "
+                     "written %u | skin workspaces: %u kept (%u KB), %u refused",
+                     s_ru_why[0], s_ru_why[1], s_ru_why[2], s_ru_why[3], s_ru_why[4], s_ru_why[5], s_keep_n,
+                     s_keep_bytes / 1024, s_keep_refused);
+            memset(s_ru_why, 0, sizeof s_ru_why);
             s_st_lines = s_st_line_drop = s_st_line_clip = 0;
             memset(s_begin_n, 0, sizeof s_begin_n);
             memset(s_begin_who, 0, sizeof s_begin_who);
@@ -3008,8 +3129,9 @@ void gx_vtx_frame_end(void) {
         cen_report();
 #endif
 #if XGX_DYN_VERIFY
-        xhw_logf("[DLC] dyn verify: %u draws, %u differ (%u more with arrays that changed during the call)",
-                 s_dynv_draws, s_dynv_bad, s_dynv_moved);
+        xhw_logf("[DLC] dyn verify: %u draws, %u differ (%u more with arrays that changed during the call); reused "
+                 "calls whose ring bytes changed since kept: %u",
+                 s_dynv_draws, s_dynv_bad, s_dynv_moved, s_dynv_ring_moved);
         xhw_logf("[DLC] snow verify: %u quads, %u calls differ", s_snowv_quads, s_snowv_bad);
 #endif
     }

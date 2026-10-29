@@ -87,6 +87,8 @@ private:
   // bones' transforms and the source arrays, and the workspace it went to
   uint xPortSkinHash;
   const float* xPortSkinVerts;
+  uint xPortKeptBytes;   // an owned model's own workspace (GXPortSkinKeep); 0: the ring's
+  bool xPortKeepTried;
 #endif
 };
 

@@ -199,6 +199,8 @@ CSkinnedModel::~CSkinnedModel() {
   // PORT_XBOX: the workspace goes; the GX layer stops trusting its contents
   if (!x38_owned && !x28_vertWorkspace.null()) {
     GXPortSkinForget(x28_vertWorkspace.get(), x30_normalWorkspace.get());
+  } else if (xPortKeptBytes != 0) {
+    GXPortSkinUnkeep(x28_vertWorkspace.get(), x30_normalWorkspace.get(), xPortKeptBytes);
   }
 #endif
   Skinning::DelSkinnedRef();
@@ -218,6 +220,8 @@ void CSkinnedModel::Construct() {
 #ifdef TARGET_XBOX
   xPortSkinHash = 0;
   xPortSkinVerts = nullptr;
+  xPortKeptBytes = 0;
+  xPortKeepTried = false;
 #endif
   if (!x38_owned) {
     // `Calculate` writes points and then normals into one contiguous buffer, so
@@ -347,9 +351,10 @@ void CSkinnedModel::Calculate(const CPoseAsTransforms& pose,
 #endif
   x10_skinRules->BuildAccumulatedTransforms(pose, **x1c_layoutInfo);
 #ifdef TARGET_XBOX
-  // PORT_XBOX: the workspace already holds this pose's skin (PortSkinHash)
+  // PORT_XBOX: the workspace already holds this pose's skin (PortSkinHash):
+  // a model's own (unowned, or kept: GXPortSkinKeep), never the shared ring
   bool portSkinSame = false;
-  if (workVerts == nullptr && !x38_owned && !legacy && !morphEffect.valid()) {
+  if (workVerts == nullptr && (!x38_owned || xPortKeptBytes != 0) && !legacy && !morphEffect.valid()) {
     const uint h = PortSkinHash(**x10_skinRules, **x4_model);
     portSkinSame = h == xPortSkinHash && verts == xPortSkinVerts;
     xPortSkinHash = h;
@@ -400,8 +405,17 @@ void CSkinnedModel::Calculate(const CPoseAsTransforms& pose,
 #ifdef TARGET_XBOX
   // PORT_XBOX: tell the GX layer these buffers changed (GXPortSkinWritten):
   // a display list drawn from them again this frame must send them again
+  // (a model's own workspace for good; the shared skinning ring's and a
+  // caller's (the swarms' workspaces, skinned once and drawn for every
+  // member) for this frame only: they are handed out again or freed with
+  // their owner, but nothing else writes them while the frame draws)
   if (!portSkinSame) {
-    GXPortSkinWritten(verts, reinterpret_cast< uchar* >(verts) + alignedVertSize);
+    uchar* const normalsOut = reinterpret_cast< uchar* >(verts) + alignedVertSize;
+    if (workVerts != nullptr || (x38_owned && xPortKeptBytes == 0)) {
+      GXPortSkinWrittenThisFrame(verts, normalsOut);
+    } else {
+      GXPortSkinWritten(verts, normalsOut);
+    }
   }
 #endif
   if (sPointGen != nullptr) {
@@ -454,6 +468,17 @@ void CSkinnedModel::PortVerify(const float* verts, size_t size) const {
 #endif
 
 void CSkinnedModel::CalculateDefault() {
+#ifdef TARGET_XBOX
+  // PORT_XBOX: the workspace is freed here too (see the destructor)
+  if (!x38_owned && !x28_vertWorkspace.null()) {
+    GXPortSkinForget(x28_vertWorkspace.get(), x30_normalWorkspace.get());
+  } else if (xPortKeptBytes != 0) {
+    GXPortSkinUnkeep(x28_vertWorkspace.get(), x30_normalWorkspace.get(), xPortKeptBytes);
+    xPortKeptBytes = 0;
+  }
+  xPortSkinHash = 0;
+  xPortSkinVerts = nullptr;
+#endif
   x28_vertWorkspace = rstl::auto_ptr< float[] >();
   x30_normalWorkspace = rstl::auto_ptr< float[] >();
 }
@@ -511,6 +536,22 @@ void CSkinnedModel::AllocateStorage() {
     int normSize = (normalCount * NormalStride(**x4_model) + 31) & ~31;
     int vertSize = (vertexCount * 12 + 31) & ~31;
     int totalSize = vertSize + normSize + 32;
+#ifdef TARGET_XBOX
+    // PORT_XBOX: a workspace of the model's own while memory allows, kept
+    // across draws and frames (GXPortSkinKeep); asked once a model
+    if (!xPortKeepTried) {
+      xPortKeepTried = true;
+      if (void* kept = GXPortSkinKeep(totalSize)) {
+        xPortKeptBytes = totalSize;
+        x28_vertWorkspace = rstl::auto_ptr< float[] >(static_cast< float* >(kept));
+        x30_normalWorkspace =
+            rstl::auto_ptr< float[] >(reinterpret_cast< float* >(static_cast< char* >(kept) + vertSize));
+        x28_vertWorkspace.release();
+        x30_normalWorkspace.release();
+        return;
+      }
+    }
+#endif
     void* ptr = EnsureAllocation(totalSize);
     if (ptr == Skinning::sStaticSkinningData) {
       GXInvalidateVtxCache();
@@ -524,6 +565,11 @@ void CSkinnedModel::AllocateStorage() {
 }
 
 void CSkinnedModel::PostDrawFunc() const {
+#ifdef TARGET_XBOX
+  if (xPortKeptBytes != 0) {
+    return;   // PORT_XBOX: its own workspace stays (GXPortSkinKeep)
+  }
+#endif
   if (x38_owned && !x28_vertWorkspace.null()) {
     x28_vertWorkspace = rstl::auto_ptr< float[] >();
     x30_normalWorkspace = rstl::auto_ptr< float[] >();
