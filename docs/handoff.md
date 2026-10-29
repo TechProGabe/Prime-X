@@ -23,10 +23,18 @@ No hardware rounds until they say.
   (`451e1bf`): `CGX::SGXState::x4c_flags` was a PowerPC-ordered bitfield;
   `CGX::SetNumChans` never reached GX. Shots: `build-xbox/shots/morph4`
   (before) vs `morphfix_009` (after).
-- **The white gun** (`b858563`): five textures on the gun with its world
-  shadow, four units; the stage without one read white. Uniform textures
-  are now combiner constants; an overflow reads the texture's average.
-  `build-xbox/shots/plazagun_00*` (dark teal metal, as retail).
+- **The white gun**, three causes: (1) `b858563`: five textures on the
+  gun with its world shadow, four units; the stage without one read
+  white. Uniform textures are now combiner constants; an overflow reads
+  the texture's average. (2) `7dbd64b`: a texture a texmap still held was
+  released as "idle" after 600 frames, because `CTexture::Load` doesn't
+  load again what it thinks is still bound (true on a GameCube); the
+  gun's reflection map in a quiet room went, and the gun read white "a
+  while into the room" (Chozo's save corridor at frame 1500 in xemu).
+  (3) the channel count (`451e1bf`, below). Shots:
+  `build-xbox/shots/plazagun_00*`, `savegun_000`.
+- xemu slot 1's virtual memory card has the Fusion Suit bonus on (an
+  earlier test): its runs show Samus's left hand green, slot 2's orange.
 - **Display-list thrash** (`b858563`): only lists unused for 3 frames are
   evicted (hw6's 34 ms of display lists with the vertex pool full).
 - `xhw_time_ns` reads the ACPI timer every 100 ms and interpolates with the
