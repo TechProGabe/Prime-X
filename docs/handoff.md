@@ -33,6 +33,11 @@ No hardware rounds until they say.
   while into the room" (Chozo's save corridor at frame 1500 in xemu).
   (3) the channel count (`451e1bf`, below). Shots:
   `build-xbox/shots/plazagun_00*`, `savegun_000`.
+- The arm cannon vanishing in a room after a while is retail: after 105 s
+  without firing Samus lowers it out of view (`CFidget`, `kS_HolsterBeam`,
+  `x30_timeUntilHolster`); firing brings it back. xemu runs that stand
+  still hit it (Lava Lake from ~frame 2600). Probably hw1's "arm cannon
+  missing in Main Plaza" too.
 - xemu slot 1's virtual memory card has the Fusion Suit bonus on (an
   earlier test): its runs show Samus's left hand green, slot 2's orange.
 - **Display-list thrash** (`b858563`): only lists unused for 3 frames are
