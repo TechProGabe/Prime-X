@@ -2250,6 +2250,9 @@ static int dlc_call(const uint8_t* dl, uint32_t nbytes) {
         s_dlc_ready = 1;
     }
     e = dlc_find(dl, nbytes);
+    /* the batch table is an allocation of its own (a cache miss a call,
+     * round hw5's profile): asked for now, it arrives during the checks */
+    if (e && e->batch) __builtin_prefetch(e->batch);
     if (e && e->dyn) return dyn_call(e, frame);
     if (e && e->is_volatile) {
         /* turned away by the budget: lists left behind free it in time */
