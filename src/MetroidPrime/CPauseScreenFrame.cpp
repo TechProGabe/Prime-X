@@ -37,6 +37,7 @@
 #endif
 #ifdef TARGET_XBOX
 #include "port_xbox_options.h" // PORT_XBOX: Prime-X's Options rows
+static void PortRestoreValueCells(); // PORT_XBOX: Port Options' value cells (below)
 #endif
 
 static const int skQuitTitles[] = {24, 25, 26, 27, 28};
@@ -1323,6 +1324,7 @@ void SOptionsFrontEndFrame::FinishedLoading() {
     for (int i = 0; i < 4; ++i) {
       x24_tablegroup_leftmenu->GetWorkerWidget(i)->SetIsSelectable(true);
     }
+    PortRestoreValueCells(); // and its value cells' layout
   }
 #endif
   x2c_tablegroup_double->SetVertical(false);
@@ -1391,30 +1393,169 @@ static float PortRightRowZ(CGuiTableGroup* right, float pitch) {
   const float rowPitch = third->GetIdlePosition().GetZ() - second->GetIdlePosition().GetZ();
   return row->GetIdlePosition().GetZ() - second->GetIdlePosition().GetZ() + rowPitch;
 }
-// Port Options' labels run longer than retail's: "C-Stick Dead Zone" met the
-// table's last cell with no gap. Its tables sit 24 px further left (a row is
-// ~18.25 px at 480 lines).
-static float PortValueX(CGuiTableGroup* right, float pitch) {
+// Port Options' value cells on a fixed grid. The frame's cells differ in
+// box size, justification and height (the middle one sits 1.25 units up, the
+// three are 1.1 and 4.4 units apart) and two divider models stand between
+// them, so where a value lands depended on its width: hw6 and hw8 on the
+// console still had cells on the labels. Every cell gets worker 0's box,
+// centred both ways, at evenly spaced points around one fixed centre between
+// the columns; the dividers are hidden. Whatever the strings, nothing moves.
+// The frame is shared with the retail Options screen, which gets its cells
+// back as they were (PortRestoreValueCells).
+// World units, ~20.5 px each at 480 lines. The gap between the columns runs
+// from ~155 px ("Controller" ends) to ~415 px ("C-Stick Dead Zone" starts);
+// both tables' blocks are centred on ~285 px. A table's cells, once they all
+// have worker 0's box, put their centred text a fixed distance from the
+// table's origin, which differs between the two tables (their worker 0
+// panes do): measured in xemu with the tables at -2.3, the triple's block
+// centred on 247 px and the double's on 300 px, whatever the strings.
+static const float kPortTripleCentreX = -0.45f;
+static const float kPortDoubleCentreX = -3.0f;
+static const float kPortTripleSpacing = 3.7f; // ~76 px
+static const float kPortDoubleSpacing = 5.f;  // ~103 px
+
+struct SPortCellSave {
+  CGuiTextPane* pane;
+  CVector3f pos;
+  float dimX;
+  float dimY;
+  CVector3f pivot;
+  int extX;
+  int extY;
+  EJustification just;
+  EVerticalJustification vjust;
+};
+static SPortCellSave sPortCells[16];
+static int sPortCellCount = 0;
+
+static void PortSaveCell(CGuiTextPane* p) {
+  for (int i = 0; i < sPortCellCount; ++i) {
+    if (sPortCells[i].pane == p) {
+      return;
+    }
+  }
+  if (sPortCellCount >= static_cast< int >(sizeof sPortCells / sizeof sPortCells[0])) {
+    return;
+  }
+  SPortCellSave& s = sPortCells[sPortCellCount++];
+  s.pane = p;
+  s.pos = p->GetLocalPosition();
+  s.dimX = p->GetDimensions().GetX();
+  s.dimY = p->GetDimensions().GetY();
+  s.pivot = p->GetPivot();
+  s.extX = p->GetTextSupport().GetTextBoundingWidth();
+  s.extY = p->GetTextSupport().GetTextBoundingHeight();
+  s.just = p->GetTextSupport().PortGetProps().GetJustification();
+  s.vjust = p->GetTextSupport().PortGetProps().GetVerticalJustification();
+}
+
+static void PortRestoreValueCells() {
+  for (int i = 0; i < sPortCellCount; ++i) {
+    SPortCellSave& s = sPortCells[i];
+    s.pane->SetDimensions(CVector2f(s.dimX, s.dimY), true);
+    s.pane->ScaleCenter() = s.pivot;
+    s.pane->TextSupport().SetExtentX(s.extX);
+    s.pane->TextSupport().SetExtentY(s.extY);
+    s.pane->TextSupport().SetJustification(s.just);
+    s.pane->TextSupport().SetVerticalJustification(s.vjust);
+    s.pane->SetLocalPosition(s.pos);
+  }
+  sPortCellCount = 0;
+}
+
+static float PortValueX(CGuiTableGroup* table, int n) {
+  return PortXboxOptions::FrontEndPort()
+             ? (n == 3 ? kPortTripleCentreX : kPortDoubleCentreX) - table->GetIdlePosition().GetX()
+             : 0.f;
+}
+
+static void PortLayoutValues(CGuiTableGroup* table, int n) {
   if (!PortXboxOptions::FrontEndPort()) {
-    return 0.f;
+    return;
   }
-  CGuiWidget* second = right->GetWorkerWidget(1);
-  CGuiWidget* third = right->GetWorkerWidget(2);
-  float rowPitch = second != nullptr && third != nullptr
-                       ? third->GetIdlePosition().GetZ() - second->GetIdlePosition().GetZ()
-                       : pitch;
-  if (rowPitch < 0.f) {
-    rowPitch = -rowPitch;
+  const float spacing = n == 3 ? kPortTripleSpacing : kPortDoubleSpacing;
+  // worker 0's pane and its shadow (the pair's second, drawn behind: larger y)
+  CGuiTextPane* ref = nullptr;
+  CGuiTextPane* refShadow = nullptr;
+  for (CGuiObject* c = table->ChildObject(); c != nullptr; c = c->NextSibling()) {
+    CGuiWidget* w = static_cast< CGuiWidget* >(c);
+    if (w->GetWidgetTypeID() != 'TXPN' || w->GetWorkerId() != 0) {
+      continue;
+    }
+    CGuiTextPane* p = static_cast< CGuiTextPane* >(w);
+    PortSaveCell(p);
+    if (ref == nullptr) {
+      ref = p;
+    } else if (p->GetLocalPosition().GetY() < ref->GetLocalPosition().GetY()) {
+      refShadow = ref;
+      ref = p;
+    } else {
+      refShadow = p;
+    }
   }
-  return -rowPitch * (24.f / 18.25f);
+  if (ref == nullptr) {
+    return;
+  }
+  const SPortCellSave* r = nullptr;
+  for (int i = 0; i < sPortCellCount; ++i) {
+    if (sPortCells[i].pane == ref) {
+      r = &sPortCells[i];
+    }
+  }
+  const CVector3f refPos = ref->GetLocalPosition();
+  const CVector3f shadowOff =
+      refShadow != nullptr ? refShadow->GetLocalPosition() - refPos : CVector3f(0.f, 0.f, 0.f);
+  for (CGuiObject* c = table->ChildObject(); c != nullptr; c = c->NextSibling()) {
+    CGuiWidget* w = static_cast< CGuiWidget* >(c);
+    if (w->GetWidgetTypeID() == 'MODL') {
+      w->SetIsVisible(false); // the dividers
+      continue;
+    }
+    if (w->GetWidgetTypeID() != 'TXPN' || w->GetWorkerId() < 0 || w->GetWorkerId() >= n) {
+      continue;
+    }
+    CGuiTextPane* p = static_cast< CGuiTextPane* >(w);
+    PortSaveCell(p);
+    // the shadow of its pair: the one further back than its partner, as worker 0's
+    bool shadow = false;
+    for (CGuiObject* o = table->ChildObject(); o != nullptr; o = o->NextSibling()) {
+      CGuiWidget* ow = static_cast< CGuiWidget* >(o);
+      if (ow != w && ow->GetWidgetTypeID() == 'TXPN' && ow->GetWorkerId() == w->GetWorkerId() &&
+          ow->GetLocalPosition().GetY() < w->GetLocalPosition().GetY()) {
+        shadow = true;
+      }
+    }
+    if (r != nullptr) {
+      p->SetDimensions(CVector2f(r->dimX, r->dimY), true);
+      p->ScaleCenter() = r->pivot;
+      p->TextSupport().SetExtentX(r->extX);
+      p->TextSupport().SetExtentY(r->extY);
+    }
+    p->TextSupport().SetJustification(kJustification_Center);
+    p->TextSupport().SetVerticalJustification(kVerticalJustification_Center);
+    const float x = (static_cast< float >(w->GetWorkerId()) - 0.5f * static_cast< float >(n - 1)) * spacing;
+    CVector3f pos(x, refPos.GetY(), refPos.GetZ());
+    if (shadow) {
+      pos = pos + shadowOff;
+    }
+    p->SetLocalPosition(pos);
+  }
 }
 #else
 static float PortRightRowZ(CGuiTableGroup* right, float pitch) { return right->GetUserSelection() * pitch; }
-static float PortValueX(CGuiTableGroup*, float) { return 0.f; }
+static float PortValueX(CGuiTableGroup*, int) { return 0.f; }
+static void PortLayoutValues(CGuiTableGroup*, int) {}
+static void PortRestoreValueCells() {}
 #endif
+
 
 void SOptionsFrontEndFrame::HandleRightSelectionChange() {
   DeactivateRightMenu();
+#ifdef TARGET_XBOX
+  if (!PortXboxOptions::FrontEndPort()) {
+    PortRestoreValueCells(); // PORT_XBOX: the retail rows' cells as the frame has them
+  }
+#endif
   const SOptionCategory& category = PX_FRONT_CATEGORY(x24_tablegroup_leftmenu->GetUserSelection());
   const SGameOption& option = category.options[x28_tablegroup_rightmenu->GetUserSelection()];
   switch (option.type) {
@@ -1426,8 +1567,7 @@ void SOptionsFrontEndFrame::HandleRightSelectionChange() {
     x34_slidergroup_slider->SetIncrement(option.increment);
     x34_slidergroup_slider->SetCurVal(CGameOptions::GetOption(option.option));
     x34_slidergroup_slider->SetO2PTransform(
-        CTransform4f::Translate(PortValueX(x28_tablegroup_rightmenu, x38_rowPitch), 0.f,
-                                PortRightRowZ(x28_tablegroup_rightmenu, x38_rowPitch)) *
+        CTransform4f::Translate(0.f, 0.f, PortRightRowZ(x28_tablegroup_rightmenu, x38_rowPitch)) *
         x34_slidergroup_slider->GetTransform());
     break;
   case kOT_DoubleEnum:
@@ -1444,9 +1584,10 @@ void SOptionsFrontEndFrame::HandleRightSelectionChange() {
     x2c_tablegroup_double->SetIsVisible(true);
     x2c_tablegroup_double->SetIsActive(true);
     x2c_tablegroup_double->SetO2PTransform(
-        CTransform4f::Translate(PortValueX(x28_tablegroup_rightmenu, x38_rowPitch), 0.f,
+        CTransform4f::Translate(PortValueX(x2c_tablegroup_double, 2), 0.f,
                                 PortRightRowZ(x28_tablegroup_rightmenu, x38_rowPitch)) *
         x2c_tablegroup_double->GetTransform());
+    PortLayoutValues(x2c_tablegroup_double, 2);
     SetTableColors(x2c_tablegroup_double);
     break;
   case kOT_TripleEnum:
@@ -1463,9 +1604,10 @@ void SOptionsFrontEndFrame::HandleRightSelectionChange() {
     x30_tablegroup_triple->SetIsVisible(true);
     x30_tablegroup_triple->SetIsActive(true);
     x30_tablegroup_triple->SetO2PTransform(
-        CTransform4f::Translate(PortValueX(x28_tablegroup_rightmenu, x38_rowPitch), 0.f,
+        CTransform4f::Translate(PortValueX(x30_tablegroup_triple, 3), 0.f,
                                 PortRightRowZ(x28_tablegroup_rightmenu, x38_rowPitch)) *
         x30_tablegroup_triple->GetTransform());
+    PortLayoutValues(x30_tablegroup_triple, 3);
     SetTableColors(x30_tablegroup_triple);
     break;
   default:
