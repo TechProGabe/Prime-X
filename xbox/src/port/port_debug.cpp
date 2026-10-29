@@ -17,6 +17,9 @@
 #include <stdlib.h>
 
 #include "xhw.h"
+extern "C" {
+#include "xsdk_settings.h"
+}
 
 namespace PortDebug {
 namespace {
@@ -116,7 +119,19 @@ bool ConsumeShowHintRequest() { return false; }
 // ---- simulation timing: the GameCube's 60 Hz tick ----
 unsigned SimRate() { return 60u; }
 float SimPeriod() { return 1.f / 60.f; }
-bool SimAdaptive() { return false; }
+// One game update per frame with dt = the frame's time (MetroidPrimePort's
+// adaptive mode, clamped to 1/30 s) instead of 60 a second with catch-up:
+// on a console that draws ~40 fps every frame carried ~1.5 updates. The
+// Port Options' "Game Timing" row (xsdk_settings sim_adaptive); test builds
+// also take env PX_SIM_ADAPTIVE=0|1.
+bool SimAdaptive() {
+  static int sEnv = -2;
+  if (sEnv == -2) {
+    const char* v = XHW_TEST_BUILD ? getenv("PX_SIM_ADAPTIVE") : nullptr;
+    sEnv = v != nullptr ? atoi(v) != 0 : -1;
+  }
+  return sEnv >= 0 ? sEnv != 0 : g_xsdk_settings.sim_adaptive != 0;
+}
 float TickPeriod() { return sTickPeriod; }
 void SetTickPeriod(float dt) {
   if (dt > 0.f)

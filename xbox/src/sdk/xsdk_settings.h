@@ -33,6 +33,7 @@ typedef struct {
     int hud_wide;            /* 1: at 16:9 the HUD spreads to the screen's edges (PortDebug::HudWide) */
     int fov;                 /* first-person field of view, degrees (55: the GameCube's) */
     int skip_cutscenes;      /* 1: every cutscene can be skipped (PortSkipCutscenes) */
+    int sim_adaptive;        /* 1: one game update per frame, dt = the frame's time (PortDebug::SimAdaptive) */
     xsdk_port_settings port[4];
 } xsdk_settings;
 

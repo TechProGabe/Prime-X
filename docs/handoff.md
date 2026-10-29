@@ -94,6 +94,11 @@ Done 2026-10-28 (afternoon and evening), newest first:
    Magmoor's heat-haze warp on the GPU (a new render-to-texture pass: the
    console has faulted on those before, so it wants a console round).
 5. Visors and parity: no Dolphin reference frames yet (`docs/renderer.md`).
+   One transient seen once in xemu (sweep, Twin Fires Tunnel, 2026-10-28):
+   a solid peach rectangle over the bottom-left HUD (about 150x105 px);
+   not in 30 dense shots of the same spot nor with CMP normals off, so
+   rare. Suspect: a fog-volume chunk (`CCubeRenderer` fog volume pass,
+   depth copies read as indirect maps) drawn without its warp.
 6. Gate leftovers: the 128 MB hold needs a 128 MB-aware BIOS in xemu;
    the save round trip and Dolphin `.gci` (phase
    4); Docker/CI (the workflow exists, `gh` isn't logged in here).
