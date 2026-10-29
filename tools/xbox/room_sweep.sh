@@ -12,6 +12,8 @@ set -u
 root="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$root"
 XBE="${1:-$root/build-xbox/xbe/default.xbe}"
+# only an autopad build reads the script that boots each room (-DXHW_AUTOPAD=1)
+grep -aqF 'D:\autopad.txt' "$XBE" || { echo "room_sweep: $XBE has no autopad (build with XBOX_CFLAGS=-DXHW_AUTOPAD=1)"; exit 1; }
 OUT=build-xbox/shots/sweep
 rm -rf "$OUT"; mkdir -p "$OUT"
 work="$root/build-xbox/sweep"; mkdir -p "$work"

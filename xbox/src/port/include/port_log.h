@@ -17,13 +17,20 @@
 // "metroidprime" tag; everywhere else they stay on stderr exactly as before.
 #if defined(TARGET_XBOX)
 extern "C" void xhw_log(const char* line);
+// nxdk's vsnprintf has no %f and reads every later argument 4 bytes off;
+// the SDK's formats floats (xbox/src/sdk/log.c)
+extern "C" int xsdk_vsnprintf(char* out, size_t cap, const char* fmt, va_list ap);
 #endif
 
 namespace PortLog {
 
 inline void WriteV(const char* format, va_list arguments) {
   char buffer[2048];
+#if defined(TARGET_XBOX)
+  const int written = xsdk_vsnprintf(buffer, sizeof(buffer), format, arguments);
+#else
   const int written = std::vsnprintf(buffer, sizeof(buffer), format, arguments);
+#endif
   if (written <= 0)
     return;
 #if defined(TARGET_XBOX)

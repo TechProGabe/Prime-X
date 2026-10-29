@@ -17,6 +17,12 @@
 #include "MetroidPrime/HUD/CSamusHud.hpp"
 #endif
 
+#ifdef TARGET_XBOX
+// PORT_XBOX: nxdk's printf has no %f (it prints nothing and skips no
+// argument); the SDK's own formatter does floats (xbox/src/sdk/log.c).
+extern "C" int xsdk_snprintf(char* out, size_t cap, const char* fmt, ...);
+#endif
+
 // @ fn_800E7CC8: Trilogy reads the threat warnings from STRG_Hud entries 9 and 10, GC from the
 // main table's entries 10 and 11.
 static const wchar_t* ThreatHudString(int mainIdx) {
@@ -151,7 +157,11 @@ void CHudThreatInterface::Update(float dt) {
     if (x10_threatDist < maxThreatEnergy) {
       x70_textpane_threatdigits->SetIsVisible(true);
       char digits[8];
+#ifdef TARGET_XBOX
+      xsdk_snprintf(digits, sizeof(digits), "%01.1f", rstl::max_val(0.f, x10_threatDist));
+#else
       sprintf(digits, "%01.1f", rstl::max_val(0.f, x10_threatDist));
+#endif
       x70_textpane_threatdigits->TextSupport().SetText(rstl::string(digits));
     } else {
       x70_textpane_threatdigits->SetIsVisible(false);
