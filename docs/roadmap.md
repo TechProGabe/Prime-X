@@ -33,8 +33,10 @@ line under it says how far it got.
 - [ ] Phase 4: audio, input, saves (Frigate to the landing site, save,
       reload; Dolphin `.gci` both ways)
       - MusyX sound and music, streamed music, rumble, pads and the button
-        remap work on red; the save round trip and Dolphin `.gci` aren't
-        tested yet
+        remap work on red. The save round trip works in xemu (2026-10-29:
+        Chozo's Save Station 1 saves to file A, a new boot's main menu
+        lists it, Continue loads Samus back on the pad; `PX_CARD_FILE`,
+        docs/testing.md); not yet on red, and Dolphin `.gci` isn't tested
 - [ ] Phase 5: settings rows in the game's Options, the splash, the extras,
       the dashboard icon
       - the splash with its music, the icon, Port Options on the main menu
