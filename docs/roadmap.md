@@ -62,8 +62,15 @@ line under it says how far it got.
   doubled since, not measured.
 - Magmoor's heat haze draws without its warp (indirect maps past
   `ind_tex`'s size limit).
-- The audio start-up freeze after a chained launch (hw4 r4c) didn't recur
-  in hw5 or hw6; the watchdog times out a stalled boot screen.
+- The audio start-up freeze after a chained launch (hw4 r4c) came back in
+  hw7 (r7e, the codec read after the cold reset, the CPU held: no watchdog
+  reboot); `f73d0d7` no longer reads the codec after the reset on the
+  console. r7e then started cleanly once; to be watched.
+- Landing cinematic (Tallon Overworld), the gunship coming down through
+  the atmosphere: a box around its glow sprite (the user saw it black on
+  red in hw7; hw7's r7b shot at frame 600 has a lighter square around the
+  sprite). The sprite's alpha or blend is wrong: its quad's edges should
+  fade out. Not looked at yet.
 - Rendering not yet compared with Dolphin (installed, needs a save in the
   rooms): the arm cannon in bright rooms, Phendrana's elevator steam, the
   visors.
