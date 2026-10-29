@@ -49,6 +49,11 @@ Done (`docs/performance.md`, "2026-10-29 (evening)", has the details):
 - Prefetches: world models (cull loop), entities (state manager walks),
   skinning streams. `derive_vk`'s light scan cached until a light changes.
 
+The ship image of `7bd3b85` (LTO + PGO, the old profile) is in
+`build-xbox-lto-pgo/xbe/default.xbe`; it boots to the title in xemu. The
+user hasn't asked for it on the console. Game Timing: Flex measured +10%
+over Fixed on red (hw7/hw8) and is the user's own choice in Port Options.
+
 Next:
 
 1. The HUD minimap is 150-300 draws a frame (fill and outline alternate per
