@@ -145,6 +145,15 @@ Done 2026-10-28 (afternoon and evening), newest first:
 
 ## Next session, in order
 
+0. **Console round hw8, staged 2026-10-29** (the user asked): hw7's chain
+   again (`tools/xbox/scenarios/hw8`, README there) on `dev` with the
+   skinned-list and memcpy prefetches (`0b0cc35`), the rain's writes
+   without per-vertex calls (`6218d26`), the Port Options rows
+   (`030553a`) and the audio fix; the PGO profile retrained on it.
+   Compare each scene with `logs-hw7` (`prof_report.py --last` for steady
+   play): `GXCallDisplayList`, `memcpy`, `memset`, `gx_vtx_flush`. Each
+   prefetch has a switch to turn it off if it loses (`XGX_DYN_PREFETCH=0`,
+   `XHW_COPY_PREFETCH=0`).
 1. **Console round hw7, staged 2026-10-29** (the user asked): chain
    `tools/xbox/scenarios/hw7` (hw5's five scenes, then Main Plaza and the
    Landing Site with Game Timing: Flex), the files laid out by console path
