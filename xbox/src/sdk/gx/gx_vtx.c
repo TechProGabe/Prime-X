@@ -1356,6 +1356,7 @@ typedef struct {
     uint16_t* gfirst;              /* each draw's first batch */
     uint8_t* tmpl;
     uint16_t* idx;
+    uint32_t total;                /* template bytes */
     uint32_t bytes;                /* charged to the budget */
     uint32_t sig, dl_hash;
     DynArray arr[DLC_MAX_RANGE];
@@ -1373,9 +1374,11 @@ typedef struct __attribute__((aligned(32))) {
     uint32_t nbytes;
     int next;                      /* bucket chain, -1: end */
     uint32_t fkey;                 /* fmt_key(fmts) it was made under (part of the key) */
-    uint8_t fmts, is_volatile, nrange, rebuilds;
+    uint8_t fmts, is_volatile, nrange;
+    uint8_t prim1;                 /* a list of one draw (batch NULL): its primitive, */
     uint16_t nbatch;
     uint8_t bounds;                /* bmin/bmax hold the positions' box (no per-vertex matrix) */
+    uint8_t off1;                  /* its offset into mem, */
     uint32_t sig;
     uint32_t checked, last_used;
     uint32_t stable;               /* content checks passed in a row (dlc_content_changed) */
@@ -1384,13 +1387,35 @@ typedef struct __attribute__((aligned(32))) {
     DynList* dyn;
     uint32_t qhash;                /* quick_hash of the same, for stable lists (dlc_content_changed) */
     uint32_t hash;
+    uint16_t lay1, count1;         /* its layout (s_dlc_lay) and vertex count */
     /* 64: the rest */
+    uint8_t rebuilds;
     uint32_t vol_retry;            /* volatile for want of budget: the frame to try dyn_build again (0: never) */
     uint32_t mem_bytes;
     float bmin[3], bmax[3];
     DlRange range[DLC_MAX_RANGE];
 } DlEntry;
-_Static_assert(__builtin_offsetof(DlEntry, hash) + 4 <= 64, "DlEntry's hot fields fit two cache lines");
+_Static_assert(__builtin_offsetof(DlEntry, count1) + 2 <= 64, "DlEntry's hot fields fit two cache lines");
+
+/* The layouts of the one-draw lists, each once. Most cached lists are one
+ * draw after merge_plan; their draw is kept in the entry's hot fields with
+ * the layout here, where the few dozen layouts a room uses stay in the
+ * cache. The batch table, an allocation of its own, was a cache miss on
+ * every call (round hw5's profile). Never emptied: a layout is 64 bytes
+ * and the table fills at DLC_LAYOUTS, after which lists keep a table. */
+#define DLC_LAYOUTS 128
+#define DLC_NO_LAYOUT 0xFFFFu
+static XgxLayout s_dlc_lay[DLC_LAYOUTS];
+static int s_dlc_nlay;
+
+static uint32_t dlc_layout_id(const XgxLayout* l) {
+    int i;
+    for (i = 0; i < s_dlc_nlay; i++)
+        if (memcmp(&s_dlc_lay[i], l, sizeof *l) == 0) return (uint32_t)i;
+    if (s_dlc_nlay == DLC_LAYOUTS) return DLC_NO_LAYOUT;
+    s_dlc_lay[s_dlc_nlay] = *l;
+    return (uint32_t)s_dlc_nlay++;
+}
 
 static DlEntry s_dlc[DLC_MAX];
 /* each slot's last_used, DLC_FREE for an empty one: the eviction scan reads
@@ -1972,9 +1997,8 @@ static int dlc_build(DlEntry* e, uint32_t frame) {
     for (i = 0; i < ng; i++) mtotal += merged[i].layout.stride;   /* room to align each draw, below */
     e->mem = mtotal ? (uint8_t*)xgx_vbuf_alloc(mtotal) : NULL;
     while (mtotal && !e->mem && dlc_evict_one(frame, e)) e->mem = (uint8_t*)xgx_vbuf_alloc(mtotal);
-    e->batch = e->mem ? (DlBatch*)malloc(sizeof(DlBatch) * (size_t)ng) : NULL;
-    if (!e->batch) {
-        s_build_why = e->mem ? "no memory" : "vertex pool full";
+    if (!e->mem) {
+        s_build_why = "vertex pool full";
         free(tmp);
         dlc_release(e);
         return 0;
@@ -1986,6 +2010,16 @@ static int dlc_build(DlEntry* e, uint32_t frame) {
             merged[i].offset = (rel + at + st - 1) / st * st - rel;
             at = merged[i].offset + merged[i].count * st;
         }
+    }
+    e->lay1 = DLC_NO_LAYOUT;
+    if (ng == 1 && merged[0].offset <= 0xFF && merged[0].count <= 0xFFFF)
+        e->lay1 = (uint16_t)dlc_layout_id(&merged[0].layout);
+    e->batch = e->lay1 != DLC_NO_LAYOUT ? NULL : (DlBatch*)malloc(sizeof(DlBatch) * (size_t)ng);
+    if (e->lay1 == DLC_NO_LAYOUT && !e->batch) {
+        s_build_why = "no memory";
+        free(tmp);
+        dlc_release(e);
+        return 0;
     }
     merge_copy(batch, nb, tmp, merged, first, ng, e->mem);
     e->bounds = 1;   /* the model-space box, for gx_dl_culled */
@@ -2008,7 +2042,13 @@ static int dlc_build(DlEntry* e, uint32_t frame) {
         }
     }
     free(tmp);
-    memcpy(e->batch, merged, sizeof(DlBatch) * (size_t)ng);
+    if (e->batch) {
+        memcpy(e->batch, merged, sizeof(DlBatch) * (size_t)ng);
+    } else {
+        e->prim1 = (uint8_t)merged[0].prim;
+        e->off1 = (uint8_t)merged[0].offset;
+        e->count1 = (uint16_t)merged[0].count;
+    }
     s_st_dl_joined += (uint32_t)(nb - ng);
     e->nbatch = (uint16_t)ng;
     e->mem_bytes = mtotal;
@@ -2111,6 +2151,7 @@ static int dyn_build(DlEntry* e, uint32_t frame) {
     range_reset(&r);
     dl_decode_all(e->dl, e->nbytes, batch, nb, d->tmpl, &r, d->idx, idx_first);
     d->nbatch = (uint16_t)nb;
+    d->total = total;
     d->bytes = bytes;
     d->view = (DlBatch*)malloc(sizeof(DlBatch) * (size_t)nb * 2);
     d->gfirst = (uint16_t*)malloc(sizeof(uint16_t) * (size_t)nb);
@@ -2148,23 +2189,135 @@ static int dyn_build(DlEntry* e, uint32_t frame) {
     return 1;
 }
 
-/* fetch attribute array `attr` again for every vertex of the template */
-static void dyn_fetch(DynList* d, uint8_t attr, const uint8_t* base) {
+/* fetch attribute array `attr` again for the vertices of batch b, into out
+ * (the batch's vertices: in the template, or a copy of them) */
+static void dyn_fetch_batch(const DynList* d, const DynBatch* b, uint8_t attr, const uint8_t* base, uint8_t* out) {
     uint32_t stride = g_gx.array_stride[attr];
-    int be = !g_gx.array_le[attr], i, c;
-    for (i = 0; i < d->nbatch; i++) {
+    int be = !g_gx.array_le[attr], c;
+    for (c = 0; c < b->ncol; c++) {
+        const Slot* sl = &b->plan.slot[b->col_slot[c]];
+        const uint16_t* idx = d->idx + b->idx + c;
+        uint8_t* v = out;
+        uint32_t k, vs = b->plan.layout.stride;
+        if (array_attr(sl) != attr) continue;
+        for (k = 0; k < b->count; k++, idx += b->ncol, v += vs) store(sl, base + *idx * stride, be, v);
+    }
+}
+
+/* The arrays a dynamic call fetches again. Skinned models (Samus's arm
+ * cannon; the Landing Site's dynamic lists are 800 KB) fetch positions and
+ * normals on every call. Fetched into the template and the template then
+ * copied to the ring, every template line was read twice and written back
+ * once a call (a template is far larger than the 128 KB L2; memcpy was 10%
+ * of the console's CPU there, round hw5, half of it called from here).
+ * Each batch is staged through a scratch buffer that stays in the L1
+ * instead: the template read once, nothing written back, the ring written
+ * in order. The template keeps its build-time values for the attributes
+ * fetched this way; an array fetched once is fetched on every later call
+ * (DynArray.always). */
+typedef struct {
+    uint8_t attr;
+    const uint8_t* base;
+} DynFetch;
+static uint8_t s_dyn_scratch[16384] __attribute__((aligned(32)));
+
+/* batch i's vertices with this call's arrays fetched: in the scratch buffer,
+ * or fetched into the template itself when the batch doesn't fit it */
+static const uint8_t* dyn_batch_verts(DynList* d, int i, const DynFetch* f, int nf) {
+    const DynBatch* b = &d->batch[i];
+    uint32_t bytes = b->count * b->plan.layout.stride;
+    uint8_t* out = d->tmpl + b->offset;
+    int k;
+    if (!nf) return out;
+    if (bytes <= sizeof s_dyn_scratch) {
+        memcpy(s_dyn_scratch, out, bytes);
+        out = s_dyn_scratch;
+    }
+    for (k = 0; k < nf; k++) dyn_fetch_batch(d, b, f[k].attr, f[k].base, out);
+    return out;
+}
+
+/* merge_copy_group for a dynamic list: batches [from, end) as one draw at
+ * dst, each staged by dyn_batch_verts. A joined strip repeats the last
+ * vertex of the one before, kept here: dst is write-combined, and reading
+ * it back is an uncached read. */
+static void dyn_emit_group(DynList* d, int from, int end, uint8_t* dst, const DynFetch* f, int nf) {
+    uint32_t s = d->batch[from].plan.layout.stride, have = 0, k;
+    uint8_t last[128] __attribute__((aligned(16)));
+    int i;
+    for (i = from; i < end; i++) {
         const DynBatch* b = &d->batch[i];
-        for (c = 0; c < b->ncol; c++) {
-            const Slot* sl = &b->plan.slot[b->col_slot[c]];
-            const uint16_t* idx = d->idx + b->idx + c;
-            uint8_t* out = d->tmpl + b->offset;
-            uint32_t v, vs = b->plan.layout.stride;
-            if (array_attr(sl) != attr) continue;
-            for (v = 0; v < b->count; v++, idx += b->ncol, out += vs) store(sl, base + *idx * stride, be, out);
+        uint32_t n = out_count(b->prim, b->count);
+        const uint8_t* v;
+        if (!n) continue;
+        v = dyn_batch_verts(d, i, f, nf);
+        if (have && b->prim == XGX_TRISTRIP) {
+            uint32_t extra = join_extra(XGX_TRISTRIP, have);
+            memcpy(dst, s <= sizeof last ? last : dst - s, s);
+            dst += s;
+            for (k = 1; k < extra; k++, dst += s) memcpy(dst, v, s);
+            have += extra;
+        }
+        dst += copy_prim(dst, v, b->prim, b->count, s);
+        have += n;
+        if (b->prim == XGX_TRISTRIP && s <= sizeof last) memcpy(last, v + (b->count - 1) * s, s);
+    }
+}
+
+#if XGX_DYN_VERIFY
+/* -DXGX_DYN_VERIFY=1: every dynamic draw made the old way too (fetched into
+ * a copy of the whole template, then merge_copy_group), once before the
+ * draw and once after, and compared. The two references differing means
+ * the arrays changed under the call (counted apart: not this code's) */
+static uint32_t s_dynv_draws, s_dynv_bad, s_dynv_moved;
+static uint8_t* dyn_ref(DynList* d, int from, int end, uint32_t bytes, int merged, const DynFetch* f, int nf) {
+    uint8_t* t = (uint8_t*)malloc(d->total);
+    uint8_t* want = (uint8_t*)malloc(bytes);
+    int i, k;
+    if (t && want) {
+        memcpy(t, d->tmpl, d->total);
+        for (i = from; i < end; i++)
+            for (k = 0; k < nf; k++) dyn_fetch_batch(d, &d->batch[i], f[k].attr, f[k].base, t + d->batch[i].offset);
+        if (merged) merge_copy_group(d->view, from, end, t, want);
+        else memcpy(want, t + d->batch[from].offset, bytes);
+    } else {
+        free(want);
+        want = NULL;
+    }
+    free(t);
+    return want;
+}
+
+static void dyn_verify(DynList* d, int from, int end, uint8_t* want0, const uint8_t* got, uint32_t bytes, int merged,
+                       const DynFetch* f, int nf) {
+    uint8_t* want = dyn_ref(d, from, end, bytes, merged, f, nf);
+    if (want0 && want) {
+        s_dynv_draws++;
+        if (memcmp(want0, want, bytes) != 0) {
+            s_dynv_moved++;
+        } else if (memcmp(want, got, bytes) != 0 && s_dynv_bad++ < 8) {
+            uint8_t* mine = (uint8_t*)malloc(bytes);
+            if (mine) {
+                if (merged) dyn_emit_group(d, from, end, mine, f, nf);
+                else memcpy(mine, dyn_batch_verts(d, from, f, nf), bytes);
+                xhw_logf("[DLC] dyn verify: emitted again into cached memory: %s the reference, %s the ring",
+                         memcmp(mine, want, bytes) ? "differs from" : "matches",
+                         memcmp(mine, got, bytes) ? "differs from" : "matches");
+                free(mine);
+            }
+            uint32_t at = 0, s = d->batch[from].plan.layout.stride, ndiff = 0, o;
+            while (want[at] == got[at]) at++;
+            for (o = at; o < bytes; o++) ndiff += want[o] != got[o];
+            xhw_logf("[DLC] dyn verify: batches %d-%d (%u bytes, %d fetched) differ: first at %u (vertex %u byte %u of "
+                     "%u), %u bytes in all; want %02x%02x%02x%02x got %02x%02x%02x%02x",
+                     from, end - 1, bytes, nf, at, at / s, at % s, s, ndiff, want[at], want[at + 1], want[at + 2],
+                     want[at + 3], got[at], got[at + 1], got[at + 2], got[at + 3]);
         }
     }
-    s_st_dyn_fetch++;
+    free(want0);
+    free(want);
 }
+#endif
 
 /* the first lists to go volatile, and why, for tuning the cache */
 static void log_volatile(const DlEntry* e, const char* why) {
@@ -2177,7 +2330,11 @@ static void log_volatile(const DlEntry* e, const char* why) {
 /* 1: drawn from the dynamic template */
 static int dyn_call(DlEntry* e, uint32_t frame) {
     DynList* d = e->dyn;
-    int i;
+    DynFetch fetch[DLC_MAX_RANGE];
+    int i, nf = 0;
+#if XGX_DYN_VERIFY
+    uint8_t* want0;
+#endif
     int sig_changed = d->sig != vtx_sig(e->fmts, 0);
     if (sig_changed ||
         (e->checked != frame && (e->checked = frame, d->dl_hash != sample_hash(2166136261u, e->dl, e->nbytes)))) {
@@ -2201,13 +2358,22 @@ static int dyn_call(DlEntry* e, uint32_t frame) {
             x->always = 1;
         }
         x->base = base;
-        dyn_fetch(d, x->attr, base);
+        fetch[nf].attr = x->attr;
+        fetch[nf++].base = base;
+        s_st_dyn_fetch++;
     }
     for (i = 0; d->view && i < d->ndraw; i++) {
         const DlBatch* b = &d->view[d->nbatch + i];
+        int end = i + 1 < d->ndraw ? d->gfirst[i + 1] : d->nbatch;
         uint8_t* v = (uint8_t*)xgx_vtx_alloc(b->count, b->layout.stride);
         if (!v) break;   /* too big for the ring as one: batch by batch below */
-        merge_copy_group(d->view, d->gfirst[i], i + 1 < d->ndraw ? d->gfirst[i + 1] : d->nbatch, d->tmpl, v);
+#if XGX_DYN_VERIFY
+        want0 = dyn_ref(d, d->gfirst[i], end, b->count * b->layout.stride, 1, fetch, nf);
+#endif
+        dyn_emit_group(d, d->gfirst[i], end, v, fetch, nf);
+#if XGX_DYN_VERIFY
+        dyn_verify(d, d->gfirst[i], end, want0, v, b->count * b->layout.stride, 1, fetch, nf);
+#endif
         xgx_draw(b->prim, b->count, &b->layout, &g_xgx);
         g_xgx.dirty = 0;
     }
@@ -2216,7 +2382,13 @@ static int dyn_call(DlEntry* e, uint32_t frame) {
         uint32_t bytes = b->count * b->plan.layout.stride;
         uint8_t* v;
         if (!b->count || !(v = (uint8_t*)xgx_vtx_alloc(b->count, b->plan.layout.stride))) continue;
-        memcpy(v, d->tmpl + b->offset, bytes);
+#if XGX_DYN_VERIFY
+        want0 = dyn_ref(d, i, i + 1, bytes, 0, fetch, nf);
+#endif
+        memcpy(v, dyn_batch_verts(d, i, fetch, nf), bytes);
+#if XGX_DYN_VERIFY
+        dyn_verify(d, i, i + 1, want0, v, bytes, 0, fetch, nf);
+#endif
         xgx_draw(b->prim, b->count, &b->plan.layout, &g_xgx);
         g_xgx.dirty = 0;
     }
@@ -2250,8 +2422,9 @@ static int dlc_call(const uint8_t* dl, uint32_t nbytes) {
         s_dlc_ready = 1;
     }
     e = dlc_find(dl, nbytes);
-    /* the batch table is an allocation of its own (a cache miss a call,
-     * round hw5's profile): asked for now, it arrives during the checks */
+    /* a list of more than one draw has a batch table, an allocation of its
+     * own (a cache miss a call, round hw5's profile): asked for now, it
+     * arrives during the checks */
     if (e && e->batch) __builtin_prefetch(e->batch);
     if (e && e->dyn) return dyn_call(e, frame);
     if (e && e->is_volatile) {
@@ -2305,6 +2478,12 @@ static int dlc_call(const uint8_t* dl, uint32_t nbytes) {
     }
     e->last_used = s_dlc_lru[e - s_dlc] = frame;
     s_st_dl_hits++;
+    if (!e->batch) {   /* one draw, kept in the entry */
+        xgx_vtx_use(e->mem + e->off1);
+        xgx_draw(e->prim1, e->count1, &s_dlc_lay[e->lay1], &g_xgx);
+        g_xgx.dirty = 0;
+        return 1;
+    }
     for (i = 0; i < e->nbatch; i++) {
         const DlBatch* b = &e->batch[i];
         if (!b->count) continue;
@@ -2325,12 +2504,16 @@ void gx_vtx_cache_flush(void) {
  * cache's malloc'd part: batch tables and dynamic lists. */
 static void memb_log(void) {
     char extra[200];
-    uint32_t batch = 0;
+    uint32_t batch = 0, one = 0;
     int i;
-    for (i = 0; i < DLC_MAX; i++)
-        if (s_dlc[i].dl) batch += (uint32_t)sizeof(DlBatch) * s_dlc[i].nbatch;
-    snprintf(extra, sizeof extra, "DLC %d lists, batches %u B, dynamic %u B | vertex pool %u KB free, tex pool %u KB free",
-             s_dlc_n, batch, s_dyn_bytes, xgx_vbuf_pool_free_kb(), xgx_tex_pool_free_kb());
+    for (i = 0; i < DLC_MAX; i++) {
+        if (s_dlc[i].batch) batch += (uint32_t)sizeof(DlBatch) * s_dlc[i].nbatch;
+        else one += s_dlc[i].mem != NULL;
+    }
+    snprintf(extra, sizeof extra,
+             "DLC %d lists (%u of one draw, %d layouts), batches %u B, dynamic %u B | vertex pool %u KB free, tex pool %u "
+             "KB free",
+             s_dlc_n, one, s_dlc_nlay, batch, s_dyn_bytes, xgx_vbuf_pool_free_kb(), xgx_tex_pool_free_kb());
     xhw_mem_breakdown_log(extra);
 }
 
@@ -2371,6 +2554,10 @@ void gx_vtx_frame_end(void) {
         }
 #if XGX_CENSUS
         cen_report();
+#endif
+#if XGX_DYN_VERIFY
+        xhw_logf("[DLC] dyn verify: %u draws, %u differ (%u more with arrays that changed during the call)",
+                 s_dynv_draws, s_dynv_bad, s_dynv_moved);
 #endif
     }
 }
