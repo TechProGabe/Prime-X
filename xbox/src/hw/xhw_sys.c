@@ -351,13 +351,14 @@ static inline uint64_t rdtsc_now(void) {
 }
 
 typedef struct {
+    volatile LONG seq;    /* odd while a resync writes it (readers retry) */
     uint64_t tsc0, ns0;   /* an ACPI reading and the TSC at that moment */
 } TimeBase;
 static TimeBase s_tb[2];
 static volatile LONG s_tb_cur, s_tb_busy;
 static uint32_t s_ns_whole, s_ns_frac;
 static uint64_t s_tsc_resync;   /* TSC ticks between ACPI readings */
-static volatile uint64_t s_ns_last;
+static uint64_t s_ns_last;      /* the latest time handed out (atomic 64-bit) */
 static volatile int s_tsc_ready;
 
 static uint64_t tsc_to_ns(uint64_t dt) {
@@ -376,13 +377,22 @@ static void tsc_calibrate(void) {
     s_ns_frac = (uint32_t)(((1000000000ull % hz) << 32) / hz);
     s_tsc_resync = hz / 10;
     s_tb[0].tsc0 = t1;
-    s_tb[0].ns0 = s_ns_last = k1;
+    s_tb[0].ns0 = k1;
+    __atomic_store_n(&s_ns_last, k1, __ATOMIC_SEQ_CST);
     s_tsc_ready = 1;
 }
 
+/* never behind a time already handed out, on any thread */
+static uint64_t time_monotonic(uint64_t ns) {
+    uint64_t last = __atomic_load_n(&s_ns_last, __ATOMIC_RELAXED);
+    while (ns > last)
+        if (__atomic_compare_exchange_n(&s_ns_last, &last, ns, 1, __ATOMIC_RELAXED, __ATOMIC_RELAXED)) return ns;
+    return last;
+}
+
 uint64_t xhw_time_ns(void) {
-    const TimeBase* b;
-    uint64_t now, dt, ns;
+    uint64_t now, tsc0, ns0;
+    LONG cur, seq;
     if (!s_tsc_ready) {
         static int tried;
         if (tried) return kernel_ns();
@@ -390,22 +400,30 @@ uint64_t xhw_time_ns(void) {
         tsc_calibrate();
         if (!s_tsc_ready) return kernel_ns();
     }
-    b = &s_tb[s_tb_cur & 1];
-    now = rdtsc_now();
-    dt = now - b->tsc0;
-    if (dt >= s_tsc_resync && !InterlockedCompareExchange(&s_tb_busy, 1, 0)) {
-        /* one thread takes a new reading into the other slot, then flips */
-        TimeBase* n = &s_tb[(s_tb_cur + 1) & 1];
-        n->ns0 = kernel_ns();
-        n->tsc0 = rdtsc_now();
-        if (n->ns0 < s_ns_last) n->ns0 = s_ns_last;   /* never backwards */
-        InterlockedExchange(&s_tb_cur, (s_tb_cur + 1) & 1);
-        InterlockedExchange(&s_tb_busy, 0);
-        return n->ns0;
+    for (;;) {   /* the slot's fields as one consistent pair (a reader stalled through two resyncs retries) */
+        cur = s_tb_cur & 1;
+        seq = s_tb[cur].seq;
+        __atomic_thread_fence(__ATOMIC_ACQUIRE);
+        tsc0 = s_tb[cur].tsc0;
+        ns0 = s_tb[cur].ns0;
+        __atomic_thread_fence(__ATOMIC_ACQUIRE);
+        if (!(seq & 1) && s_tb[cur].seq == seq) break;
     }
-    ns = b->ns0 + tsc_to_ns(dt);
-    if (ns > s_ns_last) s_ns_last = ns;
-    return ns;
+    now = rdtsc_now();
+    if (now - tsc0 >= s_tsc_resync && !InterlockedCompareExchange(&s_tb_busy, 1, 0)) {
+        /* one thread takes a new reading into the other slot, then flips */
+        TimeBase* n = &s_tb[cur ^ 1];
+        uint64_t k;
+        InterlockedIncrement(&n->seq);
+        k = kernel_ns();
+        n->tsc0 = rdtsc_now();
+        n->ns0 = k > __atomic_load_n(&s_ns_last, __ATOMIC_RELAXED) ? k : __atomic_load_n(&s_ns_last, __ATOMIC_RELAXED);
+        InterlockedIncrement(&n->seq);
+        InterlockedExchange(&s_tb_cur, cur ^ 1);
+        InterlockedExchange(&s_tb_busy, 0);
+        return time_monotonic(n->ns0);
+    }
+    return time_monotonic(ns0 + tsc_to_ns(now - tsc0));
 }
 
 int64_t xhw_wallclock_2000(uint32_t* ns_out) {
@@ -655,6 +673,12 @@ int xhw_lazy_is_committed(const void* p) {
     if (!l) return 1;
     chunk = (uint32_t)(((uintptr_t)p - l->base) / LAZY_CHUNK);
     return (l->bits[chunk / 32] >> (chunk % 32)) & 1;
+}
+
+int xhw_lazy_commit_pages(void* chunk) {
+    PVOID base = chunk;
+    SIZE_T size = LAZY_CHUNK;
+    return NT_SUCCESS(NtAllocateVirtualMemory(&base, 0, &size, MEM_COMMIT, PAGE_READWRITE));
 }
 
 /* The bit goes first: a thread that touches the chunk from then on faults

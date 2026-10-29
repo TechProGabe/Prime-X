@@ -144,6 +144,10 @@ void xhw_lazy_log_map(void);   /* [MEM] lazy: committed chunks per 4 MB range */
 void xhw_lazy_set_fill(const void* base, void (*fill)(void* chunk));
 int xhw_lazy_is_committed(const void* p);
 void xhw_lazy_decommit(void* chunk);
+/* Commit a chunk's pages again, bookkeeping untouched: a fill that may have
+ * waited on its owner's lock while that owner decommitted the chunk calls
+ * it under the lock before writing (ar.c). 0: no memory for it. */
+int xhw_lazy_commit_pages(void* chunk);
 uint32_t xhw_mem_free_kb(void);
 /* Memory pressure. A reclaimer gives memory back (decommits chunks whose
  * data can be had again, drops caches) and returns the KB it freed; asked

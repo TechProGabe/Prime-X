@@ -62,7 +62,13 @@ static void* s_swap;          /* the swap file, or NULL */
 static u16 s_slot[NCHUNKS];   /* chunk -> its swap slot + 1, 0: none yet */
 static u32 s_slots, s_swap_pages, s_cursor;
 static u32 s_swapped_out, s_swap_fills;
-static int s_swap_full;      /* a write failed (disk full?): no more swap-outs */
+static int s_swap_full;      /* writes kept failing (disk full?): no more swap-outs */
+static u32 s_swap_fails;     /* in a row: one can be a passing shortage of the kernel's own memory */
+/* each chunk's last write or fill, in frames: a chunk used in the last
+ * ARAM_HOT_FRAMES (a music stream's buffer, samples playing) is swapped out
+ * only when nothing colder is left, or under a failed commit */
+#define ARAM_HOT_FRAMES 120
+static u32 s_touch[NCHUNKS];
 #if XHW_TEST_BUILD
 /* test builds: each swapped-out chunk's hash, checked when it comes back
  * (0: none, or ARAM was written there since) */
@@ -138,11 +144,19 @@ static void read_pages(u32 p, u32 n, u32 in, u8* dst, u32 len) {
     }
 }
 
-/* xhw_lazy fill: the chunk was just committed (zeroed) */
+/* xhw_lazy fill: the chunk was just committed (zeroed). Committed before
+ * the lock was ours, so aram_reclaim may have given it back meanwhile (a
+ * mixer fault racing a game-thread commit and a reclaim): committed again
+ * under the lock, where nothing decommits. */
 static void fill_chunk(void* chunk) {
     u32 c = (u32)((u8*)chunk - s_aram) / CHUNK;
     xhw_mutex_lock(s_lock);
     if (!xhw_lazy_is_committed(chunk)) {
+        if (!xhw_lazy_commit_pages(chunk)) {
+            xhw_logf("[MEM] out of memory refilling ARAM chunk %u (free %u KB)", (unsigned)c, xhw_mem_free_kb());
+            xhw_fatal("Out of memory", "The Xbox ran out of memory for the game's main memory or ARAM.");
+        }
+        s_touch[c] = xsdk_frame_count();
         if (s_slot[c]) s_swap_fills++;
         read_pages(c * PER_CHUNK, PER_CHUNK, 0, (u8*)chunk, CHUNK);
 #if XHW_TEST_BUILD
@@ -178,7 +192,7 @@ static int swap_out(u32 c) {
     off = (u32)(s_slot[c] - 1) * CHUNK;
     if (!xhw_file_write(s_swap, off, s_aram + c * CHUNK, CHUNK)) {
         xhw_logf("[AR] swap write failed: chunk %u", (unsigned)c);
-        s_swap_full = 1;   /* what other chunks have in it stays readable */
+        if (++s_swap_fails >= 4) s_swap_full = 1;   /* what other chunks have in it stays readable */
         for (p = c * PER_CHUNK; p < (c + 1) * PER_CHUNK; p++)   /* this slot may be half written */
             if (s_disc[p] != NO_DISC && (s_disc[p] & SWAP)) set_disc(p, NO_DISC);
         return 0;
@@ -186,6 +200,7 @@ static int swap_out(u32 c) {
     for (p = c * PER_CHUNK; p < (c + 1) * PER_CHUNK; p++)
         if (s_disc[p] == NO_DISC || (s_disc[p] & SWAP)) set_disc(p, SWAP | (off + (p - c * PER_CHUNK) * PAGE));
     s_swapped_out++;
+    s_swap_fails = 0;
 #if XHW_TEST_BUILD
     s_hash[c] = chunk_hash(s_aram + c * CHUNK);
 #endif
@@ -196,7 +211,7 @@ static int swap_out(u32 c) {
  * where the last call stopped; those all on the disc or in the swap file
  * cost nothing, the rest a 64 KB write each. */
 static u32 aram_reclaim(u32 want_kb, int urgent) {
-    u32 got = 0, pass, i, start;
+    u32 got = 0, pass, i, start, now = xsdk_frame_count();
     if (!s_aram) return 0;
     if (urgent) {
         if (!xhw_mutex_trylock(s_lock)) return 0;
@@ -204,11 +219,15 @@ static u32 aram_reclaim(u32 want_kb, int urgent) {
         xhw_mutex_lock(s_lock);
     }
     start = s_cursor;
-    for (pass = 0; pass < 2 && got < want_kb; pass++)
+    /* passes: chunks on the disc, then cold ones through the swap file,
+     * then (urgent, or still short) hot ones too */
+    for (pass = 0; pass < 3 && got < want_kb; pass++)
         for (i = 0; i < NCHUNKS && got < want_kb; i++) {
             u32 c = (start + i) % NCHUNKS;
             u8* chunk = s_aram + c * CHUNK;
+            int hot = now - s_touch[c] < ARAM_HOT_FRAMES;
             if (!xhw_lazy_is_committed(chunk)) continue;
+            if (pass < 2 && hot && !urgent) continue;
             if (!chunk_on_disc(c) && (pass == 0 || !swap_out(c))) continue;
             xhw_lazy_decommit(chunk);
             got += CHUNK / 1024;
@@ -230,6 +249,7 @@ static void aram_write(u32 aram, const u8* src, u32 len, u32 disc) {
     while (aram < end) {
         u32 c = aram / CHUNK, cend = (c + 1) * CHUNK < end ? (c + 1) * CHUNK : end, a;
         u8* chunk = s_aram + c * CHUNK;
+        s_touch[c] = xsdk_frame_count();
 #if XHW_TEST_BUILD
         s_hash[c] = 0;
 #endif
