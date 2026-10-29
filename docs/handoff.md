@@ -223,6 +223,29 @@ Done 2026-10-28 (afternoon and evening), newest first:
 - Streamed music (the AI path) mixed into MusyX's output.
 - Test hooks: `env PX_ALL_ITEMS=1`, `PX_SKIPPABLE=1`, `PX_WIDESCREEN=0|1|2`.
 
+## Console round hw7 (red, 2026-10-29)
+
+Chain `tools/xbox/scenarios/hw7` (profiler builds of `4473399`), logs and
+shots in `C:\xemu\hw\prime\logs-hw7`, map `prime_x.hw7.map`; what was on
+the console before (the save, settings, hw6's xbe) in `logs-hw7pre`.
+
+- fps at 480i against hw5 (median, lowest tenth): front end 42.6 -> 48.2
+  (33 -> 43), Landing Site 28.2 -> 34.9 (15.5 -> 16.8), Main Plaza 27.8 ->
+  31.9 (22 -> 25; sim 22.2 -> 18.4 ms, display lists 7.8 -> 5.7, draw 7.1 ->
+  5.8). `memcmp` 2.5% -> 0.8% in Main Plaza, `memcpy` 10.2% -> 8.8% in the
+  Landing Site. The Frigate isn't comparable: the script is by frame, and at
+  the higher fps frame 5000 came a minute earlier in game time, still on the
+  landing deck (hw5 was inside, ~2000 draws).
+- No `[MEM] low`, no swap, no texture drop, no warning in r7a-r7d. The arm
+  cannon in Main Plaza is dark metal. One of twelve landing-cinematic shots
+  is washed grey (hw5: four of nine).
+- **r7e froze** (black screen, no reboot, FTP down 40 minutes until it was
+  rebooted) at `[AUDIO] step: codec power-up`: the first codec
+  register read after the AC-link cold reset, the CPU held on the bus.
+  hw4's r4c froze around the same reads. Fixed in `f73d0d7`: on the
+  console, no codec access after the reset (it never had anything to power
+  up there). Melee-X has the same code.
+
 ## Console round hw5 (red, 2026-10-28)
 
 Chain `tools/xbox/scenarios/hw5` (five profiler builds, ThinLTO + PGO with
