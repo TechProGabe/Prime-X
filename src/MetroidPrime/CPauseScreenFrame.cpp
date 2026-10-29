@@ -1366,6 +1366,25 @@ void SOptionsFrontEndFrame::SetRightUIText() {
   }
 }
 
+// The value tables (slider, two and three choices) go to the selected row.
+// Retail steps them by the left table's row pitch times the selection;
+#ifdef TARGET_XBOX
+// PORT_XBOX: the selected right row's own offset from the first instead, so
+// a right table spaced unlike the left one can't drift onto other rows (the
+// Port Options' lower Video rows: "the divider sits on the text", round hw6)
+static float PortRightRowZ(CGuiTableGroup* right, float pitch) {
+  const int sel = right->GetUserSelection();
+  CGuiWidget* row = right->GetWorkerWidget(sel);
+  CGuiWidget* first = right->GetWorkerWidget(0);
+  if (row == nullptr || first == nullptr) {
+    return sel * pitch;
+  }
+  return row->GetIdlePosition().GetZ() - first->GetIdlePosition().GetZ();
+}
+#else
+static float PortRightRowZ(CGuiTableGroup* right, float pitch) { return right->GetUserSelection() * pitch; }
+#endif
+
 void SOptionsFrontEndFrame::HandleRightSelectionChange() {
   DeactivateRightMenu();
   const SOptionCategory& category = PX_FRONT_CATEGORY(x24_tablegroup_leftmenu->GetUserSelection());
@@ -1379,8 +1398,7 @@ void SOptionsFrontEndFrame::HandleRightSelectionChange() {
     x34_slidergroup_slider->SetIncrement(option.increment);
     x34_slidergroup_slider->SetCurVal(CGameOptions::GetOption(option.option));
     x34_slidergroup_slider->SetO2PTransform(
-        CTransform4f::Translate(0.f, 0.f,
-                                x28_tablegroup_rightmenu->GetUserSelection() * x38_rowPitch) *
+        CTransform4f::Translate(0.f, 0.f, PortRightRowZ(x28_tablegroup_rightmenu, x38_rowPitch)) *
         x34_slidergroup_slider->GetTransform());
     break;
   case kOT_DoubleEnum:
@@ -1397,8 +1415,7 @@ void SOptionsFrontEndFrame::HandleRightSelectionChange() {
     x2c_tablegroup_double->SetIsVisible(true);
     x2c_tablegroup_double->SetIsActive(true);
     x2c_tablegroup_double->SetO2PTransform(
-        CTransform4f::Translate(0.f, 0.f,
-                                x28_tablegroup_rightmenu->GetUserSelection() * x38_rowPitch) *
+        CTransform4f::Translate(0.f, 0.f, PortRightRowZ(x28_tablegroup_rightmenu, x38_rowPitch)) *
         x2c_tablegroup_double->GetTransform());
     SetTableColors(x2c_tablegroup_double);
     break;
@@ -1416,8 +1433,7 @@ void SOptionsFrontEndFrame::HandleRightSelectionChange() {
     x30_tablegroup_triple->SetIsVisible(true);
     x30_tablegroup_triple->SetIsActive(true);
     x30_tablegroup_triple->SetO2PTransform(
-        CTransform4f::Translate(0.f, 0.f,
-                                x28_tablegroup_rightmenu->GetUserSelection() * x38_rowPitch) *
+        CTransform4f::Translate(0.f, 0.f, PortRightRowZ(x28_tablegroup_rightmenu, x38_rowPitch)) *
         x30_tablegroup_triple->GetTransform());
     SetTableColors(x30_tablegroup_triple);
     break;

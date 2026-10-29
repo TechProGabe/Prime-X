@@ -58,22 +58,31 @@ static int find_disc_image(char* out, size_t cap) {
     return find_image_in("E:\\Applications\\Prime-X", out, cap);
 }
 
-void xhw_error_screen(const char* title, const char* const* lines) {
+static void card_screen(const char* title, const char* const* lines, const char* footer) {
     const char* card[16];
     int i, n = 0;
     xhw_watchdog_disable();
     /* before the game takes the display: in the splash's look (docs/ui.md) */
     for (i = 0; lines && lines[i] && n < 13; i++) card[n++] = lines[i];
-    card[n++] = "";
-    card[n++] = "Press any button or wait to return to the dashboard.";
+    if (footer) {
+        card[n++] = "";
+        card[n++] = footer;
+    }
     card[n] = NULL;
     if (xhw_splash_card(title, card)) return;
     pb_show_debug_screen();
     debugClearScreen();
     debugPrint("\n\n    Prime-X\n\n    %s\n\n", title);
     for (i = 0; lines && lines[i]; i++) debugPrint("    %s\n", lines[i]);
-    debugPrint("\n\n    Press any button or wait to return to the dashboard.\n");
+    if (footer) debugPrint("\n\n    %s\n", footer);
 }
+
+void xhw_error_screen(const char* title, const char* const* lines) {
+    card_screen(title, lines, "Press any button or wait to return to the dashboard.");
+}
+
+/* the same card for a question the caller asks itself (A / B) */
+void xhw_choice_screen(const char* title, const char* const* lines) { card_screen(title, lines, NULL); }
 
 void xhw_fatal(const char* title, const char* msg) {
     const char* lines[2] = { msg, NULL };

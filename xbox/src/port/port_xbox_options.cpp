@@ -102,7 +102,7 @@ const wchar_t* Title(int option) {
   case kXO_Fov:
     return L"Field of View";
   case kXO_FpsCounter:
-    return L"FPS Counter";
+    return L"Frame Rate"; // "FPS Counter" ran past its button on the pause screen
   case kXO_VideoOutput:
     return L"Video Mode";
   case kXO_Widescreen:
