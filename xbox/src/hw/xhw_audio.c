@@ -596,11 +596,24 @@ int xhw_audio_init(uint32_t rate) {
         xhw_logf("[AUDIO] AC97 init failed");
         return 0;
     }
-    xhw_log("[AUDIO] step: codec power-up");
-    xhw_log_sync();
-    pd = codec_power_up(&wrote);
-    xhw_logf("[AUDIO] idle: %s, bus-master reset %u polls, codec 26 %04x%s", note, s_rr_polls, pd,
-             wrote ? " (powered up)" : "");
+    /* Round hw7: the fifth XBE of a chain froze in the codec power-up, on
+     * the first codec register read after the cold reset, and the watchdog
+     * never fired (the CPU held on the bus, no hang.log; hw4's r4c froze
+     * around the same reads). On the console that read never found anything
+     * to power up (0000, or ffff with the codec not ready, in 61 boots), so
+     * after the reset only xemu's codec is read or written. */
+    wrote = 0;
+    pd = 0;
+    if (xemu) {
+        xhw_log("[AUDIO] step: codec power-up");
+        xhw_log_sync();
+        pd = codec_power_up(&wrote);
+    }
+    if (xemu)
+        xhw_logf("[AUDIO] idle: %s, bus-master reset %u polls, codec 26 %04x%s", note, s_rr_polls, pd,
+                 wrote ? " (powered up)" : "");
+    else
+        xhw_logf("[AUDIO] idle: %s, bus-master reset %u polls, codec not read after the reset", note, s_rr_polls);
     if (xemu) {
         /* xemu's codec resets muted; the retail codec has no mixer registers */
         *(volatile uint16_t*)(ACI + 0x02) = 0x0000;
