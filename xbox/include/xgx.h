@@ -17,6 +17,11 @@ extern "C" {
 #define XGX_MAX_TEXGEN 8
 #define XGX_MAX_MAPS 8
 #define XGX_MAX_LIGHTS 8
+/* vertex normals packed as the NV2A's CMP, 4 bytes (gx_vtx.c put_nrm);
+ * 0: three floats */
+#ifndef XGX_NRM_CMP
+#define XGX_NRM_CMP 1
+#endif
 #define XGX_NUM_POSMTX 10
 #define XGX_NUM_TEXMTX 10
 #define XGX_NUM_PTMTX 20
@@ -156,8 +161,9 @@ enum {
 
 /* Canonical vertex, built by the front end from GX attributes. Only the
  * attributes present in the draw are written; offsets are bytes into the
- * vertex, -1 when absent. pos is 3 floats, nrm 3 floats (a GX normal), col
- * 4 bytes RGBA, mtx 1 float (the PNMTXIDX row, 0..27), tc 2 floats.
+ * vertex, -1 when absent. pos is 3 floats, nrm a GX normal (one CMP word
+ * with XGX_NRM_CMP, else 3 floats), col 4 bytes RGBA, mtx 1 float (the
+ * PNMTXIDX row, 0..27), tc 2 floats.
  * tc_mtx: bit n when the vertex has TEXnMTXIDX. HSD's skinned env maps load
  * texture matrix k for position matrix k (pobj.c, HSD_Index2TexMtx), so the
  * index itself isn't kept: the back end takes texgen n's matrix from the
@@ -245,6 +251,7 @@ uint32_t xgx_tex_pool_free_kb(void);
 uint32_t xgx_tex_pool_kb(void);
 uint32_t xgx_tex_pool_largest_kb(void);   /* the largest free block: fragmentation */
 int xgx_tex_pool_grow(void);              /* overflow pool from free RAM; 1 if one was made */
+uint32_t xgx_tex_pool_overflow_kb(void);  /* its size, 0: none */
 int xgx_tex_in_overflow(uint32_t tex);    /* the texture lives in the overflow pool */
 void xgx_tex_pool_shrink(void);           /* frees the overflow pool once it is empty (waits for the GPU) */
 

@@ -114,7 +114,25 @@ static Entry* entry_add(const uint8_t* data) {
     return e;
 }
 
-void gx_tex_init(void) { chain_init(); }
+/* xhw_mem reclaimer, the game thread's frame boundary only (it waits for
+ * the GPU): the overflow pool goes when the Xbox runs low. Melee let it go
+ * at every scene change (gx_tex_scene_leave); Prime has no such call, so a
+ * pool grown while memory was plentiful (a menu) was kept for good. */
+void gx_tex_scene_leave(void);
+
+static uint32_t tex_reclaim(uint32_t want_kb, int urgent) {
+    uint32_t before;
+    (void)want_kb;
+    if (urgent || !xgx_tex_pool_overflow_kb()) return 0;
+    before = xhw_mem_free_kb();
+    gx_tex_scene_leave();
+    return xhw_mem_free_kb() > before ? xhw_mem_free_kb() - before : 0;
+}
+
+void gx_tex_init(void) {
+    chain_init();
+    xhw_mem_add_reclaim(tex_reclaim, 1);   /* before ARAM's: it costs no I/O */
+}
 
 /* ---- sizes ---- */
 static void block_dims(uint32_t fmt, int* bw, int* bh, int* bpp) {

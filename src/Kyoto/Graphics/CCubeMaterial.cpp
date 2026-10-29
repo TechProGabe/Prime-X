@@ -729,8 +729,13 @@ void CCubeMaterial::SetCurrent(const CModelFlags& flags, const CCubeSurface& sur
     // A converted Remastered material samples each map with its own wrap modes: a PBR one
     // from its record, a TEV one from its 'WRAP' word; anything else repeats.
     uint wrap = 0x55555555;
+#ifndef TARGET_XBOX
     f32 values[19];
     model.PortReadPBRMaterial(static_cast< int >(surface.GetMaterialIndex()), values, &wrap);
+#endif
+    // PORT_XBOX: only the disc's materials here, which carry no PBR or WRAP
+    // record: every map repeats, without parsing the material table on each
+    // material set (~1% of the console's CPU in Main Plaza, round hw5)
     for (uint i = 0; i < texCount; ++i) {
       const uint bits = i < 8 ? wrap >> (i * 4) : 0x5;
       textures[SBig(*materialDataCur.words)].GetObject()->PortLoad(

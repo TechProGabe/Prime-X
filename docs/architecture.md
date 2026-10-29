@@ -76,9 +76,11 @@ commit-on-demand and disc-backed-ARAM tricks are required, not optional.
 Memory pressure (`xhw_mem_reclaim`, `xhw_sys.c`): below 3 MB free the
 game thread asks the reclaimers for up to 1 MB a frame (`xhw_mem_tick`),
 and a commit that fails asks them again, without blocking, before the Out
-of memory screen. ARAM is the reclaimer today: chunks wholly on the disc
-go back at once, the rest after a 64 KB write to the swap file; a touch
-brings them back as disc pages come back. In xemu with 7 MB held back
+of memory screen. Asked first, on the game thread only: the texture
+overflow pool (up to 8 MB taken while RAM is plentiful; Melee gave it back
+at every scene change, Prime has none, so it was kept for good). Then
+ARAM: chunks wholly on the disc go back at once, the rest after a 64 KB
+write to the swap file; a touch brings them back as disc pages come back. In xemu with 7 MB held back
 (`env PX_MEM_BALLOON_KB=7000`, test builds) Main Plaza ran with free
 memory down to 0.9 MB and no failure; ARAM went from ~3.6 MB committed to
 ~1.5 MB.

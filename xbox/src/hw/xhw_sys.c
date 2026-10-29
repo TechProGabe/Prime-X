@@ -560,14 +560,18 @@ static xhw_reclaim_fn s_reclaim[RECLAIM_MAX];
 static volatile LONG s_reclaim_n;
 static volatile LONG s_reclaim_urgent_n, s_reclaim_urgent_kb;
 
-void xhw_mem_add_reclaim(xhw_reclaim_fn fn) {
+void xhw_mem_add_reclaim(xhw_reclaim_fn fn, int first) {
     LONG i;
     for (i = 0; i < s_reclaim_n; i++)
         if (s_reclaim[i] == fn) return;
-    if (s_reclaim_n < RECLAIM_MAX) {
+    if (s_reclaim_n >= RECLAIM_MAX) return;
+    if (first) {   /* at boot, before any pressure: nothing reads the list yet */
+        for (i = s_reclaim_n; i > 0; i--) s_reclaim[i] = s_reclaim[i - 1];
+        s_reclaim[0] = fn;
+    } else {
         s_reclaim[s_reclaim_n] = fn;
-        InterlockedIncrement(&s_reclaim_n);
     }
+    InterlockedIncrement(&s_reclaim_n);
 }
 
 uint32_t xhw_mem_reclaim(uint32_t want_kb, int urgent) {

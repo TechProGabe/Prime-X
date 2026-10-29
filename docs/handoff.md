@@ -3,7 +3,37 @@
 Update this at the end of every session: what was done, what's next,
 what's broken, anything the next agent would otherwise rediscover.
 
-## Where it stands now (2026-10-28, evening)
+## Session 2026-10-28 (night, unattended): fixes in xemu, not on red yet
+
+The user's list: fix the hardware crash (the hw6 Out of memory screen),
+the white gun ("Chozo Ruins starts on the white gun every time", flickers
+in some rooms), everything else known, and fps. Priorities they gave:
+stability > visuals > fps; memory may be traded, the retail look may not.
+No hardware rounds until they say.
+
+- **Out of memory** (`451e1bf`): memory-pressure reclaimers
+  (`xhw_mem_reclaim`); below 3 MB free the game thread gives back up to
+  1 MB a frame, and a failed commit asks again (try-lock only) before the
+  Out of memory screen. ARAM is the reclaimer: chunks wholly on the disc
+  go at once, the rest after a write to `aram.swp` in the save folder
+  (`ar.c`). Test builds: `env PX_MEM_BALLOON_KB=<n>` holds RAM back; Main
+  Plaza with 7000 ran down to 0.9 MB free with no failure. ~0.9 MB of
+  `.bss` less (GX FIFO, random static, pause blur buffers).
+- **Morph Ball washing the scene out** and part of the white gun
+  (`451e1bf`): `CGX::SGXState::x4c_flags` was a PowerPC-ordered bitfield;
+  `CGX::SetNumChans` never reached GX. Shots: `build-xbox/shots/morph4`
+  (before) vs `morphfix_009` (after).
+- **The white gun** (`b858563`): five textures on the gun with its world
+  shadow, four units; the stage without one read white. Uniform textures
+  are now combiner constants; an overflow reads the texture's average.
+  `build-xbox/shots/plazagun_00*` (dark teal metal, as retail).
+- **Display-list thrash** (`b858563`): only lists unused for 3 frames are
+  evicted (hw6's 34 ms of display lists with the vertex pool full).
+- `xhw_time_ns` reads the ACPI timer every 100 ms and interpolates with the
+  TSC (was an I/O-port read and three 64-bit divisions per call, ~3% of
+  the console's CPU in Main Plaza).
+
+## Where it stood before (2026-10-28, evening)
 
 The game plays through every world in xemu (room sweep: 14 rooms, no
 failure) and on the red console (~35-45 fps in most rooms at 480i). Red
@@ -42,47 +72,31 @@ Done 2026-10-28 (afternoon and evening), newest first:
 
 ## Next session, in order
 
-1. **Out of memory on red** (hw6, `/c/xemu/hw/prime/logshw6/boot.log`):
-   at 290 s `xhw_commit` failed with 2.9 MB free (MEM1+ARAM 25.8 MB), so
-   one commit wanted more than was free. Put the current build on red and
-   play the same path (Landing Site, save in the ship, walk on); the log
-   now says the size. Levers left: triple buffering (1.2 MB), the vertex
-   pool (4 MB, ~0.8 MB free in play), the game heap's partly used chunks,
-   ARAM. The PGO-instrumented build runs out in the Frigate (its image is
-   4 MB bigger): `pgo/frigate` and `pgo/magmoor` give no profile, and the
-   profile in the tree is the old one.
-2. **Everything too bright after Morph Ball** (the user, hw6). In xemu
-   (`/c/xemu/px/scen-morph2`, `build-xbox/shots/morph4`) the view after
-   unmorphing looks paler than the old build's; not proven. Suspects:
-   the GXInit channel change (`0b407ad`) together with
-   `CMorphBallShadow`'s direct GX calls (GX_ALPHA0 lit, then restored;
-   `GXSetDstAlpha(true, 0)` and alpha updates left on, as retail). Trace a
-   frame before and after a morph (`-DXGX_DEBUG_TRACE=1`) and diff the
-   channel and blend state.
-3. **The Options divider sits on the text** (the user, hw6: Widescreen
-   HUD, Field of View, FPS Counter). The pause screen draws "Inner |
-   Edges" right in xemu (`build-xbox/shots/opt3`), so likely the main
-   menu's Port Options (`SOptionsFrontEndFrame`), whose left cell is sized
-   for retail's "Off". `/c/xemu/px/scen-portopt` doesn't reach Port
-   Options (it opens Options twice): find the path, shoot the Video rows,
-   then right-justify `textpane_double0` (and its "b" shadow) for
-   Prime-X rows, or shorten the labels.
-4. **The ship's save station fps** (12-14 on red in hw5): measure with the
-   doubled dynamic budget.
-5. FPS: console profile levers left after the rain: the dynamic lists'
-   template copies (memcpy from `GXCallDisplayList`, ~5%),
-   `CEnvFxManager::Update`, `BuildBoneRange`, CFishCloud.
-6. Visors: X-ray (D-pad Right) and thermal (Down) render in Phendrana with
-   `env PX_ALL_ITEMS=1` (`/c/xemu/px/scen-visor2`); compare with Dolphin.
-7. Magmoor's heat haze draws without its warp: its indirect maps are
-   512x256 EFB copies, past `ind_tex`'s 64K-texel limit; a GPU-side
-   conversion into the BUMPENVMAP layout would make it cheap.
-8. The audio start-up freeze after a chained launch (hw4 r4c): the flushed
-   `[AUDIO] step:` lines will say where if it recurs.
-9. Retrain PGO once the instrumented build fits the Frigate
-   (`tools/xbox/pgo_train.sh tallon frigate phendrana magmoor chozo`, two
-   xemu slots: unset `PX_RUN_3`). Kill leftover xemus after a training run:
-   they hold the HDD image and later runs silently reuse the old log.
+1. **A console round when the user says** (none until then): an LTO + PGO
+   ship build of `dev` on red, the hw6 path (Landing Site, save in the
+   ship, walk on, then Chozo and Magmoor). Check: no Out of memory (look
+   for `[MEM] low` and `[AR]` lines: reclaims and swap-outs), the arm
+   cannon in Chozo (dark metal with its reflection, not white), the view
+   after Morph Ball, the title's Port Options Video rows, fps against hw5
+   (Main Plaza 21-46). Retrain PGO first (`tools/xbox/pgo_train.sh`, both
+   xemu slots): the profile predates every change since 7f1dfb3; with the
+   reclaimers the instrumented build may now survive the Frigate and
+   Main Plaza (it ran out there before).
+2. If memory still runs out on red: other reclaimers are easy to add
+   (`xhw_mem_add_reclaim`): the display lists' dynamic templates (malloc),
+   the texture overflow pool, idle cached lists in the vertex pool.
+3. FPS (console profile, hw5 Main Plaza, read at the instruction level):
+   what is left in `GXCallDisplayList` after this session's changes is the
+   batch table (its own allocation per list: a miss a call) and the
+   dynamic lists' template copies; `xgx_draw` ~8%; `CStateManager::Update`.
+4. Not done, by choice: `GXSetDstAlpha` and the EFB pixel format (Morph
+   Ball's shadow IDs, fog volumes, thermal's DSTALPHA blends) and
+   Magmoor's heat-haze warp on the GPU (a new render-to-texture pass: the
+   console has faulted on those before, so it wants a console round).
+5. Visors and parity: no Dolphin reference frames yet (`docs/renderer.md`).
+6. Gate leftovers: the 128 MB hold needs a 128 MB-aware BIOS in xemu;
+   `XHW_CODE_REPAIR_TEST`; the save round trip and Dolphin `.gci` (phase
+   4); Docker/CI (the workflow exists, `gh` isn't logged in here).
 
 ## Session 2026-10-28 (night and morning)
 

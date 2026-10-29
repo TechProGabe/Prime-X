@@ -18,8 +18,11 @@ line under it says how far it got.
       validation, 128 MB hold, upgraded-CPU handling
       - boots to the title, the file select and into the game in xemu and
         on red; the full disc check matches the Redump hash on red (hw1).
-        The doctored-image rejection screens, the 128 MB hold in xemu and
-        `XHW_CODE_REPAIR_TEST` are still to be shown
+        Doctored images in xemu (2026-10-28): wrong ID, another revision,
+        trimmed and a changed file each stop at their screen
+        (`build-xbox/shots/disc_*`). Still to show: the 128 MB hold (xemu's
+        BIOS here exposes 64 MB whatever `mem_limit` says: needs a 128 MB
+        BIOS) and `XHW_CODE_REPAIR_TEST`
 - [ ] Phase 3: renderer parity with Dolphin in the benchmark rooms, all
       visors, 4:3 and 16:9
       - every world renders in xemu (room sweep, 14 rooms) and on red;
@@ -45,13 +48,13 @@ line under it says how far it got.
 
 ## Known issues
 
-- **Out of memory on red** in free play: hw5 at 215 s, hw6 at 290 s
-  (2.9 MB free when a commit failed). Since hw6: the texture pool is 7 MB
-  (xemu Main Plaza's lowest free 6.6 MB) and a failed commit logs its
-  size; to be played on the console again.
-- **Everything too bright after Morph Ball** (hw6, the user); being traced.
-- **The Options divider sits on the value text** in two-value rows (hw6;
-  likely the main menu's Port Options).
+- **Out of memory on red** in free play: hw5 at 215 s, hw6 at 290 s.
+  Since then: memory-pressure reclaim and the ARAM swap file (xemu Main
+  Plaza with 7 MB held back runs at ~1 MB free without failing), 0.9 MB of
+  `.bss` less, the texture pool 7 MB. To be played on the console again.
+- Fixed in xemu, not yet seen on red: everything too bright after Morph
+  Ball, the white arm cannon (Chozo, Magmoor), the Options divider on the
+  lower Video rows (not reproduced in xemu: the fix is by construction).
 - Inside the gunship: 12-14 fps on red in hw5; the dynamic-list budget is
   doubled since, not measured.
 - Magmoor's heat haze draws without its warp (indirect maps past

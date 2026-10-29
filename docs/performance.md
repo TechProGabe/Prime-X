@@ -106,6 +106,21 @@ console's profile of the Landing Site: `GXCallDisplayList` 13%, `memcpy`
 Plaza: display lists 13%, `xgx_draw` 8%. Next: the skinned models' display
 lists (decoded on every call), the memcpy callers, and the rain.
 
+2026-10-28 (night), from round hw5's Main Plaza profile read against the
+profiler build's code (`stage-hw5/prof`: the XBE's bytes disassembled at
+the hot 64-byte buckets): `GXCallDisplayList`'s time is cache misses on
+the cache entries (`DlEntry`, 184 bytes with the chain's `next` at the
+end: four 32-byte lines a call) and on each list's batch table. Done, not
+yet measured on a console: the entry's hot fields in its first 64 bytes,
+32-byte aligned; `xhw_time_ns` without an I/O-port read per call (~3%);
+`xhw_perf_enter/leave` inline (~1.2%); no PBR-record parse per material
+set (`CCubeMaterial::SetCurrent`, ~1%); 48-byte `VpKey` compares inline;
+normals as CMP (4 bytes: 13% more of Main Plaza's lists fit the vertex
+pool); only lists unused for 3 frames evicted (hw6's 34 ms of display
+lists with the pool full were LRU turning the whole cache over). Left:
+the batch table (a separate allocation per list), the dynamic lists'
+template copies, `CStateManager::Update`'s inlined callees.
+
 The front end (title, file select) runs over a 640x480 THP movie: its
 decode was 60% of a frame (float AAN IDCT with a double-precision FMA on an
 SSE1 CPU) and the planes' GX-tile conversion 18%. An integer IDCT

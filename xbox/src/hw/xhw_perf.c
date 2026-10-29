@@ -24,9 +24,18 @@
 #define XHW_PERF_SECS 5
 #endif
 
+#if !XHW_PMC
+/* xhw.h's inline enter/leave keep these */
+int xhw_perf_cur;
+uint64_t xhw_perf_mark, xhw_perf_acc[XHW_PERF_N];
+#define s_cur xhw_perf_cur
+#define s_mark xhw_perf_mark
+#define s_acc xhw_perf_acc
+#else
 static int s_cur;
 static uint64_t s_mark;
 static uint64_t s_acc[XHW_PERF_N];
+#endif
 static volatile uint64_t s_audio;
 static uint64_t s_t0, s_ns0;
 
@@ -37,13 +46,14 @@ static inline uint64_t rdtsc(void) {
 }
 static uint32_t s_frames, s_draws, s_verts, s_ticks, s_renders;
 
+#if !XHW_PMC
+static void charge(void) { xhw_perf_charge_(); }
+#else
 static void charge(void) {
     uint64_t now = rdtsc();
     if (s_mark) s_acc[s_cur] += now - s_mark;
     s_mark = now;
-#if XHW_PMC
     xhw_pmc_charge(s_cur);
-#endif
 }
 
 int xhw_perf_enter(int bucket) {
@@ -57,6 +67,7 @@ void xhw_perf_leave(int prev) {
     charge();
     s_cur = prev;
 }
+#endif
 
 uint64_t xhw_perf_now(void) { return rdtsc(); }
 

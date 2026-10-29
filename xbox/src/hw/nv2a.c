@@ -1063,6 +1063,8 @@ int xgx_tex_in_overflow(uint32_t tex) {
 
 static void ind_tex_flush(void);
 
+uint32_t xgx_tex_pool_overflow_kb(void) { return s_tp2.base ? s_tp2.bytes / 1024 : 0; }
+
 void xgx_tex_pool_shrink(void) {
     if (!s_tp2.base) return;
     ind_tex_flush();   /* rebuilt on demand; one may sit in the overflow pool */
@@ -1859,15 +1861,30 @@ static void vp_upload(const VpEntry* e, int start) {
     s_st_vp_ins += e->prog.n;
 }
 
+/* VpKeys compared as words, inline: a 48-byte memcmp is a call (the
+ * builtin only inlines short ones), on every draw whose lighting or
+ * texgens changed */
+_Static_assert(sizeof(VpKey) % 4 == 0, "VpKey compares as words");
+static inline int vk_same(const VpKey* a, const VpKey* b) {
+    uint32_t d = 0, wa, wb;
+    unsigned i;
+    for (i = 0; i < sizeof(VpKey); i += 4) {
+        memcpy(&wa, (const uint8_t*)a + i, 4);
+        memcpy(&wb, (const uint8_t*)b + i, 4);
+        d |= wa ^ wb;
+    }
+    return d == 0;
+}
+
 static void vp_select(const VpKey* k) {
     int i, pick = -1, start, loaded;
     uint32_t h = vp_hash(k);
     VpEntry* e;
-    if (s_vp_cur >= 0 && s_vp[s_vp_cur].hash == h && memcmp(&s_vp[s_vp_cur].key, k, sizeof *k) == 0) return;
+    if (s_vp_cur >= 0 && s_vp[s_vp_cur].hash == h && vk_same(&s_vp[s_vp_cur].key, k)) return;
     s_vp_now++;
     s_st_vp_sel++;
     for (i = 0; i < VP_CACHE; i++)
-        if (s_vp_hash[i] == h && s_vp_valid[i] && memcmp(&s_vp[i].key, k, sizeof *k) == 0) { pick = i; break; }
+        if (s_vp_hash[i] == h && s_vp_valid[i] && vk_same(&s_vp[i].key, k)) { pick = i; break; }
     if (pick < 0) {
         /* a free entry, or the least recently used (its memory is freed) */
         for (i = 0; i < VP_CACHE; i++)
@@ -2719,7 +2736,8 @@ static void emit_vertex_arrays(const XgxLayout* l, const XgxState* st) {
     uint32_t s = l->stride;
     attr(VPI_POS, l->off_pos, NV097_SET_VERTEX_DATA_ARRAY_FORMAT_TYPE_F, 3, s);
     attr(VPI_MTX, l->off_mtx, NV097_SET_VERTEX_DATA_ARRAY_FORMAT_TYPE_F, 1, s);
-    attr(VPI_NRM, l->off_nrm, NV097_SET_VERTEX_DATA_ARRAY_FORMAT_TYPE_F, 3, s);
+    if (XGX_NRM_CMP) attr(VPI_NRM, l->off_nrm, NV097_SET_VERTEX_DATA_ARRAY_FORMAT_TYPE_CMP, 1, s);   /* gx_vtx.c */
+    else attr(VPI_NRM, l->off_nrm, NV097_SET_VERTEX_DATA_ARRAY_FORMAT_TYPE_F, 3, s);
     attr(VPI_COL0, l->off_col[0], NV097_SET_VERTEX_DATA_ARRAY_FORMAT_TYPE_UB_OGL, 4, s);
     attr(VPI_COL1, l->off_col[1], NV097_SET_VERTEX_DATA_ARRAY_FORMAT_TYPE_UB_OGL, 4, s);
     for (n = 0; n < 8; n++) attr(vpi_tex(n), l->off_tc[n], NV097_SET_VERTEX_DATA_ARRAY_FORMAT_TYPE_F, 2, s);
@@ -3376,7 +3394,7 @@ void xgx_draw(uint32_t prim, uint32_t count, const XgxLayout* layout, XgxState* 
         if (lay >> 3 != s_d_layout >> 3) d |= XGX_DIRTY_TEXGEN;   /* per-vertex texture matrices on or off */
         derive_vk(st, layout);
         s_d_layout = lay;
-        if (memcmp(&old, &s_d_vk, sizeof old) != 0) vp_select(&s_d_vk);
+        if (!vk_same(&old, &s_d_vk)) vp_select(&s_d_vk);
     }
     if (s_vp_cur < 0) vp_select(&s_d_vk);
     s_approx += (uint32_t)s_d_unit_miss + (s_d_rp->approximated ? 1u : 0u);

@@ -43,7 +43,30 @@ typedef struct {
  * spent most of its time in the generic per-element switches (Prime's
  * skinned models, ~90 lists a frame on the Landing Site, are decoded on
  * every call). Anything else goes through store(). */
-enum { SK_GENERIC = 0, SK_NONE, SK_F32_3, SK_F32_2, SK_S16_3, SK_S16_2, SK_U16_2, SK_S8_3, SK_RGBA8, SK_MTX };
+enum { SK_GENERIC = 0, SK_NONE, SK_F32_3, SK_F32_2, SK_S16_3, SK_S16_2, SK_U16_2, SK_S8_3, SK_RGBA8, SK_MTX,
+       SK_NRM_F32, SK_NRM_S16 };
+
+/* Normals packed as the NV2A's CMP (D3D's NORMPACKED3: x and y in 11
+ * signed bits, z in 10), 4 bytes instead of 12: the cached display lists'
+ * vertices ~20% smaller, so more of a room's lists fit the vertex pool
+ * (Main Plaza filled it). The vertex program reads them as floats. */
+#define NRM_BYTES (XGX_NRM_CMP ? 4 : 12)
+
+static inline int cmp_q(float v, float m) {
+    v = v < -1.0f ? -1.0f : v > 1.0f ? 1.0f : v;
+    return (int)(v * m + (v >= 0.0f ? 0.5f : -0.5f));
+}
+
+/* three floats -> the vertex's normal */
+static inline void put_nrm(uint8_t* dst, const float* n) {
+#if XGX_NRM_CMP
+    uint32_t w = ((uint32_t)cmp_q(n[0], 1023.0f) & 0x7FFu) | ((uint32_t)cmp_q(n[1], 1023.0f) & 0x7FFu) << 11 |
+                 ((uint32_t)cmp_q(n[2], 511.0f) & 0x3FFu) << 22;
+    memcpy(dst, &w, 4);
+#else
+    memcpy(dst, n, 12);
+#endif
+}
 
 typedef struct {
     Slot slot[N_ORDER];
@@ -97,7 +120,7 @@ static void make_plan(Plan* p, int vtxfmt) {
         switch (a) {
             case GX_VA_PNMTXIDX: s->dst = l->off_mtx = off; off += 4; break;
             case GX_VA_POS: s->dst = 0; break;
-            case GX_VA_NRM: s->dst = l->off_nrm = off; off += 12; break;
+            case GX_VA_NRM: s->dst = l->off_nrm = off; off += NRM_BYTES; break;
             case GX_VA_CLR0: s->dst = l->off_col[0] = off; off += 4; break;
             case GX_VA_CLR1: s->dst = l->off_col[1] = off; off += 4; break;
             default:
@@ -167,7 +190,8 @@ static void plan_kinds(Plan* p, int vtxfmt) {
             }
         } else if (s->attr == GX_VA_NRM) {
             if (s->fmt.cnt == GX_NRM_XYZ) {   /* fixed fractions: S8 1.6, S16 1.14 */
-                k = t == GX_F32 ? SK_F32_3 : t == GX_S16 ? SK_S16_3 : t == GX_S8 ? SK_S8_3 : SK_GENERIC;
+                if (XGX_NRM_CMP) k = t == GX_F32 ? SK_NRM_F32 : t == GX_S16 ? SK_NRM_S16 : SK_GENERIC;
+                else k = t == GX_F32 ? SK_F32_3 : t == GX_S16 ? SK_S16_3 : t == GX_S8 ? SK_S8_3 : SK_GENERIC;
                 s->scale = t == GX_S8 ? 1.0f / 64 : 1.0f / 16384;
             }
         } else if (s->attr >= GX_VA_TEX0 && s->attr <= GX_VA_TEX7) {
@@ -252,7 +276,8 @@ static void store(const Slot* s, const uint8_t* p, int be, uint8_t* v) {
         }
         for (i = 0; i < n && i < 3; i++) out[i] = read_elem(p + i * es, s->fmt.type, scale, be);
         /* constant sizes: inline moves (xbuiltin.h) */
-        if (s->attr == GX_VA_POS || s->attr == GX_VA_NRM) memcpy(v + s->dst, out, 12);
+        if (s->attr == GX_VA_NRM) put_nrm(v + s->dst, out);
+        else if (s->attr == GX_VA_POS) memcpy(v + s->dst, out, 12);
         else memcpy(v + s->dst, out, 8);
     }
 }
@@ -292,6 +317,19 @@ static inline void store_fast(const Slot* s, const uint8_t* p, int be, uint8_t* 
         case SK_RGBA8:
             memcpy(v + s->dst, p, 4);
             return;
+        case SK_NRM_F32: {
+            float n[3];
+            if (be) { n[0] = gx_bef(p); n[1] = gx_bef(p + 4); n[2] = gx_bef(p + 8); }
+            else memcpy(n, p, 12);
+            put_nrm(v + s->dst, n);
+            return;
+        }
+        case SK_NRM_S16: {
+            float n[3];
+            for (i = 0; i < 3; i++) n[i] = (int16_t)(be ? gx_be16(p + 2 * i) : *(const uint16_t*)(p + 2 * i)) * s->scale;
+            put_nrm(v + s->dst, n);
+            return;
+        }
         case SK_MTX: {
             float f = (float)p[0];
             memcpy(v + s->dst, &f, 4);
@@ -451,6 +489,8 @@ static void lerp_vertex(uint8_t* dst, const uint8_t* a, const uint8_t* b, float 
         if (off == l->off_col[0] || off == l->off_col[1]) {
             int k;
             for (k = 0; k < 4; k++) dst[off + k] = (uint8_t)(a[off + k] + (b[off + k] - a[off + k]) * t + 0.5f);
+        } else if (XGX_NRM_CMP && off == l->off_nrm) {
+            memcpy(dst + off, a + off, 4);   /* packed: the nearer end's (lines rarely carry normals) */
         } else {
             const float fa = *(const float*)(a + off), fb = *(const float*)(b + off);
             *(float*)(dst + off) = fa + (fb - fa) * t;
@@ -731,7 +771,8 @@ static void imm_floats(uint8_t attr, const float* f, int n) {
         float out[3] = { 0, 0, 0 };
         int i;
         for (i = 0; i < n && i < 3; i++) out[i] = f[i];
-        if (attr == GX_VA_POS || attr == GX_VA_NRM) memcpy(B.cur + s->dst, out, 12);
+        if (attr == GX_VA_NRM) put_nrm(B.cur + s->dst, out);
+        else if (attr == GX_VA_POS) memcpy(B.cur + s->dst, out, 12);
         else memcpy(B.cur + s->dst, out, 8);
     }
     after_attr();
@@ -1322,26 +1363,34 @@ typedef struct {
     uint16_t nbatch, ndraw;
 } DynList;
 
-typedef struct {
+/* The bucket walk and a cached call's hit path read only the first 64
+ * bytes, two of the Pentium III's 32-byte lines, with entries 32-byte
+ * aligned: spread over a 184-byte entry (next at the end) they took four
+ * cache misses a call, and GXCallDisplayList was 13% of the console's CPU
+ * in Main Plaza (round hw5), most of it waiting on those loads. */
+typedef struct __attribute__((aligned(32))) {
     const uint8_t* dl;
     uint32_t nbytes;
-    uint32_t sig, hash;
-    uint32_t qhash;                /* quick_hash of the same, for stable lists (dlc_content_changed) */
+    int next;                      /* bucket chain, -1: end */
     uint32_t fkey;                 /* fmt_key(fmts) it was made under (part of the key) */
+    uint8_t fmts, is_volatile, nrange, rebuilds;
+    uint16_t nbatch;
+    uint8_t bounds;                /* bmin/bmax hold the positions' box (no per-vertex matrix) */
+    uint32_t sig;
     uint32_t checked, last_used;
     uint32_t stable;               /* content checks passed in a row (dlc_content_changed) */
     uint8_t* mem;
-    uint32_t mem_bytes;
     DlBatch* batch;
     DynList* dyn;
-    uint16_t nbatch;
-    uint8_t fmts, nrange, rebuilds, is_volatile;
+    uint32_t qhash;                /* quick_hash of the same, for stable lists (dlc_content_changed) */
+    uint32_t hash;
+    /* 64: the rest */
     uint32_t vol_retry;            /* volatile for want of budget: the frame to try dyn_build again (0: never) */
-    uint8_t bounds;                /* bmin/bmax hold the positions' box (no per-vertex matrix) */
+    uint32_t mem_bytes;
     float bmin[3], bmax[3];
     DlRange range[DLC_MAX_RANGE];
-    int next;                      /* bucket chain, -1: end */
 } DlEntry;
+_Static_assert(__builtin_offsetof(DlEntry, hash) + 4 <= 64, "DlEntry's hot fields fit two cache lines");
 
 static DlEntry s_dlc[DLC_MAX];
 /* each slot's last_used, DLC_FREE for an empty one: the eviction scan reads
@@ -1599,18 +1648,22 @@ static void cen_report(void) {
  * (content_qhash). On the console the checks took ~4% of the CPU in a match,
  * where no list changed content at all; v32's Fountain of Dreams ~3%. */
 #define DLC_STABLE 120
+/* and one that passed DLC_STABLE2 more is checked every eighth frame: the
+ * samples are cache misses in game memory, a few thousand a frame in Main
+ * Plaza's ~1600 lists */
+#define DLC_STABLE2 (DLC_STABLE + 600)
 static int dlc_content_changed(DlEntry* e, uint32_t frame) {
     if (e->checked == frame) return 0;
 #if defined(XHW_PMC) && XHW_PMC
     if (xhw_ablate(XHW_AB_RECHECK)) return 0;   /* the probe's window 5 */
 #endif
-    if (e->stable >= DLC_STABLE && ((frame + (uint32_t)(e - s_dlc)) & 3)) return 0;
+    if (e->stable >= DLC_STABLE && ((frame + (uint32_t)(e - s_dlc)) & (e->stable >= DLC_STABLE2 ? 7 : 3))) return 0;
     e->checked = frame;
     if (e->stable >= DLC_STABLE ? e->qhash != content_qhash(e) : e->hash != content_hash(e)) {
         e->stable = 0;
         return 1;
     }
-    if (e->stable < DLC_STABLE) e->stable++;
+    if (e->stable < DLC_STABLE2) e->stable++;
     return 0;
 }
 
