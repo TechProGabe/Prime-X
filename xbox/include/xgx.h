@@ -234,6 +234,11 @@ void xgx_tex_destroy(uint32_t tex);   /* deferred until the GPU is done */
  * texture made only for its palette serves as a palette any P8 texture can
  * draw with (XgxMap.pal) */
 uint32_t xgx_tex_palette(uint32_t tex);
+/* What a texture's texels average to (A8R8G8B8) and whether they are all
+ * that colour (gx_tex.c, at upload). A stage sampling a uniform texture
+ * reads a constant instead of a texture unit; one left without a unit (more
+ * than four textures) reads the average, not white. */
+void xgx_tex_set_color(uint32_t tex, uint32_t avg_argb, int uniform);
 int xgx_vbuf_spilled(const void* p);   /* a cached display list's buffer in the texture pool */
 uint32_t xgx_tex_bytes(uint32_t tex); /* pool bytes a live texture holds, 0 otherwise */
 uint32_t xgx_tex_pool_free_kb(void);

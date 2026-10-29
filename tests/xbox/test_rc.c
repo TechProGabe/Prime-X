@@ -15,6 +15,9 @@
  * 3. The 1P clear screen's sepia freeze frame (lb_800122F0: three stages
  *    reading one texture through RRRA, GGGA and BBBA) fits the combiners
  *    and gives K0 r + K1 g + K2 b.
+ * 4. Prime's arm cannon with its world shadow (seven stages, five
+ *    textures, two of them uniform 8x8 maps read as constants) fits and
+ *    gives the TEV's colour.
  *
  * The combiner model follows NV_register_combiners: input mappings, AB/CD
  * products or dot products, the sum, output shift and bias, clamping to
@@ -37,6 +40,7 @@ static float rnd01(void) { return (float)(rnd() % 256) / 255.0f; }
 
 /* ---- per-draw constants, as nv2a.c's ref_val / pack_const ---- */
 static uint8_t s_konst[4][4];
+static uint32_t s_tconst[16];   /* RREF_TEXCONST: A8R8G8B8 per TEV stage */
 static int16_t s_tevreg[4][4];
 static const uint8_t k_fixed[8][4] = {
     { 90, 0, 0, 44 }, { 0, 0, 113, 91 }, { 255, 0, 255, 0 }, { 0, 255, 0, 0 },
@@ -67,6 +71,12 @@ static void ref_val(uint16_t ref, uint8_t rgb[3], uint8_t* a) {
             else if (p >= 0x10) *a = s_konst[(p - 0x10) & 3][((p - 0x10) >> 2) & 3];
             else *a = 0;
             break;
+        case RREF_TEXCONST_C:
+            rgb[0] = (uint8_t)(s_tconst[p & 15] >> 16);
+            rgb[1] = (uint8_t)(s_tconst[p & 15] >> 8);
+            rgb[2] = (uint8_t)s_tconst[p & 15];
+            break;
+        case RREF_TEXCONST_A: *a = (uint8_t)(s_tconst[p & 15] >> 24); break;
     }
 }
 
@@ -404,11 +414,71 @@ static int test_sepia(void) {
     return bad || p.approximated;
 }
 
+/* Main Plaza trace: shadow (COLOR1 x map), lit colour into REG0, diffuse,
+ * + incandescence (8x8 black), REG2 = reflectivity (8x8 I8) + ras x it,
+ * + REG2 x reflection map, x K0 */
+static int test_gun(void) {
+    static const uint8_t cin[7][4] = { { 15, 10, 8, 15 }, { 15, 10, 12, 2 }, { 15, 2, 8, 15 }, { 15, 8, 12, 0 },
+                                       { 15, 10, 9, 8 },  { 15, 6, 8, 0 },   { 15, 14, 0, 15 } };
+    static const uint8_t ain[7][4] = { { 7, 7, 7, 5 }, { 7, 5, 6, 1 }, { 7, 7, 7, 4 }, { 7, 7, 7, 6 },
+                                       { 7, 7, 7, 6 }, { 7, 7, 7, 0 }, { 7, 6, 0, 7 } };
+    static const int8_t unit[7] = { 0, -1, 1, -1, -1, 2, -1 };
+    static const uint8_t tconst[7] = { 0, 0, 0, 1, 1, 0, 0 };
+    static const uint8_t ras[7] = { 1, 0, 0, 2, 0, 2, 2 };
+    static const uint8_t out[7] = { 1, 1, 0, 0, 3, 0, 0 };
+    RcCfg c;
+    RcProg p;
+    Regs g;
+    int s, k, t, bad = 0;
+    memset(&c, 0, sizeof c);
+    c.nstages = 7;
+    for (s = 0; s < 7; s++) {
+        RcStage* r = &c.st[s];
+        memcpy(r->cin, cin[s], 4);
+        memcpy(r->ain, ain[s], 4);
+        r->cclamp = r->aclamp = 1;
+        r->cout = r->aout = out[s];
+        r->kcsel = 0x0C;
+        r->kasel = 0x1C;
+        r->unit = unit[s];
+        r->tconst = tconst[s];
+        r->ras = ras[s];
+        r->tex_swz = r->ras_swz = RC_SWZ_ID;
+    }
+    finish_cfg(&c);
+    rc_compile(&c, &p);
+    for (k = 0; k < 4; k++) s_konst[0][k] = 255;
+    for (t = 0; t < 200; t++) {
+        float o[4], want[3], i8 = (float)(rnd() % 256) / 255.0f;
+        uint8_t iv = (uint8_t)(i8 * 255.0f + 0.5f);
+        rand_regs(&g);
+        s_tconst[3] = 0xFF000000u;   /* black, alpha 1 */
+        s_tconst[4] = (uint32_t)iv << 24 | (uint32_t)iv << 16 | (uint32_t)iv << 8 | iv;
+        i8 = iv / 255.0f;
+        for (k = 0; k < 3; k++) {
+            float r0 = clamp01(g.r[5][k] * g.r[8][k]);
+            float prev, r2;
+            r0 = clamp01(g.r[4][k] + r0);
+            prev = clamp01(r0 * g.r[9][k]);
+            r2 = clamp01(i8 + g.r[4][k] * i8);
+            prev = clamp01(prev + r2 * g.r[10][k]);
+            want[k] = prev;
+        }
+        run(&p, &g, o);
+        for (k = 0; k < 3; k++)
+            if (fabsf(o[k] - want[k]) > 1e-4f) bad = 1;
+    }
+    printf("arm cannon + shadow: %d combiner stages%s %s\n", p.nstages, p.approximated ? ", approximated" : "",
+           bad || p.approximated ? "FAIL" : "ok");
+    return bad || p.approximated;
+}
+
 int main(int argc, char** argv) {
     int n = argc > 1 ? atoi(argv[1]) : 200000, fail = 0;
     fail += test_unchanged(n);
     fail += test_swizzles(n);
     fail += test_sepia();
+    fail += test_gun();
     printf("%s\n", fail ? "FAILED" : "all passed");
     return fail ? 1 : 0;
 }

@@ -16,7 +16,8 @@ typedef struct {
     /* swap tables (GXSetTevSwapMode): the source channel of r, g, b and a,
      * two bits each from bit 0; RC_SWZ_ID passes them through */
     uint8_t tex_swz, ras_swz;
-    uint8_t pad;
+    uint8_t tconst;    /* unit -1 and TEXC/TEXA from the draw's constant for this stage
+                          (RREF_TEXCONST: a uniform texture, or one past four units) */
 } RcStage;
 
 #define RC_SWZ_ID 0xE4   /* r g b a = 0 1 2 3 */
@@ -38,6 +39,8 @@ enum {
     RREF_KONST_A,      /* param: kasel */
     RREF_FIXED,        /* param: index into nv2a.c's k_rc_fixed (rgb and a): 0-3 the movie's
                           YUV program, 4-6 the unit vectors r, g, b (swap-table dot products) */
+    RREF_TEXCONST_C,   /* param: TEV stage; its texture's colour, swap table applied (nv2a.c) */
+    RREF_TEXCONST_A,
 };
 #define RREF(t, p) ((uint16_t)(((t) << 8) | ((p) & 0xFF)))
 

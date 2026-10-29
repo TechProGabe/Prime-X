@@ -1639,12 +1639,22 @@ int gx_dlc_evict_spilled(int max) {
     return n;
 }
 
+/* Only lists not drawn for DLC_EVICT_AGE frames go. When a room's lists
+ * need more than the pool, least-recently-used eviction turns over the
+ * whole cache every frame: each list is evicted just before it is drawn
+ * again, and every call rebuilds (round hw6: 31 builds a frame, 34 ms of
+ * display lists, 17 fps). With an age floor the lists that fit stay
+ * cached and only the overflow draws uncached; a room change still frees
+ * the last room's lists after a few frames. */
+#ifndef DLC_EVICT_AGE
+#define DLC_EVICT_AGE 3
+#endif
 static int dlc_evict_one(uint32_t frame, const DlEntry* keep) {
     int i, pick = -1, skip = keep ? (int)(keep - s_dlc) : -1;
     uint32_t best = DLC_FREE;
     for (i = 0; i < DLC_MAX; i++) {
         uint32_t u = s_dlc_lru[i];
-        if (u < best && u != frame && i != skip) {
+        if (u < best && frame - u >= DLC_EVICT_AGE && i != skip) {
             best = u;
             pick = i;
         }

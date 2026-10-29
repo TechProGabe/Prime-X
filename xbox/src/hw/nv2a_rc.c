@@ -451,6 +451,14 @@ void rc_compile(const RcCfg* cfg, RcProg* out) {
 
         x.ts = ts;
         view_init(&x.tex, ts->unit >= 0 ? (uint8_t)(S_T0 + ts->unit) : 0, ts->tex_swz, OP_ONE);
+        if (ts->unit < 0 && ts->tconst) {   /* the texture's colour as a constant */
+            x.tex.c.cref = RREF(RREF_TEXCONST_C, s);
+            x.tex.c.map = M_UID;
+            x.tex.c.alpha = 0;
+            x.tex.a.cref = RREF(RREF_TEXCONST_A, s);
+            x.tex.a.map = M_UID;
+            x.tex.a.alpha = 1;
+        }
         view_init(&x.ras, ts->ras == 2 ? 0 : ts->ras ? S_V1 : S_V0, ts->ras_swz, OP_ZERO);
         for (k = 0; k < 4; k++) {
             if (ts->cin[k] >= 8 && ts->cin[k] <= 11) want[ts->cin[k] - 8] = 1;

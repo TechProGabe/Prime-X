@@ -666,12 +666,42 @@ static uint32_t upload_now(const TexObj* o, const TlutObj* tl, uint32_t levels, 
     return tex;
 }
 
+/* The texels' average colour and whether they are all one colour
+ * (xgx_tex_set_color), from the first level of 32x32 or fewer texels; a
+ * texture without such a level, or with a palette (it can change), stays
+ * unknown. Uniform only when that level is level 0. */
+static void color_info(const TexObj* o, const TlutObj* tl, uint32_t levels, uint32_t tex) {
+    uint32_t buf[1024], w = o->w, h = o->h, l = 0, n, i, sum[4] = { 0, 0, 0, 0 };
+    const uint8_t* src = o->data;
+    int uni = 1;
+    if (o->is_ci) return;
+    while (w * h > 1024 && l + 1 < levels) {
+        src += level_bytes(o->fmt, w, h);
+        w = w > 1 ? w / 2 : 1;
+        h = h > 1 ? h / 2 : 1;
+        l++;
+    }
+    if (w * h > 1024) return;
+    decode_level(src, o->fmt, w, h, tl, buf);
+    n = w * h;
+    for (i = 0; i < n; i++) {
+        uint32_t c = buf[i];
+        sum[0] += c >> 24;
+        sum[1] += c >> 16 & 255;
+        sum[2] += c >> 8 & 255;
+        sum[3] += c & 255;
+        if (c != buf[0]) uni = 0;
+    }
+    xgx_tex_set_color(tex, argb(sum[0] / n, sum[1] / n, sum[2] / n, sum[3] / n), uni && l == 0);
+}
+
 /* out of line: the decoders would otherwise land in the middle of the bind
  * path, which runs some 600 times a frame and uploads a few times a second */
 __attribute__((noinline)) static uint32_t upload(const TexObj* o, const TlutObj* tl, uint32_t levels,
                                                  uint32_t bytes) {
     int pf = xhw_perf_enter(XHW_PERF_TEX);
     uint32_t tex = upload_now(o, tl, levels, bytes);
+    if (tex) color_info(o, tl, levels, tex);
     xhw_perf_leave(pf);
     return tex;
 }

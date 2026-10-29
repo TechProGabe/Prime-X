@@ -13,14 +13,14 @@ Every item is checked against Dolphin: the same spot, the same visor,
 | feature | game code | Melee-X has | work for Prime | status |
 |---|---|---|---|---|
 | world and actor geometry from big-endian display lists | `CCubeModel`, `CCubeSurface`, `CCubeMaterial` | BE display lists, DL vertex cache, merged draws | Prime's vertex formats and material flags | not started |
-| up to 8 TEV stages, konst colours, swap tables | `CCubeMaterial`, `CGX` | TEV -> register combiners (8 stages) | check the longest Prime materials fit; log any that don't | not started |
+| up to 8 TEV stages, konst colours, swap tables | `CCubeMaterial`, `CGX` | TEV -> register combiners (8 stages) | check the longest Prime materials fit; log any that don't | the NV2A has 4 texture units: a uniform texture (Prime's 8x8 incandescence and reflectivity maps) is read as a combiner constant, and a stage still left without a unit reads its texture's average colour (it read white: the arm cannon with its world shadow has five textures, and drew white in Chozo and Magmoor). Host test: `test_rc.py` "arm cannon + shadow" |
 | lightmaps, reflection (env) maps, punch-through, additive | `CCubeMaterial` | texgen in vertex programs | Prime's texgen and texture matrices (`CGX::SetTexMtx`) | not started |
-| lighting: up to 8 lights, distance/angle attenuation | `CGraphics::SetLightState` | GX lighting in vertex programs | Prime's light setups; vertex-program length | not started |
+| lighting: up to 8 lights, distance/angle attenuation | `CGraphics::SetLightState` | GX lighting in vertex programs | Prime's light setups; vertex-program length | works; `CGX::SetNumChans` reaches GX since `x4c_flags` was laid out for x86 (it never did: the count was whatever a direct `GXSetNumChans` left, and the scene washed out after Morph Ball) |
 | CPU-skinned models into host-endian arrays | `CSkinnedModel`, `CSkinRules` | `GXSetArray` on BE data | aurora's little-endian array flag and byte size; draw-sync tokens that free the workspace only when drawn; then GPU skinning (`docs/performance.md`) | not started |
 | room fog, `GXSetFogRangeAdj` | `CGraphics`, `CStateManager` | `nv2a_fog.c` | compare ranges at 16:9 | not started |
 | fog volumes | `CCubeRenderer::DrawFogVolume*`, `CFogVolume*` | Z textures | depth-based ramp on the NV2A | not started |
 | EFB copies: camera filters and blur | `CCameraFilter`, `CCameraBlurPass`, `CPauseScreenBlur` | GPU EFB copies | sizes, formats (I8, RGB565, RGBA8), mip/scale | not started |
-| EFB copies: shadows | `CWorldShadow`, `CProjectedShadow`, `CMorphBallShadow` | GPU EFB copies | render-to-texture regions | not started |
+| EFB copies: shadows | `CWorldShadow`, `CProjectedShadow`, `CMorphBallShadow` | GPU EFB copies | render-to-texture regions | the gun's world shadow draws (COLOR1 lit by the shadow light); `GXSetDstAlpha` isn't implemented, so Morph Ball's shadow IDs in alpha are all one value |
 | EFB copies: transitions, space warp | `CWorldTransManager`, `CCubeRenderer` | | | not started |
 | thermal visor | `CPlayerVisor`, `CCubeRenderer` (thermal hot/cold passes) | C4/C8 palettes, EFB copies | I8 EFB copy read through a palette (TLUT on a copied texture) | not started |
 | X-ray visor | `CPlayerVisor`, `CCubeRenderer` | | X-ray draw passes and blur | not started |

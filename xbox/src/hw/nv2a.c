@@ -724,6 +724,9 @@ typedef struct {
     uint32_t pal;           /* P8: SET_TEXTURE_PALETTE value; 0: none */
     uint32_t gen;           /* bumped per texture made: a new one at a freed one's address differs */
     uint8_t mask_rgb;       /* a 16-bit Z-texture mask: in rgb, alpha reads 1 (xgx_tex_from_efb) */
+    uint8_t color_known;    /* avg below came from the texels (xgx_tex_set_color) */
+    uint8_t uniform;        /* every texel is avg */
+    uint32_t avg;           /* A8R8G8B8 */
 } Tex;
 static Tex s_tex[MAX_TEX];
 static uint32_t s_tex_epoch;   /* bumped whenever an s_tex entry changes (emit_textures' memo) */
@@ -904,6 +907,8 @@ static int alloc_handle(void) {
         if (c >= MAX_TEX) c = 1 + (c % (MAX_TEX - 1));
         if (!s_tex[c].used) {
             s_tex_next = c + 1;
+            s_tex[c].color_known = s_tex[c].uniform = 0;
+            s_tex[c].avg = 0xFFFFFFFFu;
             return c;
         }
     }
@@ -1066,6 +1071,13 @@ void xgx_tex_pool_shrink(void) {
     if (s_tp2.used) return;   /* something still lives there: next time */
     pool_release(&s_tp2);
     xhw_logf("[TEX] overflow pool released (free %u KB)", xhw_mem_free_kb());
+}
+
+void xgx_tex_set_color(uint32_t tex, uint32_t avg_argb, int uniform) {
+    if (!tex || tex >= MAX_TEX || !s_tex[tex].used) return;
+    s_tex[tex].avg = avg_argb;
+    s_tex[tex].uniform = (uint8_t)(uniform != 0);
+    s_tex[tex].color_known = 1;
 }
 
 uint32_t xgx_tex_palette(uint32_t tex) {
@@ -2254,6 +2266,10 @@ static const uint8_t k_rc_fixed[8][4] = {
     { 0, 0, 0, 0 },
 };
 
+/* per TEV stage: the colour a texture-constant stage reads (derive_units) */
+static uint32_t s_d_tconst[RC_MAX_TEV];
+static int s_d_any_tconst;
+
 static void ref_val(const XgxState* st, uint16_t ref, uint8_t rgb[3], uint8_t* a) {
     int t = ref >> 8, p = ref & 0xFF, k;
     switch (t) {
@@ -2271,6 +2287,12 @@ static void ref_val(const XgxState* st, uint16_t ref, uint8_t rgb[3], uint8_t* a
             else if (p >= 0x10) rgb[0] = rgb[1] = rgb[2] = st->konst[(p - 0x10) & 3][((p - 0x10) >> 2) & 3];
             else rgb[0] = rgb[1] = rgb[2] = 0;
             break;
+        case RREF_TEXCONST_C:
+            rgb[0] = (uint8_t)(s_d_tconst[p % RC_MAX_TEV] >> 16);
+            rgb[1] = (uint8_t)(s_d_tconst[p % RC_MAX_TEV] >> 8);
+            rgb[2] = (uint8_t)s_d_tconst[p % RC_MAX_TEV];
+            break;
+        case RREF_TEXCONST_A: *a = (uint8_t)(s_d_tconst[p % RC_MAX_TEV] >> 24); break;
         case RREF_KONST_A:
             if (p <= 7) *a = (uint8_t)(255 * (8 - p) / 8);
             else if (p >= 0x10) *a = st->konst[(p - 0x10) & 3][((p - 0x10) >> 2) & 3];
@@ -3042,6 +3064,21 @@ static uint32_t bound_maps(const XgxState* st) {
     return m;
 }
 
+static int tex_uniform(uint32_t tex) { return tex < MAX_TEX && s_tex[tex].used && s_tex[tex].uniform; }
+
+static int maps_uniform(const XgxState* st) {
+    int i;
+    for (i = 0; i < XGX_MAX_MAPS; i++)
+        if (st->map[i].tex && tex_uniform(st->map[i].tex)) return 1;
+    return 0;
+}
+
+/* A8R8G8B8 through a TEV swap table (source channel of r, g, b, a) */
+static uint32_t swap_color(uint32_t argb, const uint8_t* swp) {
+    uint8_t c[4] = { (uint8_t)(argb >> 16), (uint8_t)(argb >> 8), (uint8_t)argb, (uint8_t)(argb >> 24) };
+    return (uint32_t)c[swp[3] & 3] << 24 | (uint32_t)c[swp[0] & 3] << 16 | (uint32_t)c[swp[1] & 3] << 8 | c[swp[2] & 3];
+}
+
 /* texture units (one per distinct texcoord/texmap the TEV samples) and the combiner setup */
 static void derive_units(const XgxState* st) {
     RcCfg* rc = &s_d_rc;
@@ -3051,6 +3088,7 @@ static void derive_units(const XgxState* st) {
     int ind_unit[4] = { -1, -1, -1, -1 };   /* per indirect stage: the unit its map is drawn on */
     uint8_t ind_use = 0;                    /* TEV stages drawn with their indirect offset */
     s_d_unit_miss = 0;
+    s_d_any_tconst = 0;
     s_d_nbump = 0;
     memset(s_d_unit_kind, 0, sizeof s_d_unit_kind);
     memset(s_d_unit_tex, 0, sizeof s_d_unit_tex);
@@ -3124,7 +3162,14 @@ static void derive_units(const XgxState* st) {
         r->ras = t->chan == GX_COLOR0A0 ? 0 : t->chan == GX_COLOR1A1 ? 1 : 2;
         r->ras_swz = r->ras == 2 ? RC_SWZ_ID : swap_bits(st->swap[t->ras_swap & 3]);
         if (!(emboss >> s & 1) && t->texmap != GX_NULL && t->texmap < XGX_MAX_MAPS && t->texcoord != GX_NULL &&
-            st->map[t->texmap].tex) {
+            st->map[t->texmap].tex && !(ind_use >> s & 1) && !(st->ztex && s == rc->nstages - 1) &&
+            tex_uniform(st->map[t->texmap].tex)) {
+            /* every texel the same colour: a constant, no texture unit */
+            r->tconst = 1;
+            s_d_tconst[s] = swap_color(s_tex[st->map[t->texmap].tex].avg, st->swap[t->tex_swap & 3]);
+            s_d_any_tconst = 1;
+        } else if (!(emboss >> s & 1) && t->texmap != GX_NULL && t->texmap < XGX_MAX_MAPS &&
+                   t->texcoord != GX_NULL && st->map[t->texmap].tex) {
             if ((ind_use >> s & 1) && nunits < 4) {   /* a unit of its own, offset by its indirect map's */
                 u = nunits++;
                 s_d_unit_map[u] = (int)t->texmap;
@@ -3144,7 +3189,19 @@ static void derive_units(const XgxState* st) {
                 s_d_unit_map[u] = (int)t->texmap;
                 s_d_unit_tc[u] = (int)t->texcoord;
             }
-            if (u < 0) s_d_unit_miss++;
+            if (u < 0) {
+                /* more textures than units: the texture's average colour,
+                 * not white (the arm cannon's reflection map in Chozo and
+                 * Magmoor, a 5th texture with its shadow map, added a
+                 * whole reflectivity and drew the gun white) */
+                uint32_t tx = st->map[t->texmap].tex;
+                s_d_unit_miss++;
+                if (tx < MAX_TEX && s_tex[tx].used && s_tex[tx].color_known) {
+                    r->tconst = 1;
+                    s_d_tconst[s] = swap_color(s_tex[tx].avg, st->swap[t->tex_swap & 3]);
+                    s_d_any_tconst = 1;
+                }
+            }
         }
         r->unit = (int8_t)u;
         r->tex_swz = u < 0 ? RC_SWZ_ID : swap_bits(st->swap[t->tex_swap & 3]);
@@ -3310,8 +3367,9 @@ void xgx_draw(uint32_t prim, uint32_t count, const XgxLayout* layout, XgxState* 
      * which maps hold a texture. A draw that only rebinds textures (MAPS
      * alone, the common case) to the same maps derives the same units;
      * with a Z texture the mask's kind (mask_rgb) is read from the map. */
-    if ((d & DIRTY_UNITS) &&
-        ((d & (XGX_DIRTY_TEV | XGX_DIRTY_TEXGEN)) || st->nind || st->ztex || bound_maps(st) != s_d_maps))
+    /* (a uniform texture bound or unbound changes the units too) */
+    if ((d & DIRTY_UNITS) && ((d & (XGX_DIRTY_TEV | XGX_DIRTY_TEXGEN)) || st->nind || st->ztex ||
+                              bound_maps(st) != s_d_maps || s_d_any_tconst || maps_uniform(st)))
         derive_units(st);
     if ((d & DIRTY_VK) || lay != s_d_layout) {
         VpKey old = s_d_vk;
@@ -3349,7 +3407,8 @@ void xgx_draw(uint32_t prim, uint32_t count, const XgxLayout* layout, XgxState* 
 
     if (d & DIRTY_FIXED) emit_fixed(st);
     if (d & DIRTY_UNITS) emit_textures(st, s_d_unit_map, s_d_nunits);
-    if (d & (DIRTY_UNITS | XGX_DIRTY_TEVREG)) emit_combiners(st, s_d_rp, (d & XGX_DIRTY_TEVREG) != 0);
+    if (d & (DIRTY_UNITS | XGX_DIRTY_TEVREG))
+        emit_combiners(st, s_d_rp, (d & XGX_DIRTY_TEVREG) != 0 || s_d_any_tconst);
 
     /* The vertices are at s_draw_base (xgx_vtx_alloc or xgx_vtx_use). The
      * arrays point at the start of the ring or of the vertex pool, and the
