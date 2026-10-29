@@ -18,6 +18,19 @@ export PATH="$LLVM/bin:$PATH"
 eval "$("$NXDK_DIR/bin/activate" -s)"
 pgo="${XBOX_PGO:-}"
 case "$pgo" in ""|gen|/*|?:*) ;; *) pgo="$root/$pgo" ;; esac   # a profile path relative to the checkout
+# A new profile reaches every object: ninja only rebuilds what changed, and
+# objects built with two profiles don't link ("linking module flags
+# 'ProfileSummary': IDs have conflicting values"). The profile's checksum
+# is kept in the build folder; a different one starts the folder over.
+if [ -n "$pgo" ] && [ "$pgo" != gen ] && [ -f "$pgo" ]; then
+  sum="$(cksum < "$pgo")"
+  if [ -d "$bdir" ] && [ "$(cat "$bdir/.profdata.sum" 2>/dev/null)" != "$sum" ]; then
+    echo "build.sh: new PGO profile, $bdir starts over"
+    rm -rf "$bdir"
+  fi
+  mkdir -p "$bdir"
+  echo "$sum" > "$bdir/.profdata.sum"
+fi
 cmake -S "$root" -B "$bdir" -G Ninja \
   -DCMAKE_TOOLCHAIN_FILE="$NXDK_DIR/share/toolchain-nxdk.cmake" \
   -DCMAKE_C_FLAGS="${XBOX_CFLAGS:-}" -DCMAKE_CXX_FLAGS="${XBOX_CFLAGS:-}" \

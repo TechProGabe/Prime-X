@@ -76,3 +76,8 @@ whole-match sampling profiles; Prime's profiler doesn't log those, so this
 one takes the PGO counts. Linked only into builds that use the profile
 (`-order:@xbox/order.txt`, unknown names skipped). The first one: 4542
 functions, 1.67 MB of the LTO + PGO build.
+
+A new `xbox/prime.profdata` restarts the `-pgo` build folder
+(`xbox/build.sh` keeps the profile's checksum in it): objects compiled
+with two different profiles don't link ("linking module flags
+'ProfileSummary': IDs have conflicting values").
