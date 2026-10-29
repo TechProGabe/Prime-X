@@ -145,7 +145,8 @@ Done 2026-10-28 (afternoon and evening), newest first:
 
 ## Next session, in order
 
-1. **Console round hw9, staged 2026-10-29** (the user asked):
+1. **Console round hw9, on red since 2026-10-29** (the user asked; what was
+   there before in `logs-hw9pre`):
    `tools/xbox/scenarios/hw9` (README there): hw7's chain again on the
    charge beam fix, the Port Options grid and the 4 MB dynamic budget, with
    hw8's prefetch and rain changes (only r8g ran in hw8). Images
