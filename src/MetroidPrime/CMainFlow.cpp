@@ -19,6 +19,9 @@
 #include "port_debug.h"
 #include "port_discord.h"
 #include "port_savestate.h"
+#ifdef TARGET_XBOX
+#include "port_log.h" // PORT_XBOX: PX_CARD_FILE's log line
+#endif
 
 #include <stdio.h>
 
@@ -143,6 +146,17 @@ void CMainFlow::SetGameState(EClientFlowStates state, CArchitectureQueue& queue)
           ps.IncrPickUp(t, n);
         }
         fprintf(stderr, "[boot-world] every item (PX_ALL_ITEMS)\n");
+      }
+      // PORT_XBOX: "env PX_CARD_FILE=<0-2>": the game is that file of the
+      // memory card, as the file select would make it, so a save station
+      // offers to save (it offers nothing to a game without a card serial):
+      // the save round trip in xemu (docs/testing.md)
+      if (const char* f = getenv("PX_CARD_FILE")) {
+        u64 serial = 0;
+        CARDGetSerialNo(0, &serial);
+        gpGameState->SetCardSerial(serial);
+        gpGameState->SetFileIdx(static_cast< u32 >(atoi(f)));
+        PortLog::Write("[TEST] boot-world game is card file %d\n", atoi(f));
       }
 #endif
       gpGameState->WriteBackupBuf();
