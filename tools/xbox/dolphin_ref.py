@@ -8,6 +8,7 @@ reference frames").
   python tools/xbox/dolphin_ref.py 39F2DE28:B9ABCD56         # <MLVL>[:<MREA>] (prime_rooms.py)
   python tools/xbox/dolphin_ref.py plaza --secs 120 --every 2
   python tools/xbox/dolphin_ref.py plaza --gui               # Dolphin's window, to play it yourself
+  python tools/xbox/dolphin_ref.py iceruins --visor thermal   # a visor held (scan, xray, thermal)
 
 How it gets there, no save and no input needed: two Gecko codes on the
 retail executable (GM8E01 rev 0, addresses from PrimeDecomp's symbols.txt):
@@ -105,6 +106,20 @@ def gecko(world, area):
     return c2(SET_GAME_STATE_HOOK, skip_front_end, 1) + c2(SET_WORLD_HOOK, to_room, 3)
 
 
+VISORS = {'combat': 0, 'xray': 1, 'scan': 2, 'thermal': 3}
+
+
+def visor_code(visor):
+    """Every frame: CPlayerState's current and transitioning visor (x14, x18)
+    = visor, through gpGameState -> x98_playerState (an rc_ptr: its CRefData,
+    then the object). Pointer codes, each step checked to be in MEM1."""
+    return ['48000000 %08X' % GP_GAME_STATE, 'DE000000 80008180',
+            '58010000 00000098', 'DE000000 80008180',
+            '58010000 00000000', 'DE000000 80008180',
+            '14000014 %08X' % visor, '14000018 %08X' % visor,
+            'E0000000 80008000']
+
+
 def write_ini(path, sections):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, 'w', newline='\n') as f:
@@ -114,7 +129,7 @@ def write_ini(path, sections):
                 f.write(line + '\n')
 
 
-def setup_user(user, world, area):
+def setup_user(user, world, area, visor=None):
     write_ini(os.path.join(user, 'Config', 'Dolphin.ini'), [
         ('Analytics', ['Enabled = False', 'PermissionAsked = True']),
         ('AutoUpdate', ['UpdateTrack = ']),
@@ -128,10 +143,12 @@ def setup_user(user, world, area):
         ('Settings', ['InternalResolution = 1', 'AspectRatio = 2', 'InternalResolutionFrameDumps = True',
                       'DumpCodec = ffv1', 'DumpFormat = avi']),
     ])
-    write_ini(os.path.join(user, 'GameSettings', 'GM8E01.ini'), [
-        ('Gecko', ['$Prime-X boot room'] + gecko(world, area)),
-        ('Gecko_Enabled', ['$Prime-X boot room']),
-    ])
+    codes = ['$Prime-X boot room'] + gecko(world, area)
+    enabled = ['$Prime-X boot room']
+    if visor is not None:
+        codes += ['$Prime-X visor'] + visor_code(visor)
+        enabled += ['$Prime-X visor']
+    write_ini(os.path.join(user, 'GameSettings', 'GM8E01.ini'), [('Gecko', codes), ('Gecko_Enabled', enabled)])
 
 
 def main():
@@ -144,14 +161,17 @@ def main():
     ap.add_argument('--iso', default=ISO)
     ap.add_argument('--user', default=USER)
     ap.add_argument('--gui', action='store_true', help="Dolphin's window, no dump: play it yourself")
+    ap.add_argument('--visor', choices=sorted(VISORS), help='hold this visor (written every frame)')
     args = ap.parse_args()
 
     spec = ROOMS.get(args.room.lower(), args.room)
     world, _, area = spec.partition(':')
     world, area = int(world, 16), int(area, 16) if area else 0xFFFFFFFF
     name = args.room.lower() if args.room.lower() in ROOMS else spec.replace(':', '_')
+    if args.visor:
+        name += '_' + args.visor
     user = os.path.abspath(args.user)
-    setup_user(user, world, area)
+    setup_user(user, world, area, VISORS.get(args.visor))
     print('[dolphin] world %08X area %08X, user folder %s' % (world, area, user))
 
     if args.gui:

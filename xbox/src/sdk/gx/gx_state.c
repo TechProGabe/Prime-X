@@ -813,6 +813,23 @@ void GXSetFog(GXFogType type, f32 startz, f32 endz, f32 nearz, f32 farz, GXColor
     DIRTY(XGX_DIRTY_FOG);
 }
 
+/* SDK GXSetFogColor (the colour register alone). Prime's CGX::update_fog
+ * sets it black while the blend adds to the frame (destination factor
+ * ONE) and back after: the fog of an additive effect adds nothing. A
+ * no-op until 2026-10-30, so fog's colour was added over every additive
+ * quad in fog (the landing cinematic's glow drew in a light square). */
+void GXSetFogColor(GXColor color) {
+    if (g_xgx.fog_color[0] == color.r && g_xgx.fog_color[1] == color.g && g_xgx.fog_color[2] == color.b &&
+        g_xgx.fog_color[3] == color.a)
+        return;
+    FLUSH();
+    g_xgx.fog_color[0] = color.r;
+    g_xgx.fog_color[1] = color.g;
+    g_xgx.fog_color[2] = color.b;
+    g_xgx.fog_color[3] = color.a;
+    DIRTY(XGX_DIRTY_FOG);
+}
+
 /* not applied: fog stays planar depth, without GX's horizontal correction */
 void GXSetFogRangeAdj(GXBool enable, u16 center, GXFogAdjTable* table) { (void)enable; (void)center; (void)table; }
 
