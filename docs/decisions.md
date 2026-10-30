@@ -156,6 +156,11 @@ combiners; ThinLTO + PGO for releases.
     default 3 since round hw13): A/B on red, same code, same scenes:
     pirates 32.2 -> 33.4 fps, Main Plaza 36.3 -> 36.7, Lava Lake 40.9 ->
     41.6, Landing Site 35.8 -> 36.7; no fault in either image.
+  - Texture-only draws (`XGX_MAPS_FAST`, `-DXGX_MAPS_FAST=0`): when only
+    the bound textures changed and the texture units stayed the same, the
+    vertex program's key and the texgen rows are not worked out again (the
+    rows are when a unit's linear texture changed size). The same constants
+    and program either way.
   - The rain's lines (M5): `GXPortRainLines` keeps its batch's box, and
     `clip_lines` tests the box's corners once; a batch wholly inside skips
     the per-line test (`-DXGX_LINE_BOX=0`). Same vertices drawn.
