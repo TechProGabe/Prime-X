@@ -503,10 +503,110 @@ static void HandleReverbChannel(s32* sptr, _SND_REVSTD_WORK* rv, s32 k) {
   }
 }
 
+#ifdef TARGET_XBOX
+/* PORT_XBOX: HandleReverbChannel with the coefficients and the delay lines'
+ * state in locals: through the pointers every sample was a reload (a write
+ * to a delay line may alias rv for the compiler), 18% of the mixer thread
+ * in a fight on the console (round hw11). The same operations in the same
+ * order: the same bits (tools/xbox/test_mixer.py). */
+typedef struct {
+  f32* buf;
+  s32 in, out, len; /* in floats */
+  f32 last;
+} PortRevLine;
+
+static inline void PortRevLoad(PortRevLine* l, const _SND_REVSTD_DELAYLINE* dl) {
+  l->buf = dl->inputs;
+  l->in = dl->inPoint / (s32)sizeof(f32);
+  l->out = dl->outPoint / (s32)sizeof(f32);
+  l->len = dl->length; /* bytes: compared against points in bytes, as below */
+  l->last = dl->lastOutput;
+}
+
+static inline void PortRevStore(const PortRevLine* l, _SND_REVSTD_DELAYLINE* dl) {
+  dl->inPoint = l->in * (s32)sizeof(f32);
+  dl->outPoint = l->out * (s32)sizeof(f32);
+  dl->lastOutput = l->last;
+}
+
+static inline void PortRevWrite(PortRevLine* l, f32 sample) {
+  l->buf[l->in] = sample;
+  if ((++l->in) * (s32)sizeof(f32) >= l->len)
+    l->in = 0;
+}
+
+static inline f32 PortRevRead(PortRevLine* l) {
+  const f32 sample = l->buf[l->out];
+  if ((++l->out) * (s32)sizeof(f32) >= l->len)
+    l->out = 0;
+  l->last = sample;
+  return sample;
+}
+
+static void PortHandleReverbChannel(s32* sptr, _SND_REVSTD_WORK* rv, s32 k) {
+  const f32 dampWet = rv->level * 0.6f;
+  const f32 dampDry = 0.6f - dampWet;
+  const f32 coef0 = rv->combCoef[k * 2], coef1 = rv->combCoef[k * 2 + 1];
+  const f32 apc = rv->allPassCoeff, damping = rv->damping;
+  f32 lp = rv->lpLastout[k];
+  PortRevLine c0, c1, a0, a1;
+  const s32 preTime = rv->preDelayTime;
+  f32* pre = rv->preDelayPtr[k];
+  f32* const preStart = rv->preDelayLine[k];
+  f32* const preEnd = preTime != 0 ? preStart + preTime : NULL;
+  s32 i;
+  PortRevLoad(&c0, &rv->C[k * 2]);
+  PortRevLoad(&c1, &rv->C[k * 2 + 1]);
+  PortRevLoad(&a0, &rv->AP[k * 2]);
+  PortRevLoad(&a1, &rv->AP[k * 2 + 1]);
+  for (i = 0; i < 160; ++i) {
+    const f32 sample = (f32)sptr[i];
+    f32 delayed = sample;
+    f32 combSum, a0Last, a0Input, lowPass, a1Last, a1Input, allPass;
+    if (preTime != 0) {
+      delayed = *pre;
+      *pre = sample;
+      if (++pre >= preEnd)
+        pre = preStart;
+    }
+    PortRevWrite(&c0, coef0 * c0.last + delayed);
+    PortRevWrite(&c1, coef1 * c1.last + delayed);
+    combSum = PortRevRead(&c0);
+    combSum = combSum + PortRevRead(&c1);
+    a0Last = a0.last;
+    a0Input = apc * a0Last + combSum;
+    PortRevWrite(&a0, a0Input);
+    lowPass = a0Last - apc * a0Input;
+    PortRevRead(&a0);
+    lowPass *= 0.3f;
+    lp = damping * lp + lowPass;
+    a1Last = a1.last;
+    a1Input = apc * a1Last + lp;
+    PortRevWrite(&a1, a1Input);
+    allPass = a1Last - apc * a1Input;
+    PortRevRead(&a1);
+    sptr[i] = (s32)(dampDry * sample + dampWet * allPass);
+  }
+  PortRevStore(&c0, &rv->C[k * 2]);
+  PortRevStore(&c1, &rv->C[k * 2 + 1]);
+  PortRevStore(&a0, &rv->AP[k * 2]);
+  PortRevStore(&a1, &rv->AP[k * 2 + 1]);
+  rv->lpLastout[k] = lp;
+  if (preTime != 0)
+    rv->preDelayPtr[k] = pre;
+}
+#endif
+
 static void HandleReverb(s32* sptr, _SND_REVSTD_WORK* rv) {
+#ifdef TARGET_XBOX
+  PortHandleReverbChannel(sptr, rv, 0); /* PORT_XBOX: the same in locals */
+  PortHandleReverbChannel(sptr + 160, rv, 1);
+  PortHandleReverbChannel(sptr + 320, rv, 2);
+#else
   HandleReverbChannel(sptr, rv, 0);
   HandleReverbChannel(sptr + 160, rv, 1);
   HandleReverbChannel(sptr + 320, rv, 2);
+#endif
 }
 #endif
 

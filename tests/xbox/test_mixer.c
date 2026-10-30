@@ -92,5 +92,37 @@ int main(void) {
       fails += tapFails;
     }
   }
+  /* DSP-ADPCM: pxAdpcmSample32 against musyxPcAdpcmSample wherever
+   * pxAdpcmFits32 allows it, edges included */
+  {
+    long afails = 0, atrials = 0;
+    for (t = 0; t < 200000; ++t) {
+      int16_t coef[8][2], h1a, h2a, h1b, h2b;
+      uint8_t block[8];
+      const int edge = rnd() % 8 == 0;
+      int p;
+      for (p = 0; p < 8; ++p) {
+        coef[p][0] = (int16_t)(edge ? ((rnd() & 1) ? 32767 : -32768) : (int32_t)(rnd() % 16385) - 8192);
+        coef[p][1] = (int16_t)(edge ? ((rnd() & 1) ? 16383 : -16384) : (int32_t)(rnd() % 16385) - 8192);
+      }
+      if (!pxAdpcmFits32((const int16_t(*)[2])coef)) continue;
+      for (i = 0; i < 8; ++i) block[i] = (uint8_t)rnd();
+      h1a = h1b = (int16_t)pick16();
+      h2a = h2b = (int16_t)pick16();
+      for (i = 0; i < 14; ++i) {
+        const uint8_t ps = (uint8_t)((rnd() & 0x70) | (edge ? 15 : rnd() % 16));
+        const int16_t a = musyxPcAdpcmSample(block, (unsigned)i, ps, (const int16_t(*)[2])coef, &h1a, &h2a);
+        const int16_t b = pxAdpcmSample32(block, (unsigned)i, ps, (const int16_t(*)[2])coef, &h1b, &h2b);
+        ++atrials;
+        if (a != b || h1a != h1b || h2a != h2b) {
+          if (afails++ < 5) printf("adpcm mismatch: %d vs %d\n", a, b);
+          h1b = h1a;
+          h2b = h2a;
+        }
+      }
+    }
+    printf("adpcm: %ld samples, %ld mismatches\n", atrials, afails);
+    fails += afails;
+  }
   return fails ? 1 : 0;
 }

@@ -85,4 +85,32 @@ static inline int pxMixTapsFit32(const int16_t (*table)[4], int phases) {
   return 1;
 }
 
+/* DSP-ADPCM, musyxPcAdpcmSample in 32 bits: nibble x scale x 2048 is at
+ * most 2^29 and |c0 h1 + c1 h2| at most 32768 (|c0| + |c1|), so the sum
+ * stays inside 32 bits when every predictor's |c0| + |c1| is under 49152
+ * (real coefficient tables are a few thousand: pxAdpcmFits32, once a fill) */
+static inline int pxAdpcmFits32(const int16_t coefficients[8][2]) {
+  for (int p = 0; p < 8; ++p) {
+    const int32_t a = coefficients[p][0] < 0 ? -coefficients[p][0] : coefficients[p][0];
+    const int32_t b = coefficients[p][1] < 0 ? -coefficients[p][1] : coefficients[p][1];
+    if (a + b >= 49152)
+      return 0;
+  }
+  return 1;
+}
+
+static inline int16_t pxAdpcmSample32(const uint8_t* block, unsigned sample, uint8_t ps,
+                                      const int16_t coefficients[8][2], int16_t* history1, int16_t* history2) {
+  const unsigned predictor = (ps >> 4) & 7;
+  const int32_t scale = 1 << (ps & 15);
+  int32_t nibble = (sample & 1) ? block[1 + sample / 2] & 15 : block[1 + sample / 2] >> 4;
+  if (nibble >= 8) nibble -= 16;
+  const int32_t value = (nibble * scale * 2048 + (int32_t)coefficients[predictor][0] * *history1 +
+                         (int32_t)coefficients[predictor][1] * *history2 + 1024) >> 11;
+  const int16_t decoded = value > 32767 ? 32767 : value < -32768 ? -32768 : (int16_t)value;
+  *history2 = *history1;
+  *history1 = decoded;
+  return decoded;
+}
+
 #endif

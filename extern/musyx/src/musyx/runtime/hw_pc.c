@@ -392,6 +392,9 @@ static void updateCurrentAddr(DSPvoice* vp, u32 srcPosHi) {
   }
 }
 
+#if PX_MIXER_FAST
+static int adpcmFits32; /* PORT_XBOX: this fill's coefficients allow pxAdpcmSample32 (px_mixer.h) */
+#endif
 static s32 sampleAtPos(SAMPLE_INFO* smp, u32 voiceIdx, u32 posHi, const s16 coefTab[8][2]) {
   switch (smp->compType) {
   case 0:
@@ -404,6 +407,11 @@ static s32 sampleAtPos(SAMPLE_INFO* smp, u32 voiceIdx, u32 posHi, const s16 coef
     adpcmRestart[voiceIdx] = 0;
     // Decode only the samples actually consumed. Decoding a whole block here
     // corrupts history when a loop starts or ends partway through that block.
+#if PX_MIXER_FAST
+    if (adpcmFits32) /* PORT_XBOX: the same sum in 32 bits */
+      return pxAdpcmSample32(block, sample, adpcmPS[voiceIdx], coefTab, &adpcmYn1[voiceIdx],
+                             &adpcmYn2[voiceIdx]);
+#endif
     return musyxPcAdpcmSample(block, sample, adpcmPS[voiceIdx], coefTab,
                               &adpcmYn1[voiceIdx], &adpcmYn2[voiceIdx]);
   }
@@ -434,6 +442,9 @@ static int decodeSourceSamples(DSPvoice* vp, u32 voiceIdx, s32* out, int maxSamp
 
   *hitEnd = 0;
   const u32 end = musyxPcLoopEnd(smp->length, smp->loop, smp->loopLength);
+#if PX_MIXER_FAST
+  adpcmFits32 = coefTab != NULL && pxAdpcmFits32((const int16_t(*)[2])coefTab); /* PORT_XBOX */
+#endif
 
   for (; count < maxSamples; ++count) {
     if (state->srcPosHi >= end) {
