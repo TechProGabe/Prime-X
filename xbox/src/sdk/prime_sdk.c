@@ -112,7 +112,6 @@ volatile void* GXRedirectWriteGatherPipe(void* buf) {
 void GXRestoreWriteGatherPipe(void) { s_wgp = NULL; }
 
 /* ---- MetroidPrimePort's renderer extensions: off ---- */
-void GXSetFogColor(GXColor color) { (void)color; }
 void GXSetPBR(GXBool enable) { (void)enable; }
 void GXSetPBRAmbient(const f32 rows[6][3], f32 mode) { (void)rows; (void)mode; }
 void GXSetPBRBacklight(const f32 plane[4], const f32 backDir[3], f32 back, f32 top, f32 bindScale, f32 bindOffset) {

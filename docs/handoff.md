@@ -63,16 +63,43 @@ rounds and their files: `C:\xemu\hw\prime\ROUNDS.md`.
 4. If memory runs out on red again: another reclaimer is easy to add
    (`xhw_mem_add_reclaim`); left: the display lists' dynamic templates.
 5. Not done, by choice: `GXSetDstAlpha` and the EFB pixel format (Morph
-   Ball's shadow IDs, fog volumes, thermal's DSTALPHA blends) and
-   Magmoor's heat-haze warp on the GPU (new render-to-texture passes: the
-   console has faulted on those before).
-6. Visors and parity: Dolphin reference frames in any room with
-   `tools/xbox/dolphin_ref.py` (docs/testing.md "Dolphin reference
-   frames"; no save needed); the comparisons (`docs/renderer.md`) not
-   made yet. First: the landing glow box (retail fades the sprite's edges).
+   Ball's shadow IDs, fog volumes, thermal's DSTALPHA blends; new
+   render-to-texture passes: the console has faulted on those before).
+   Magmoor's "heat haze without its warp" was the fog-volume pass all
+   along (two indirect stages over the volume's depth copies): Dolphin's
+   Lava Lake shows what it adds (a haze that dims the lava and its flames).
+6. Parity with Dolphin (`tools/xbox/dolphin_ref.py`, docs/testing.md):
+   the 14 sweep rooms match (2026-10-30) but for the fog volumes; the
+   visors: `--visor` holds one through a Gecko write (thermal and scan
+   come out right; X-ray drew with thermal's gun, so don't trust it).
 7. Gate leftovers: the 128 MB hold needs a 128 MB-aware BIOS in xemu; the
    save round trip on red and Dolphin `.gci` (phase 4); Docker/CI (the
    workflow exists, `gh` isn't logged in here).
+
+## Session 2026-10-30 (day): Dolphin references, two rendering fixes
+
+- `tools/xbox/dolphin_ref.py`: retail frames from Dolphin in any room, no
+  save or input (Gecko codes: the front end goes to the game, the Frigate
+  becomes the room asked for; `--visor` holds a visor). Dolphin movies
+  were tried for input first: with one playing this build drew nothing.
+- **Fog colour on additive blends**: retail's `CGX::update_fog` sets the
+  fog colour black while the blend's destination factor is ONE, through
+  `GXSetFogColor`, which was a no-op here (`prime_sdk.c`). Fog's colour
+  was added over every additive effect in fog: the landing cinematic's
+  glow drew in a light square (xemu lockstep frames 450-452; the user saw
+  it black on red in hw7, which this doesn't explain: check on red). Now
+  in `gx_state.c`.
+- **Spot lights**: GX clamps cos(L, dir) at 0 before the angle polynomial
+  (Dolphin's LightingShaderGen); the VP didn't, so a cos^2 term lit the
+  back. The lightning-lit clouds in the landing cinematic ended on a hard
+  polygon edge; now they fade as in Dolphin. `tests/xbox/vp_ref.c` got
+  the same line (its header says so) and `legacy_len`'s spot count went
+  13 -> 14; `test_vp_opt.py` 200000 keys, 0 failed.
+- Room sweep 14/14 with both (no FATAL, THROW, out of memory); the shots
+  differ from the night's by timing only. Every sweep room matches
+  Dolphin's frame of it but Magmoor's fog volumes; Ice Temple's and the
+  quarry's odd poses (gun raised, left hand up) are Samus's idle
+  animations, in retail too.
 
 ## Session 2026-10-30 (night, unattended): fights, xemu only
 
@@ -119,8 +146,8 @@ rounds and their files: `C:\xemu\hw\prime\ROUNDS.md`.
   doesn't model cache misses); an SSE `put_nrm` (bit-identical by a host
   test over 20M inputs, but no faster in xemu, which runs packed SSE a
   lane at a time). Both might help on the console; unmeasurable here.
-- Looked at, left: the landing glow box (the game sets that fog itself;
-  Dolphin now shows retail: a starburst fading out, no box), the HUD minimap
+- Looked at, left: the landing glow box (fixed the next day: fog colour
+  on additive blends), the HUD minimap
   (reordering fills and outlines changes overlap), pbkit's kick size
   (tuned on the console), `acos`/`sin` in `CQuaternion::Slerp` (nxdk's
   x87 versions; ~1%, results would move).

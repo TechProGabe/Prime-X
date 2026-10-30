@@ -69,8 +69,12 @@ line under it says how far it got.
   Ball, the white arm cannon (Chozo, Magmoor).
 - Inside the gunship: 12-14 fps on red in hw5; the dynamic-list budget is
   doubled since, not measured.
-- Magmoor's heat haze draws without its warp (indirect maps past
-  `ind_tex`'s size limit).
+- Fog volumes aren't drawn (`PostRenderFogs`, docs/decisions.md):
+  Magmoor's lava haze and the other volume fogs (acid, water). What was
+  listed here as the "heat haze without its warp" is this pass (two
+  indirect stages over depth copies). Dolphin's Lava Lake shows the
+  difference: retail's haze dims the lava and its flames. Needs depth
+  copies that carry depth (a new render-to-texture path; docs/renderer.md).
 - The audio start-up freeze after a chained launch (hw4 r4c) came back in
   hw7 (r7e, the codec read after the cold reset, the CPU held: no watchdog
   reboot); `f73d0d7` no longer reads the codec after the reset on the
@@ -78,15 +82,17 @@ line under it says how far it got.
   2026-10-29 the console reads no codec register at all (not seen on red).
   hw9's r9e had its audio stuck (silent until the console was switched
   off).
-- Landing cinematic (Tallon Overworld), the gunship coming down through
-  the atmosphere: a box around its glow sprite (the user saw it black on
-  red in hw7; hw7's r7b shot at frame 600 has a lighter square around the
-  sprite). The sprite's alpha or blend is wrong: Dolphin (2026-10-30,
-  ~33 s into `dolphin_ref.py landing`) draws a soft starburst that fades
-  to nothing at its edges, no box.
-- Rendering not yet compared with Dolphin (reference frames now come
-  from `tools/xbox/dolphin_ref.py`): the arm cannon in bright rooms,
-  Phendrana's elevator steam, the visors.
+- Fixed in xemu 2026-10-30, not yet seen on red: the landing cinematic's
+  box around the gunship's glow (`GXSetFogColor` was a no-op, so fog's
+  colour was added over every additive effect in fog; retail blackens it
+  for additive blends) and the hard edge of the clouds a lightning flash
+  lights (spot lights' cosine wasn't clamped at 0, as GX clamps it). The
+  user saw the box black on red in hw7 where xemu drew it light: if a
+  black box is still there on red, it is something else.
+- Compared with Dolphin 2026-10-30 (`tools/xbox/dolphin_ref.py`): the 14
+  sweep rooms match, the arm cannon included, except Magmoor's fog
+  volumes (above). Not compared yet: the visors (Dolphin needs input to
+  switch them), Phendrana's elevator steam.
 
 ## Console history
 

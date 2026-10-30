@@ -334,7 +334,10 @@ static void light(Gen* g, const VpKey* k, const VpChan* ch, int li, int mask) {
              * x * 1 = x, so it and its product are left out */
             int ang = !(k->ang_one >> li & 1), dist = !(k->dist_one >> li & 1);
             if (ang) {
+                /* cos clamped at 0 first, as GX does (Dolphin's
+                 * LightingShaderGen): a cos^2 term would light the back */
                 DP3(T(RA, MY), R(RL), ldir);
+                MAX(T(RA, MY), sw(R(RA), YYYY), K0());
                 MUL(T(RA, MZ), sw(R(RA), YYYY), sw(R(RA), YYYY));
                 DP3(T(RA, MW), R(RA), la);
                 MAX(T(RA, MW), sw(R(RA), WWWW), K0());
@@ -1097,7 +1100,7 @@ static int vp_optimize(Gen* g, VpProgram* out, int pairing) {
  * optimized program doesn't fit either (vp_generate). */
 static int light_len(const VpChan* ch) {
     if (ch->attn == VPL_SPEC) return 14;
-    return 4 + (ch->diff_fn == 2 ? 2 : 1) + (ch->attn == VPL_SPOT ? 13 : 0) + 1;
+    return 4 + (ch->diff_fn == 2 ? 2 : 1) + (ch->attn == VPL_SPOT ? 14 : 0) + 1;
 }
 
 static int legacy_len(const VpKey* k) {

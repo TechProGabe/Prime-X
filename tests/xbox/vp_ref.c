@@ -3,7 +3,9 @@
  * as the reference for tests/xbox/test_vp_opt.c: the current generator's
  * programs must compute the same bits in every output. Only vp_generate is
  * renamed (vp_ref_generate) and the encoder test removed. Don't edit it to
- * follow nv2a_vp.c: a new feature there needs its own reference.
+ * follow nv2a_vp.c: a new feature there needs its own reference. One
+ * correction since, in both: a spot light's cos is clamped at 0 before its
+ * angle polynomial, as GX does (Dolphin's LightingShaderGen).
  *
  * The original header comment follows. */
 /* nv2a_vp.c - NV2A vertex programs for GX transform and lighting.
@@ -206,6 +208,7 @@ static void light(Gen* g, const VpChan* ch, int li, int mask) {
         if (ch->attn == VPL_SPOT) {
             /* angular a(cos) with cos = L . dir, distance 1 / k(d) */
             DP3(T(RD, MW), R(RL), ldir);
+            MAX(T(RD, MW), sw(R(RD), WWWW), K0());   /* cos >= 0, as GX (2026-10-30) */
             MOV(T(RA, MX), K1());
             MOV(T(RA, MY), sw(R(RD), WWWW));
             MUL(T(RA, MZ), sw(R(RD), WWWW), sw(R(RD), WWWW));
