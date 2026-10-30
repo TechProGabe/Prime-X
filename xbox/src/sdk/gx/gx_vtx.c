@@ -103,6 +103,7 @@ static void plan_kinds(Plan* p, int vtxfmt);
 static uint32_t s_gs_n;
 static void gs_cpu_for(const void* array);
 static int gsl_evict_lru(uint32_t frame);   /* a GPU-skin list's vertex memory back (dlc_build) */
+static int gsl_evict_spilled(uint32_t frame);   /* one in the texture pool (gx_dlc_evict_spilled) */
 /* bumped whenever s_desc_sum, s_arrs_sum or a s_vat_sum changes (sig_*):
  * fmt_key's and cached_plan's caches (an array base alone, every model's
  * GXSetArray, leaves it) */
@@ -1893,6 +1894,9 @@ int gx_dlc_evict_spilled(int max) {
         dlc_drop_mem(pick, 1);
         n++;
     }
+#if XGX_GPU_SKIN
+    while (n < max && gsl_evict_spilled(frame)) n++;
+#endif
     return n;
 }
 
@@ -3483,14 +3487,16 @@ static int gs_state_ok(GsTexgen* tg) {
     return 1;
 }
 
-/* the least recently used list not drawn this frame gives its memory back;
- * 0: none */
-static int gsl_evict_lru(uint32_t frame) {
+/* the least recently used list not drawn this frame gives its memory back
+ * (only one in the texture pool: `spilled`); 0: none */
+static int gsl_evict_one(uint32_t frame, int spilled) {
     GsList* old = NULL;
     uint32_t k;
     for (k = 0; k < GSL_MAX; k++) {
         GsList* l = &s_gsl[k];
-        if (l->dl && l->mem && l->last_used != frame && (!old || l->last_used < old->last_used)) old = l;
+        if (l->dl && l->mem && l->last_used != frame && (!old || l->last_used < old->last_used) &&
+            (!spilled || xgx_vbuf_spilled(l->mem)))
+            old = l;
     }
     if (!old) return 0;
     xgx_vbuf_free(old->mem);
@@ -3502,6 +3508,9 @@ static int gsl_evict_lru(uint32_t frame) {
     old->nd = 0;
     return 1;
 }
+
+static int gsl_evict_lru(uint32_t frame) { return gsl_evict_one(frame, 0); }
+static int gsl_evict_spilled(uint32_t frame) { return gsl_evict_one(frame, 1); }
 
 /* Build: the list decoded from the bind-pose arrays, as triangles, each
  * vertex with its bone; then split into draws of at most GS_SLOTS bones. */
@@ -3784,13 +3793,23 @@ static int gsl_build(GsList* l, const GsReg* g, uint32_t frame) {
     }
     /* pass 4: into the vertex pool, each draw at a multiple of its stride */
     if (ok) {   /* within the budget, never taking the pool's last 512 KB from the room's lists */
+        /* Main Plaza's cached lists fill the vertex pool (round hw13: every
+         * skin went to the CPU there): then the texture pool, above the
+         * reserve its textures keep, as spilled display lists do; textures
+         * that need the room take it back (gx_dlc_evict_spilled) */
+        int spill = xgx_vbuf_pool_free_kb() < 512 + bytes / 1024;
         while (s_gs_bytes + bytes > XGX_GPU_SKIN_KB * 1024u && gsl_evict_lru(frame)) {}
-        if (s_gs_bytes + bytes > XGX_GPU_SKIN_KB * 1024u || xgx_vbuf_pool_free_kb() < 512 + bytes / 1024) {
-            s_gs_why = s_gs_bytes + bytes > XGX_GPU_SKIN_KB * 1024u ? "over the budget" : "vertex pool short";
+        if (s_gs_bytes + bytes > XGX_GPU_SKIN_KB * 1024u) {
+            s_gs_why = "over the budget";
             l->retry = frame + 60;
             l->bad = 0;   /* room, not the list: try again later */
             ok = 0;
-        } else {
+        } else if (spill && !(l->mem = (uint8_t*)xgx_vbuf_alloc_spill(bytes))) {
+            s_gs_why = "vertex and texture pools short";
+            l->retry = frame + 60;
+            l->bad = 0;
+            ok = 0;
+        } else if (!spill) {
             l->mem = (uint8_t*)xgx_vbuf_alloc(bytes);
             if (!l->mem) {
                 s_gs_why = "vertex pool full";
@@ -4157,10 +4176,15 @@ void gx_vtx_frame_end(void) {
                      s_keep_bytes / 1024, s_keep_refused);
             memset(s_ru_why, 0, sizeof s_ru_why);
 #if XGX_GPU_SKIN
-            xhw_logf("[DLC] GPU skin: %u skins handed over, %u list calls (%u draws), %u lists built, %u skinned on "
-                     "the CPU after all (last why: %s); %u waiting, %u KB of lists",
-                     s_st_gs_regs, s_st_gs_calls, s_st_gs_draws, s_st_gs_builds, s_st_gs_cpu, s_gs_why, s_gs_n,
-                     s_gs_bytes / 1024);
+            {
+                uint32_t k, spilled = 0;
+                for (k = 0; k < GSL_MAX; k++)
+                    if (s_gsl[k].dl && s_gsl[k].mem && xgx_vbuf_spilled(s_gsl[k].mem)) spilled += s_gsl[k].bytes;
+                xhw_logf("[DLC] GPU skin: %u skins handed over, %u list calls (%u draws), %u lists built, %u skinned "
+                         "on the CPU after all (last why: %s); %u waiting, %u KB of lists (%u KB in the texture pool)",
+                         s_st_gs_regs, s_st_gs_calls, s_st_gs_draws, s_st_gs_builds, s_st_gs_cpu, s_gs_why, s_gs_n,
+                         s_gs_bytes / 1024, spilled / 1024);
+            }
             s_st_gs_regs = s_st_gs_calls = s_st_gs_draws = s_st_gs_builds = s_st_gs_cpu = 0;
 #endif
             s_st_lines = s_st_line_drop = s_st_line_clip = s_st_line_box = 0;

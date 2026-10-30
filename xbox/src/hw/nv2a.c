@@ -2783,6 +2783,11 @@ void* xgx_vbuf_alloc(uint32_t bytes) {
     return p;
 }
 
+void* xgx_vbuf_alloc_spill(uint32_t bytes) {
+    if (!s_vb.base || !s_tp.base || s_tp.bytes - s_tp.used < bytes + VB_SPILL_RESERVE) return NULL;
+    return pool_alloc(&s_tp, bytes);
+}
+
 /* a display list's buffer in the texture pool (gx_tex.c gives them back
  * when textures need the room: gx_dlc_evict_spilled) */
 int xgx_vbuf_spilled(const void* p) { return p && s_vb.base && !pool_owns(&s_vb, p); }

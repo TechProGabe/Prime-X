@@ -139,7 +139,11 @@ combiners; ThinLTO + PGO for releases.
     cached lists evict them first when they need room. A model that falls
     back to the CPU four times (texgens the slots can't serve) skins on
     the CPU from then on: it was drawing half its lists on the GPU and then
-    skinning anyway, every frame (round hw12, Main Plaza).
+    skinning anyway, every frame (round hw12, Main Plaza). When the vertex
+    pool is short (Main Plaza: the room's lists fill it, every skin went to
+    the CPU in hw13) the lists go to the texture pool above the 2 MB its
+    textures keep, as spilled display lists do, and textures needing the
+    room take it back (`xgx_vbuf_alloc_spill`, `gx_dlc_evict_spilled`).
   - Draw merging (M3.1, `-DXGX_MERGE=0`): a draw that changes no state
     joins the one before into its BEGIN/END when the primitive (lists,
     quads, lines, points; strips stitched with degenerate triangles),
