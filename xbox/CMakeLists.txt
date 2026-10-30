@@ -29,9 +29,10 @@ option(PX_LTO "ThinLTO over the game, port and sdk code" OFF)
 set(PX_LTO_LINK_FLAGS "-mllvm:-import-instr-limit=30" CACHE STRING "lld-link flags for the LTO backends")
 set(PX_PGO "" CACHE STRING "PGO: empty, gen, or a .profdata path")
 # The game's and the SDK's optimisation level (docs/fps-plan.md "compiler
-# trials": XBOX_CMAKE_ARGS=-DPX_OPT_LEVEL=3 for -O3, the LTO backends too).
-# 2 is what every round so far ran.
-set(PX_OPT_LEVEL 2 CACHE STRING "-O level for the game and the SDK (2 or 3)")
+# trials", the LTO backends too). -O3 since round hw13: 1-4% more frames
+# than -O2 in each of its four scenes on red (XBOX_CMAKE_ARGS=-DPX_OPT_LEVEL=2
+# for the old level).
+set(PX_OPT_LEVEL 3 CACHE STRING "-O level for the game and the SDK (2 or 3)")
 set(PX_OPT_FLAGS)
 if(PX_LTO)
     list(APPEND PX_OPT_FLAGS -flto=thin)

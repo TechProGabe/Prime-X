@@ -74,6 +74,13 @@ public:
 private:
   SNode x0_nodes[kMaxObjects];
   SSortedList xb000_sortedLists[6];
+#ifdef TARGET_XBOX
+  // PORT_XBOX: each sorted list's coordinates in list order, beside its ids
+  // (xPortKey[list][i] is GetPointForSL(list, x0_nodes[x0_ids[i]].x4_box)):
+  // the twelve binary searches of every near-list query read 4 KB arrays
+  // instead of 44-byte nodes all over 45 KB. Same comparisons, same values.
+  f32 xPortKey[6][kMaxObjects];
+#endif
 };
 CHECK_SIZEOF(CSortedListManager, 0xe018);
 } // namespace SL
