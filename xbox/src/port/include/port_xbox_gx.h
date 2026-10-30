@@ -43,6 +43,18 @@ void GXPortSkinUnkeep(void* verts, const void* normals, unsigned bytes);
 // be given back (GXPortSkinUnkeep) at its model's next skin.
 unsigned GXPortSkinKeepEpoch(void);
 
+// Skinning on the GPU (docs/fps-plan.md M4): 1 when it may be asked
+// (-DXGX_GPU_SKIN, test builds' env PX_GPU_SKIN=0|1).
+int GXPortSkinGpuOn(void);
+// The skin of workspace verts/normals left to the GPU: npts points from the
+// model's bind-pose arrays src_pos/src_nrm (big-endian floats), nbones
+// virtual bones of counts[b] consecutive points each, their 3x4 transforms
+// (xf12, row-major) and 3x3 normal rotations (rot9). 1: taken (don't skin
+// on the CPU; the GX layer skins there itself if a draw needs the memory);
+// 0: skin on the CPU as before. transient: the shared skinning ring.
+int GXPortSkinGpu(const void* verts, const void* normals, const void* src_pos, const void* src_nrm, unsigned npts,
+                  unsigned nbones, const int* counts, const float* xf12, const float* rot9, int transient);
+
 #ifdef __cplusplus
 }
 #endif

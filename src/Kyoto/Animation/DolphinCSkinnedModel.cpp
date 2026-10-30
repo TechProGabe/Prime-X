@@ -311,6 +311,37 @@ static uint PortSkinHash(const CSkinRules& rules, const CModel& model) {
 }
 #endif
 
+#ifdef TARGET_XBOX
+// PORT_XBOX: the skin on the GPU (port_xbox_gx.h GXPortSkinGpu, docs/fps-plan.md
+// M4): the virtual bones' accumulated matrices go to the GX layer, which draws
+// the model's lists from its bind-pose arrays with a matrix per bone (and skins
+// on the CPU itself if a draw needs the workspace). true: taken, don't skin.
+static bool PortSkinOnGpu(const CSkinRules& rules, const CModel& model, const float* verts,
+                          const float* normals, bool transient) {
+  static int counts[256];
+  static float xf[256][12];
+  static float rot[256][9];
+  const rstl::vector< CVirtualBone >& bones = rules.GetVirtualBones();
+  const int n = bones.size();
+  if (n <= 1 || n > 256)
+    return false;
+  for (int b = 0; b < n; ++b) {
+    const CTransform4f& t = bones[b].GetTransform();
+    const CMatrix3f& r = bones[b].GetRotation();
+    counts[b] = bones[b].GetNumIndices();
+    const float x[12] = {t.Get00(), t.Get01(), t.Get02(), t.Get03(), t.Get10(), t.Get11(),
+                         t.Get12(), t.Get13(), t.Get20(), t.Get21(), t.Get22(), t.Get23()};
+    const float q[9] = {r.Get00(), r.Get01(), r.Get02(), r.Get10(), r.Get11(),
+                        r.Get12(), r.Get20(), r.Get21(), r.Get22()};
+    memcpy(xf[b], x, sizeof x);
+    memcpy(rot[b], q, sizeof q);
+  }
+  return GXPortSkinGpu(verts, normals, model.GetCubeModel()->GetPositions(),
+                       model.GetCubeModel()->GetNormals(), static_cast< unsigned >(rules.GetNumPoints()),
+                       static_cast< unsigned >(n), counts, &xf[0][0], &rot[0][0], transient ? 1 : 0) != 0;
+}
+#endif
+
 void CSkinnedModel::Calculate(const CPoseAsTransforms& pose,
                               const rstl::optional_object< CVertexMorphEffect >& morphEffect,
                               const float* averagedNormals, float* workVerts) {
@@ -376,6 +407,16 @@ void CSkinnedModel::Calculate(const CPoseAsTransforms& pose,
     xPortSkinVerts = nullptr;
   }
 #endif
+#ifdef TARGET_XBOX
+  // PORT_XBOX: the skin left to the GPU (PortSkinOnGpu): no CPU skin, no
+  // GXPortSkinWritten (the workspace isn't written)
+  bool portGpu = false;
+  if (!portSkinSame && workVerts == nullptr && !legacy && !morphEffect.valid() && sPointGen == nullptr &&
+      NormalStride(**x4_model) == 12 && GXPortSkinGpuOn()) {
+    const float* normals = reinterpret_cast< const float* >(reinterpret_cast< uchar* >(verts) + alignedVertSize);
+    portGpu = PortSkinOnGpu(**x10_skinRules, **x4_model, verts, normals, x38_owned && xPortKeptBytes == 0);
+  }
+#endif
 #ifdef __MWERKS__
   x10_skinRules->BuildPoints(pipe);
 
@@ -391,7 +432,7 @@ void CSkinnedModel::Calculate(const CPoseAsTransforms& pose,
     PortBuildLegacy(pipe);
   } else
 #ifdef TARGET_XBOX
-  if (!portSkinSame)
+  if (!portSkinSame && !portGpu)
 #endif
   {
     float* normals = reinterpret_cast< float* >(reinterpret_cast< uchar* >(verts) + alignedVertSize);
@@ -421,7 +462,7 @@ void CSkinnedModel::Calculate(const CPoseAsTransforms& pose,
   // caller's (the swarms' workspaces, skinned once and drawn for every
   // member) for this frame only: they are handed out again or freed with
   // their owner, but nothing else writes them while the frame draws)
-  if (!portSkinSame) {
+  if (!portSkinSame && !portGpu) {
     uchar* const normalsOut = reinterpret_cast< uchar* >(verts) + alignedVertSize;
     if (workVerts != nullptr || (x38_owned && xPortKeptBytes == 0)) {
       GXPortSkinWrittenThisFrame(verts, normalsOut);
