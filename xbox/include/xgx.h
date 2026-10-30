@@ -268,6 +268,9 @@ void xgx_tex_pool_shrink(void);           /* frees the overflow pool once it is 
  * full or absent; free is deferred until the GPU is done. xgx_vtx_use points
  * the next xgx_draw at vertices in such a buffer instead of the ring. */
 void* xgx_vbuf_alloc(uint32_t bytes);
+/* the same from the texture pool only, leaving its reserve for textures
+ * (GPU-skin lists when the vertex pool is full); NULL when it can't */
+void* xgx_vbuf_alloc_spill(uint32_t bytes);
 void xgx_vbuf_free(void* p);
 void xgx_vbuf_free_now(void* p);   /* the same for a buffer no draw of the current frame used: no wait */
 uint32_t xgx_vbuf_offset(const void* p);   /* bytes from the pool's start: draws sit at multiples of their stride */
