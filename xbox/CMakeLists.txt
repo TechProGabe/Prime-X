@@ -28,6 +28,10 @@ option(PX_LTO "ThinLTO over the game, port and sdk code" OFF)
 # profile: +0.3 MB over the plain build (docs/pgo.md)
 set(PX_LTO_LINK_FLAGS "-mllvm:-import-instr-limit=30" CACHE STRING "lld-link flags for the LTO backends")
 set(PX_PGO "" CACHE STRING "PGO: empty, gen, or a .profdata path")
+# The game's and the SDK's optimisation level (docs/fps-plan.md "compiler
+# trials": XBOX_CMAKE_ARGS=-DPX_OPT_LEVEL=3 for -O3, the LTO backends too).
+# 2 is what every round so far ran.
+set(PX_OPT_LEVEL 2 CACHE STRING "-O level for the game and the SDK (2 or 3)")
 set(PX_OPT_FLAGS)
 if(PX_LTO)
     list(APPEND PX_OPT_FLAGS -flto=thin)
@@ -64,7 +68,7 @@ set(PX_GAME_DEFS TARGET_PC=1 TARGET_XBOX=1 VERSION=0 MUSY_TARGET=0 NDEBUG)
 # it gives the game the builtins back: fabsf is andps, sqrtf sqrtss (correctly
 # rounded either way), fixed-size memcpy/memset inline moves. Without errno
 # the maths can inline (docs/plan.md phase 6, "Compiler optimizations").
-set(PX_GAME_FLAGS -O2 -msse -mfpmath=sse -ffp-contract=off -fno-strict-aliasing -fwrapv
+set(PX_GAME_FLAGS -O${PX_OPT_LEVEL} -msse -mfpmath=sse -ffp-contract=off -fno-strict-aliasing -fwrapv
     -ffunction-sections -Wno-everything -Werror=implicit-function-declaration -Werror=return-type
     -fhosted -fbuiltin -fno-math-errno ${PX_OPT_FLAGS})
 # C++: no RTTI; `throw` and `try` compile (-fcxx-exceptions) but without
@@ -141,7 +145,7 @@ target_include_directories(px_sdk BEFORE PRIVATE
     ${XBOX}/src/port/include
     ${XBOX}/src/sdk)
 target_compile_definitions(px_sdk PRIVATE TARGET_PC=1 TARGET_XBOX=1)
-target_compile_options(px_sdk PRIVATE -O2 -msse -mfpmath=sse -fno-strict-aliasing -fwrapv -ffp-contract=off
+target_compile_options(px_sdk PRIVATE -O${PX_OPT_LEVEL} -msse -mfpmath=sse -fno-strict-aliasing -fwrapv -ffp-contract=off
     -ffunction-sections -Wno-everything -Werror=implicit-function-declaration -Werror=implicit-int ${PX_OPT_FLAGS}
     "SHELL:-include ${XBOX}/include/sdk/xsdk_prelude.h")
 # log.c defines the printf-family redirections the prelude points at
@@ -196,7 +200,7 @@ if(PX_LTO)
         PROPERTIES COMPILE_OPTIONS -fno-lto)
     # the backends on every core; unchanged modules come from the cache
     target_link_options(prime_x PRIVATE -opt:lldltojobs=all -lldltocache:${CMAKE_BINARY_DIR}/lto-cache
-        ${PX_LTO_LINK_FLAGS})
+        -opt:lldlto=${PX_OPT_LEVEL} ${PX_LTO_LINK_FLAGS})
 endif()
 # The code's layout from the PGO profile (tools/xbox/make_order.py): the
 # functions the training ran first, hottest first, the rest in link order.
