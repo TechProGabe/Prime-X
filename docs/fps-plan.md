@@ -124,6 +124,34 @@ No fault, no stuck audio in either image: `-O3` is the default from here on
   particle system's time is whole frames (emission, lifetimes, every
   keyframe), so a 1/30 step is a rewrite of `CElementGen`, visible, for ~1%.
 
+### Round hw14 (red, 2026-10-30): -O3, Main Plaza's GPU skinning, the CALL test
+
+One profiler image of 85c270b (`-O3`), Auto throughout. Steady stretches:
+
+| scene | before | hw14 | |
+|---|---|---|---|
+| pirate fight | 33.4 (r13b) | 33 | same |
+| Main Plaza | 36.7 (r13d) | 38-39 | GPU skinning in the texture pool: 2223 skins per 600 frames on the GPU, none on the CPU |
+| Lava Lake | 41.6 (r13f) | 42-43 | |
+| Landing Site (rain) | 36.7 (r13h) | 35-37 | same |
+| Phendrana visors | r12g | same | |
+
+No fault in the five scenes. **The pushbuffer CALL test failed on red**
+(r14f): the called segment ran (PGRAPH holds its depth clear value), the
+return did not come back cleanly: the DMA pusher faulted on the main
+buffer's next header, right after the return address (`GPU fault: kind 2`,
+GET at the word after the CALL), and the colour clear behind it never
+landed. pbkit's handler resets `NV_PFIFO_CACHE1_DMA_STATE` before the
+log sees its error code, so which error it was is unknown. M6a as planned
+(a CALL per model) is off until a second test says otherwise: record the
+error code, and try a JUMP into the segment with a JUMP back patched per
+use (what XDK-era pushbuffer playback did) in the same round.
+
+Also from hw13's Main Plaza reports with the right window (the steady
+part, not the last report): the back end is far bigger than [PROFR]'s
+first read said: `xgx_draw` 16-17% and `GXCallDisplayList` 11% of all
+samples, about 2 us a draw. 69% of those draws change only the textures.
+
 ## 1. Where the time goes (the model everything below rests on)
 
 Measured on red at 480i, profiler builds (LTO + PGO), `[PERF]` lines of
