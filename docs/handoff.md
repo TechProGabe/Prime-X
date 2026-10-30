@@ -48,7 +48,10 @@ is a jump), and every number. r11i-l on red answer both.
 
 ## Next session, in order
 
-0. **Round hw11** (`tools/xbox/scenarios/hw11/README.md`): read the
+0. **Round hw11** is uploaded to red (2026-10-30, images from b628024;
+   the save folder backed up to `C:\xemu\hw\prime\logs-hw11pre`): launch
+   `Prime-X-r11a`; the chain ends at the dashboard after r11l. Pull the
+   save folder whole. (`tools/xbox/scenarios/hw11/README.md`): read the
    mixer's share, `ms per tick` and the GPU-wait share per room into
    `docs/fps-plan.md` section 1; Auto's fps against Fixed in the same
    rooms (r11i-l vs r11c, d, b, f); watch r11i's shots and play a fight
