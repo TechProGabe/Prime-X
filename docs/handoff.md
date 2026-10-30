@@ -7,11 +7,11 @@ what's broken, anything the next agent would otherwise rediscover.
 
 The game plays through every world in xemu (room sweep: 14 rooms, no
 failure, plain and LTO + PGO) and on the red console (~35-45 fps in most
-rooms at 480i at hw9, fights 10-20). Everything is committed and pushed on
-`dev`. **Round hw10 is on red** (below, "Console round hw10"): the first
-console test of everything since hw9 (fights, the pause screen budget,
-the audio start-up reads, today's rendering fixes), waiting for the user
-to run it.
+rooms at 480i, fights 17-18 at hw10). Everything is committed and pushed on
+`dev`. **Round hw10 ran on red** (below, "Console round hw10"): the
+landing glow box and the visors are fixed on hardware, Landing Site and
+Main Plaza are faster than hw9, fights are still 17-18 fps (Fixed's
+catch-up), and the audio got stuck from the third scene of the chain on.
 
 Every sweep room matches Dolphin (`tools/xbox/dolphin_ref.py`) except
 Magmoor's fog volumes, which the port doesn't draw (Next 3). Verify builds
@@ -28,16 +28,12 @@ little since: retrain before a release. Console rounds and their files:
 
 ## Next session, in order
 
-1. **Read hw10** when the user has run it (pull the save folder whole;
-   `prof_report.py` with `prime_x.hw10.map`, `prime_x.hw10ship.map` for
-   free play): fights (r10d) against hw9's 10-20 fps; [PERF]'s ticks per
-   render there (Fixed's catch-up); the landing glow box (r10b; the user
-   saw it black on red, xemu drew it light: if a black box remains, it
-   isn't the fog colour); thermal and X-ray (r10f: the DEPENDENT_GB unit's
-   first run on hardware); the audio start-up across the chain; free
-   play's [PROFT] (hitch frames: waiting or computing).
-2. **Fights**, if hw10 says still slow (the user after hw9: "fps got
-   really bad fighting the pirates" on the Frigate). In: skinned lists over
+1. **Audio stuck** (hw10, "Console round hw10"): the old fault, seen in
+   the chain from r10c on. Next: what each XBE leaves at exit; a warm
+   reset before the cold one. hw10's free play is still to run.
+2. **Fights**: hw10's r10d ran 17-18 fps at 3.4 ticks per render (sim
+   ~12 ms a tick): Fixed's catch-up is most of the frame; Flex would give
+   ~35. Tell the user (Port Options' Game Timing). In: skinned lists over
    the dynamic budget go index-only; same-frame reuse of skinned vertices;
    per-model skin workspaces (`GXPortSkinKeep`, on since 2026-10-30, 1 MB,
    given back when memory runs short); `TriBoxOverlap` rejects on the
@@ -92,21 +88,47 @@ little since: retrain before a release. Console rounds and their files:
    save round trip on red and Dolphin `.gci` (phase 4); Docker/CI (the
    workflow exists, `gh` isn't logged in here).
 
-## Console round hw10 (uploaded to red 2026-10-30, not run yet)
+## Console round hw10 (red, 2026-10-30)
 
-`tools/xbox/scenarios/hw10/README.md` says what each scene is for. On this
-PC: `C:\xemu\hw\prime\stage-hw10` (`prof/`, `ship/`, and `console/`, the
-tree to upload as it lies: `F/Applications/Prime-X-r10a..h` with their
-`autopad.txt`, `Prime-X` (ship), `Prime-X-prof` (profiler, no script),
-`E/UDATA/50580001` title files). Maps `prime_x.hw10.map` (profiler) and
-`prime_x.hw10ship.map` (ship). Built from `912d3ba`'s code (the
-scenarios and docs came after); r10d and r10f were run once in xemu on
-the staged profiler image. Uploaded and read back byte for byte on
-2026-10-30 (the console's save folder backed up first to `logs-hw10pre`:
-the card file, settings.ini, disc.ini, the old logs). The console keeps
-each scene's log as `boot_Prime-X-r10x.log` and its shots as
-`shot_Prime-X-r10x_NN.bmp`; `console.py pull` only takes the plain
-names, so pull the folder whole (hw9's way). Back up `E:\UDATA\50580001` before uploading.
+Chain r10a-h on the profiler build (`tools/xbox/scenarios/hw10/README.md`),
+logs and shots in `C:\xemu\hw\prime\logs-hw10` (the save folder pulled
+whole: each scene's log is `boot_Prime-X-r10x.log`, its shots
+`shot_Prime-X-r10x_NN.bmp`); the first attempt's r10a in `logs-hw10a`;
+the save folder before the upload in `logs-hw10pre`. Maps
+`prime_x.hw10.map` (profiler), `prime_x.hw10ship.map`. Free play not run
+yet.
+
+- **The landing glow box is gone on red** (r10b shot 14: a starburst
+  fading out, as Dolphin), and the lightning-lit clouds fade (shot 13):
+  the fog-colour and spot-light fixes hold on hardware.
+- **Visors on red** (r10f): thermal's heat palette and X-ray's lavender as
+  in xemu, 48-60 fps; the DEPENDENT_GB unit runs on hardware, no fault.
+- fps against hw9: Landing Site (r10c vs r9b) mostly 34-59, lowest 24
+  (hw9 dipped to 17-22); Main Plaza (r10e vs r9c) mostly 30-36 (hw9
+  24-32), a dip to 18-20; Frigate opening (r10h vs r9d) 50-60, as before;
+  Lava Lake (r10g) 27-28.
+- **Fights** (r10d, Frigate Crash Site pirates): 17-18 fps in the fight,
+  3.2-3.5 ticks per render: sim 38-41 ms a frame (~12 ms a tick) plus
+  display lists and draws ~16 ms. Under Game Timing: Fixed the fight is
+  the catch-up (71% of the profile's samples in the simulation); one tick
+  a frame would be ~28 ms (~35 fps). Flex is the user's lever; capping
+  Fixed's catch-up would slow the game down instead (a choice for the
+  user). After the fight, 33-36 fps.
+- **Audio stuck** ("Sound hardware is stuck"): the first attempt's r10a
+  (the console switched off and on before, previous exit recorded as an
+  in-game reset) and, in the second attempt, every scene from r10c on.
+  r10a (after a power-off) and r10b played; r10c's boot found the AC97 as
+  idle as r10b's had (the same registers in `[AUDIO] found`), yet its
+  engine never left descriptor 0, through six restarts and a cold reset.
+  It began at the relaunch from r10b, which exited at frame 700 in the
+  middle of the landing cinematic (lockstep; streamed audio not started).
+  An old fault (Melee-X's console A on 2026-10-03, hw9 r9e): the codec
+  stops taking frames and only a power-off brings it back, so it isn't
+  the bus masters (reset each boot) and likely not the AC-link cold reset
+  either (no effect). Next: compare what each XBE leaves at exit (the
+  engine running or not, `xhw_audio_shutdown`), and try a warm reset
+  (global control bit 2) before the cold one; codec register reads froze
+  the CPU twice (hw7, hw9), so not those.
 
 ## Session 2026-10-30 (day): Dolphin references, rendering fixes, hw10 staged
 
