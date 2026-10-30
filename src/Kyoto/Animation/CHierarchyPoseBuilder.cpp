@@ -3,9 +3,47 @@
 #include "Kyoto/Animation/CCharLayoutInfo.hpp"
 #include "Kyoto/Animation/CPoseAsTransforms.hpp"
 #include "rstl/reserved_vector.hpp"
+#ifdef TARGET_XBOX
+#include <string.h> // PORT_XBOX: memcpy (BuildTransform's chain cache)
+#endif
+
+#ifdef TARGET_XBOX
+// PORT_XBOX: BuildTransform walks a segment's chain from the root, a
+// quaternion product and a matrix a link, for every locator asked for
+// (CAnimData::GetLocatorTransform: weapons, head tracking, effects; 3.7% of
+// xemu's pirate room). Each link's running state (rotation, offset,
+// matrix) is kept by builder, tree version and segment, and a later walk
+// resumes from the deepest one kept: the same operations in the same
+// order, so the same bits. Direct-mapped; a collision only misses.
+namespace {
+struct SPortChainLink {
+  const CHierarchyPoseBuilder* builder;
+  uint version;
+  float scale;
+  uchar seg;
+  uchar rotation[sizeof(CQuaternion)];   // the running state, as bytes (no default constructors)
+  uchar offset[sizeof(CVector3f)];
+  uchar matrix[sizeof(CMatrix3f)];
+};
+const int kPortChainLinks = 512;
+SPortChainLink sPortChain[kPortChainLinks];
+uint sPortVersion;
+
+inline SPortChainLink& PortChainLink(const CHierarchyPoseBuilder* b, uint version, uchar seg) {
+  uint h = static_cast< uint >(reinterpret_cast< uintptr_t >(b)) * 2654435761u ^ version * 40503u ^
+           static_cast< uint >(seg) * 2246822519u;
+  return sPortChain[(h >> 7) & (kPortChainLinks - 1)];
+}
+} // namespace
+
+uint CHierarchyPoseBuilder::PortNextVersion() { return ++sPortVersion; }
+#endif
 
 CHierarchyPoseBuilder::CHierarchyPoseBuilder(const CLayoutDescription& layout)
 : x0_layoutDesc(layout), x38_treeMap(layout.GetNumSegments()) {
+#ifdef TARGET_XBOX
+  xPortVersion = PortNextVersion();
+#endif
   TToken< CCharLayoutInfo > layoutToken = layout.ScaledLayout();
   const CCharLayoutInfo& layoutInfo = **layoutToken;
   const CSegIdList& segments = layoutInfo.GetBodyPartSegIds();
@@ -94,13 +132,39 @@ void CHierarchyPoseBuilder::BuildTransform(const CSegId& seg, CTransform4f& tran
   CQuaternion rotation = CQuaternion::NoRotation();
   CVector3f offset(0.f, 0.f, 0.f);
   CMatrix3f matrix = CMatrix3f::Identity();
+#ifdef TARGET_XBOX
+  // PORT_XBOX: start below the deepest link already walked (see above)
+  int from = segments.size();
+  for (int j = 0; j < segments.size(); ++j) {
+    const SPortChainLink& l = PortChainLink(this, xPortVersion, segments[j].val());
+    if (l.builder == this && l.version == xPortVersion && l.seg == segments[j].val() && l.scale == scale) {
+      memcpy(&rotation, l.rotation, sizeof rotation);
+      memcpy(&offset, l.offset, sizeof offset);
+      memcpy(&matrix, l.matrix, sizeof matrix);
+      from = j;
+      break;
+    }
+  }
+  for (AUTO(it, segments.begin() + from); it != segments.begin(); --it) {
+#else
   for (AUTO(it, segments.end()); it != segments.begin(); --it) {
+#endif
     const CTreeNode& node = x38_treeMap[*(it - 1)];
     const CQuaternion& nodeRotation = node.GetRotation();
     rotation = rotation * nodeRotation;
     offset += matrix * node.GetOffset();
     matrix = scale == 1.f ? rotation.BuildTransform()
                           : matrix * (nodeRotation.BuildTransform() * CMatrix3f::Scale(scale));
+#ifdef TARGET_XBOX
+    SPortChainLink& l = PortChainLink(this, xPortVersion, (it - 1)->val());
+    l.builder = this;
+    l.version = xPortVersion;
+    l.scale = scale;
+    l.seg = (it - 1)->val();
+    memcpy(l.rotation, &rotation, sizeof rotation);
+    memcpy(l.offset, &offset, sizeof offset);
+    memcpy(l.matrix, &matrix, sizeof matrix);
+#endif
   }
   transform.SetRotation(matrix);
   transform.SetTranslation(offset);

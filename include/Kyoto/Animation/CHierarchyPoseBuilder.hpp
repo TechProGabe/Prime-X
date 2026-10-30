@@ -55,6 +55,17 @@ public:
 #if VERSION >= VERSION_GM8P_00 && VERSION != VERSION_GM8E_02
   void Insert(const CSegId& id, const CQuaternion& rot);
   void Insert(const CSegId& id, const CVector3f& off);
+#elif defined(TARGET_XBOX)
+  // PORT_XBOX: every change to the tree gets a new version (BuildTransform's
+  // cache of the chains it walked)
+  void Insert(const CSegId& id, const CQuaternion& rot) {
+    x38_treeMap[id].SetRotation(rot);
+    xPortVersion = PortNextVersion();
+  }
+  void Insert(const CSegId& id, const CVector3f& off) {
+    x38_treeMap[id].SetOffset(off);
+    xPortVersion = PortNextVersion();
+  }
 #else
   void Insert(const CSegId& id, const CQuaternion& rot) { x38_treeMap[id].SetRotation(rot); }
   void Insert(const CSegId& id, const CVector3f& off) { x38_treeMap[id].SetOffset(off); }
@@ -79,6 +90,10 @@ private:
   CLayoutDescription x0_layoutDesc;
   rstl::construction_deferred< CSegId > x30_rootId;
   TSegIdMap< CTreeNode > x38_treeMap;
+#ifdef TARGET_XBOX
+  static uint PortNextVersion();
+  uint xPortVersion;   // unique to this tree's contents (Insert)
+#endif
 };
 CHECK_SIZEOF(CHierarchyPoseBuilder, 0x110)
 NESTED_CHECK_SIZEOF(CHierarchyPoseBuilder, CTreeNode, 0x20)
