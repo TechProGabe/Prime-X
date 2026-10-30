@@ -1,10 +1,61 @@
-# History: sessions and console rounds, 2026-10-27 to 2026-10-29
+# History: sessions and console rounds, 2026-10-27 to 2026-10-30
 
 Moved here from `handoff.md` on 2026-10-30, unchanged: the investigation
-notes of the first three days and console rounds hw1-hw9 (newest first).
+notes of the first days and console rounds hw1-hw9 (newest first).
 `handoff.md` keeps the current state and the latest sessions;
 `roadmap.md` has the console history in one table; this PC's
 `C:\xemu\hw\prime\ROUNDS.md` says where each round's logs and images are.
+
+## Session 2026-10-30 (night, unattended): fights, xemu only
+
+- The kept-workspace mismatch (why `GXPortSkinKeep` was off) is xemu's:
+  the verify build checksummed each kept workspace after its skin and at
+  every draw (never changed), hashed the fetched arrays around each call
+  and logged MXCSR: the same array bytes and MXCSR gave two references a
+  bit apart in a packed normal, back to back ("arrays changed during the
+  call ... array bytes the same"). On since; a reclaimer gives the
+  workspaces back when memory runs short (`GXPortSkinKeepEpoch`; test
+  hook `env PX_SKIN_REVOKE_AT=<frame>`: pirate room renders the same
+  before and after, verify clean).
+- `TriBoxOverlap`: the triangle's bounds tested before the edge axes.
+- A skinned list's position and normal fetches in one pass
+  (`dyn_fetch_pos_nrm`).
+- `CHierarchyPoseBuilder::BuildTransform` resumes from the deepest chain
+  link already walked under the same tree version (its own samples 0.8
+  -> 0.1% in the pirate room). `prof_report.py`'s "one frame up" table
+  scans the stack for return addresses and catches stale ones (it showed
+  3.7% here, 8-10% "under" `RecursivelyBuild` in Main Plaza): judge by the
+  functions' own samples.
+- `[PERF]`'s "ticks per render" counts the game updates (was always 0).
+- Particles: the last lifetime's reciprocal kept (emulated FRECPE + two
+  fma calls per `PortSetSystemTime`); `SqrtF`/`InvSqrtF`'s max without
+  nxdk's x87 `fmaxf`. `RecursivelyBuild` makes its children's matrix once.
+  `CCubeModel`'s next-surface prefetch takes the header's port line too.
+- PGO profile retrained (all five scenarios gave profiles); LTO + PGO
+  autopad build: room sweep 14/14. Plain build sweep 14/14 too.
+- Soaks in xemu: pirate room 25 min with 5 MB held back (free steady
+  ~3.5 MB, 32.8k frames), Main Plaza with 7 MB held back (reclaims and
+  ARAM swap working until Samus died, no invulnerability), Phendrana's
+  Ice Ruins and Magmoor's Lava Lake ~18 min each on the LTO + PGO image:
+  no FATAL, THROW or out of memory.
+- The pause screen (inventory doll, hw8's 14-17 fps): 30 dynamic lists, 0
+  volatile, 0 index-only, ~40-46 fps in xemu.
+- Profiler: `[PROFT]`, hitch frames only (150 ms+), with their waiting
+  time. In xemu a room's first frame under `MP_BOOT_WORLD` is mostly
+  waiting (`CGameArea::Validate` loads the area synchronously, a boot
+  artifact). The console's free-play hitches (hw9: 250-300 ms "draw"
+  stalls at pickups and some doors) aren't explained yet: a `[PROFT]`
+  profile from the console would say whether they wait or compute.
+- Tried and reverted (no gain xemu can show): the sorted lists' sort keys
+  mirrored beside their ids (the nodes fit the Pentium III's L2, and xemu
+  doesn't model cache misses); an SSE `put_nrm` (bit-identical by a host
+  test over 20M inputs, but no faster in xemu, which runs packed SSE a
+  lane at a time). Both might help on the console; unmeasurable here.
+- Looked at, left: the landing glow box (fixed the next day: fog colour
+  on additive blends), the HUD minimap
+  (reordering fills and outlines changes overlap), pbkit's kick size
+  (tuned on the console), `acos`/`sin` in `CQuaternion::Slerp` (nxdk's
+  x87 versions; ~1%, results would move).
 
 ## Session 2026-10-29 (evening): hw9 read, FPS from the logs, xemu only
 

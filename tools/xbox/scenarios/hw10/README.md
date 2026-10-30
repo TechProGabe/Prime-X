@@ -1,5 +1,8 @@
 # hw10: fights, the visors' palettes, the landing glow (staged 2026-10-30)
 
+Ran on red the same day: the chain r10a-h, no free play. Results in
+`docs/handoff.md` ("Console round hw10") and the roadmap's console history.
+
 The first console round since hw9. Profiler builds (`XBOX_LTO=1
 XBOX_PGO=xbox/prime.profdata XBOX_CFLAGS="-DXHW_AUTOPAD=1 -DXHW_PROF=1"`)
 of `dev` for the chain, `Prime-X-r10a` .. `r10h`; the ship build
