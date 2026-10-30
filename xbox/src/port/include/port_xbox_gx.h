@@ -39,6 +39,9 @@ void GXPortSkinForget(const void* verts, const void* normals);
 void* GXPortSkinKeep(unsigned bytes);
 // Give it back (and forget it, as GXPortSkinForget).
 void GXPortSkinUnkeep(void* verts, const void* normals, unsigned bytes);
+// Changes when memory runs short: a workspace kept under another epoch is to
+// be given back (GXPortSkinUnkeep) at its model's next skin.
+unsigned GXPortSkinKeepEpoch(void);
 
 #ifdef __cplusplus
 }

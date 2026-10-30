@@ -1010,6 +1010,31 @@ bool TriBoxOverlap(const CVector3f& boxcenter, const CVector3f& boxhalfsize,
   v2[1] = trivert2.GetY() - boxcenter.GetY();
   v2[2] = trivert2.GetZ() - boxcenter.GetZ();
 
+#ifdef TARGET_XBOX
+  // PORT_XBOX: the box against the triangle's bounds first (retail tests them
+  // after the nine edge axes): most candidate triangles fail here, and every
+  // test only rejects, so the answer is the same in any order
+  for (int i = 0; i < 3; ++i) {
+    const float h = boxhalfsize[i];
+    float lo = v0[i], hi = v0[i];   // retail's comparisons, in its order
+    if (v1[i] < v0[i]) {
+      lo = v1[i];
+    }
+    if (v1[i] > v0[i]) {
+      hi = v1[i];
+    }
+    if (v2[i] < lo) {
+      lo = v2[i];
+    }
+    if (v2[i] > hi) {
+      hi = v2[i];
+    }
+    if (lo > h || hi < -h) {
+      return false;
+    }
+  }
+#endif
+
   float e0[3];
   e0[0] = v1[0] - v0[0];
   e0[1] = v1[1] - v0[1];
@@ -1053,6 +1078,7 @@ bool TriBoxOverlap(const CVector3f& boxcenter, const CVector3f& boxhalfsize,
   AXISTEST_Y1(e2z, e2x, fez, fex);
   AXISTEST_Z12(e2y, e2x, fey, fex);
 
+#ifndef TARGET_XBOX // PORT_XBOX: tested first, above
   min = max = v0[0];
   if (v1[0] < v0[0]) {
     min = v1[0];
@@ -1103,6 +1129,7 @@ bool TriBoxOverlap(const CVector3f& boxcenter, const CVector3f& boxhalfsize,
   if (min > boxhalfsize.GetZ() || max < -boxhalfsize.GetZ()) {
     return false;
   }
+#endif
 
   float normal[3];
   normal[0] = e0[1] * e1[2] - e0[2] * e1[1];

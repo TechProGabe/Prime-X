@@ -106,10 +106,13 @@ static uint32_t B_plan_gen;
 #if XGX_DYN_VERIFY
 static uint32_t s_snowv_quads, s_snowv_bad;   /* GXPortSnowQuads checked against the per-vertex calls */
 #endif
+static void skin_keep_init(void);
+
 void gx_vtx_reset(void) {
     memset(&B, 0, sizeof B);
     B_plan_of = NULL;
     sig_recompute();
+    skin_keep_init();
 }
 
 static void make_plan(Plan* p, int vtxfmt) {
@@ -1468,6 +1471,7 @@ typedef struct {
     const void** v;
 #if XGX_DYN_VERIFY
     uint32_t* vh;   /* each draw's ring bytes hashed when kept: the ring changed, or the arrays? */
+    uint32_t csr;   /* MXCSR and the x87 control word when kept */
 #endif
     uint32_t frame, ring;
     const uint8_t* base[DLC_MAX_RANGE];
@@ -2574,6 +2578,14 @@ static void dyn_emit_group(DynList* d, int from, int end, uint8_t* dst, const Dy
  * the arrays changed under the call (counted apart: not this code's) */
 static uint32_t s_dynv_draws, s_dynv_bad, s_dynv_moved;
 static int s_dynv_reuse;   /* verifying a reused call (dyn_call) */
+static uint32_t s_dynv_keep_csr;   /* the reused call's csr when kept */
+static uint32_t dynv_csr(void) {
+    uint32_t m;
+    uint16_t cw;
+    __asm__ volatile("stmxcsr %0" : "=m"(m));
+    __asm__ volatile("fnstcw %0" : "=m"(cw));
+    return (m & 0xFFC0u) << 16 | cw;   /* the sticky flags left out */
+}
 static uint32_t s_dynv_ring_moved;   /* reused calls whose ring bytes changed since kept */
 static uint32_t dynv_hash(const void* p, uint32_t n) {
     const uint8_t* b = (const uint8_t*)p;
@@ -2581,8 +2593,19 @@ static uint32_t dynv_hash(const void* p, uint32_t n) {
     while (n--) h = (h ^ *b++) * 16777619u;
     return h;
 }
+static uint32_t s_dynv_ah[DLC_MAX_RANGE];   /* the fetched arrays' ranges hashed by the last dyn_ref */
 static uint8_t* dyn_ref(DynList* d, int from, int end, uint32_t bytes, int merged, const DynFetch* f, int nf) {
     uint8_t* t = (uint8_t*)malloc(d->total);
+    {
+        int k, a;
+        for (k = 0; k < nf; k++) {
+            s_dynv_ah[k] = 0;
+            for (a = 0; a < d->narr; a++)
+                if (d->arr[a].attr == f[k].attr)
+                    s_dynv_ah[k] = dynv_hash(f[k].base + d->arr[a].lo * g_gx.array_stride[f[k].attr],
+                                             (d->arr[a].hi - d->arr[a].lo) * g_gx.array_stride[f[k].attr]);
+        }
+    }
     uint8_t* want = (uint8_t*)malloc(bytes);
     int i, k;
     if (t && want) {
@@ -2602,20 +2625,34 @@ static uint8_t* dyn_ref(DynList* d, int from, int end, uint32_t bytes, int merge
 
 static void dyn_verify(DynList* d, int from, int end, uint8_t* want0, const uint8_t* got, uint32_t bytes, int merged,
                        const DynFetch* f, int nf) {
+    uint32_t ah0[DLC_MAX_RANGE];
+    int same_arrays = 1, k;
+    memcpy(ah0, s_dynv_ah, sizeof ah0);
     uint8_t* want = dyn_ref(d, from, end, bytes, merged, f, nf);
+    for (k = 0; k < nf; k++) same_arrays &= ah0[k] == s_dynv_ah[k];
     if (want0 && want) {
         s_dynv_draws++;
         if (memcmp(want0, want, bytes) != 0) {
-            s_dynv_moved++;
+            if (s_dynv_moved++ < 8) {
+                uint32_t at = 0, s = d->batch[from].plan->layout.stride, nd = 0, o;
+                while (want0[at] == want[at]) at++;
+                for (o = at; o < bytes; o++) nd += want0[o] != want[o];
+                xhw_logf("[DLC] dyn verify: arrays changed during the call (csr %08x, array bytes %s): first at vertex %u "
+                         "byte %u of %u, %u bytes; %02x%02x%02x%02x then %02x%02x%02x%02x", dynv_csr(),
+                         same_arrays ? "the same" : "changed", at / s, at % s, s, nd,
+                         want0[at], want0[at + 1], want0[at + 2], want0[at + 3], want[at], want[at + 1], want[at + 2],
+                         want[at + 3]);
+            }
         } else if (memcmp(want, got, bytes) != 0 && s_dynv_bad++ < 8) {
             uint8_t* mine = (uint8_t*)malloc(bytes);
             if (mine) {
                 if (merged) dyn_emit_group(d, from, end, mine, f, nf);
                 else memcpy(mine, dyn_batch_verts(d, from, f, nf), bytes);
-                xhw_logf("[DLC] dyn verify: %s list %08x, emitted again into cached memory: %s the reference, %s the ring",
+                xhw_logf("[DLC] dyn verify: %s list %08x, emitted again into cached memory: %s the reference, %s the ring"
+                         " (csr %08x, kept %08x)",
                          s_dynv_reuse ? "reused" : "fresh", (unsigned)(uintptr_t)d,
                          memcmp(mine, want, bytes) ? "differs from" : "matches",
-                         memcmp(mine, got, bytes) ? "differs from" : "matches");
+                         memcmp(mine, got, bytes) ? "differs from" : "matches", dynv_csr(), s_dynv_keep_csr);
                 free(mine);
             }
             uint32_t at = 0, s = d->batch[from].plan->layout.stride, ndiff = 0, o;
@@ -2725,20 +2762,54 @@ void GXPortSkinForget(const void* verts, const void* normals) {
  * in between. A workspace of its own, while memory allows, lets both be
  * skipped (CSkinnedModel's PortSkinHash, dyn_reusable). */
 #ifndef XGX_SKIN_KEEP_KB
-/* all kept workspaces together; 0: none, the ring as retail. Off: with it,
- * xemu's pirate room (verify build) showed reused calls whose vertices no
- * longer matched their kept arrays (a few normals, low bits), cause not
- * found; without the reuse it verified clean. See docs/performance.md. */
-#define XGX_SKIN_KEEP_KB 0
+/* all kept workspaces together; 0: none, the ring as retail. (The verify
+ * build's rare reused calls one bit off in a packed normal are xemu's: two
+ * references made back to back from the same array bytes differ there.) */
+#define XGX_SKIN_KEEP_KB 1024
 #endif
 #ifndef XGX_SKIN_KEEP_FREE_KB
 #define XGX_SKIN_KEEP_FREE_KB (XHW_MEM_LOW_KB + 3u * 1024)   /* free memory a new one must leave */
 #endif
 static uint32_t s_keep_bytes, s_keep_n, s_keep_refused;
+static volatile uint32_t s_keep_epoch = 1, s_keep_block_until;
+
+/* a memory reclaimer (xhw_mem_add_reclaim): every kept workspace is given
+ * back at its model's next skin (GXPortSkinKeepEpoch), none kept for 30 s.
+ * Nothing comes back at once: a model may still draw from its workspace. */
+static uint32_t skin_keep_reclaim(uint32_t want_kb, int urgent) {
+    (void)want_kb;
+    (void)urgent;
+    if (s_keep_n) s_keep_epoch++;
+    s_keep_block_until = xgx_present_count() + 1800;
+    return 0;
+}
+
+static void skin_keep_init(void) {
+    if (XGX_SKIN_KEEP_KB) xhw_mem_add_reclaim(skin_keep_reclaim, 1);   /* at GXInit; no I/O, asked first */
+}
+
+unsigned GXPortSkinKeepEpoch(void) {
+#if defined(XHW_AUTOPAD) && XHW_AUTOPAD
+    /* test builds: env PX_SKIN_REVOKE_AT=<frame> gives every kept workspace
+     * back there, as memory running short would */
+    static int at = -1;
+    if (at < 0) {
+        const char* e = getenv("PX_SKIN_REVOKE_AT");
+        at = e ? atoi(e) : 0;
+    }
+    if (at > 0 && xgx_present_count() >= (uint32_t)at) {
+        at = 0;
+        xhw_logf("[DLC] skin workspaces: %u given back (PX_SKIN_REVOKE_AT)", s_keep_n);
+        skin_keep_reclaim(0, 0);
+    }
+#endif
+    return s_keep_epoch;
+}
 
 void* GXPortSkinKeep(unsigned bytes) {
     uint8_t *raw, *p;
     if (!XGX_SKIN_KEEP_KB || s_keep_bytes + bytes > XGX_SKIN_KEEP_KB * 1024u ||
+        (int32_t)(xgx_present_count() - s_keep_block_until) < 0 ||
         xhw_mem_free_kb() < XGX_SKIN_KEEP_FREE_KB + bytes / 1024 || !(raw = (uint8_t*)malloc(bytes + 32))) {
         s_keep_refused++;
         return NULL;
@@ -2852,6 +2923,7 @@ static int dyn_call(DlEntry* e, uint32_t frame) {
         /* the same draws over the vertices the earlier call left in the ring */
 #if XGX_DYN_VERIFY
         s_dynv_reuse = 1;
+        s_dynv_keep_csr = ru->csr;
 #endif
         for (i = 0; d->view && i < d->ndraw; i++) {
             const DlBatch* b = &d->view[d->nbatch + i];
@@ -2944,6 +3016,9 @@ static int dyn_call(DlEntry* e, uint32_t frame) {
             if (!(keep->gen[i] = dyn_skin_gen(fetch[i].base))) ok = 0;
         }
         if (keep) {
+#if XGX_DYN_VERIFY
+            keep->csr = dynv_csr();
+#endif
             keep->ok = (uint8_t)(ok && xgx_vtx_ring_gen() == ring);
             keep->nf = (uint8_t)nf;
             keep->frame = frame;
