@@ -99,6 +99,9 @@ static struct {
 
 static void sig_recompute(void);
 static void plan_kinds(Plan* p, int vtxfmt);
+/* GPU skinning (gs_*, before dlc_call): workspaces whose skin waits there */
+static uint32_t s_gs_n;
+static void gs_cpu_for(const void* array);
 /* bumped whenever s_desc_sum, s_arrs_sum or a s_vat_sum changes (sig_*):
  * fmt_key's and cached_plan's caches (an array base alone, every model's
  * GXSetArray, leaves it) */
@@ -364,6 +367,7 @@ static void fetch_indexed(const Slot* s, uint32_t idx, uint8_t* v) {
     uint8_t a = s->attr == GX_VA_NRM && g_gx.desc[GX_VA_NRM] == GX_NONE ? GX_VA_NBT : s->attr;
     const uint8_t* base = g_gx.array[a];
     if (!base) return;
+    if (s_gs_n && (a == GX_VA_POS || a == GX_VA_NRM)) gs_cpu_for(base);   /* a skin left to the GPU: now on the CPU */
     store(s, base + idx * g_gx.array_stride[a], !g_gx.array_le[a], v);
 }
 
@@ -2775,6 +2779,7 @@ typedef struct {
     uint32_t frame;      /* transient entries: the frame they hold for (+1; 0: kept) */
 } SkinReg;
 static SkinReg s_skinreg[SKIN_REG];
+static void gs_drop(const void* verts);
 static uint32_t s_skin_gen = 1;
 
 /* a transient entry from an earlier frame is as good as gone */
@@ -2809,6 +2814,7 @@ static SkinReg* skin_slot(const void* p, int add) {
 
 void GXPortSkinWritten(const void* verts, const void* normals) {
     SkinReg* r;
+    if (s_gs_n) gs_drop(verts);   /* written or gone: not skinned on the GPU */
     if (verts && (r = skin_slot(verts, 1))) r->gen = ++s_skin_gen;
     if (normals && (r = skin_slot(normals, 1))) r->gen = ++s_skin_gen;
 }
@@ -2816,6 +2822,7 @@ void GXPortSkinWritten(const void* verts, const void* normals) {
 void GXPortSkinWrittenThisFrame(const void* verts, const void* normals) {
     uint32_t f = xgx_present_count() + 1;
     SkinReg* r;
+    if (s_gs_n) gs_drop(verts);   /* written or gone: not skinned on the GPU */
     if (verts && (r = skin_slot(verts, 1))) {
         r->gen = ++s_skin_gen;
         r->frame = f;
@@ -2828,6 +2835,7 @@ void GXPortSkinWrittenThisFrame(const void* verts, const void* normals) {
 
 void GXPortSkinForget(const void* verts, const void* normals) {
     SkinReg* r;
+    if (s_gs_n) gs_drop(verts);   /* written or gone: not skinned on the GPU */
     if (verts && (r = skin_slot(verts, 0))) r->p = SKIN_GONE;
     if (normals && (r = skin_slot(normals, 0))) r->p = SKIN_GONE;
 }
@@ -3124,6 +3132,796 @@ static void log_uncached(const uint8_t* dl, uint32_t nbytes, const char* why) {
 }
 
 /* 1: drawn from the cache */
+/* ---- skinning on the GPU (port_xbox_gx.h GXPortSkinGpu; docs/fps-plan.md M4) ----
+ * CSkinnedModel::Calculate skinned every vertex of a character on the CPU
+ * (BuildBoneRange), and every call of its display lists then fetched the
+ * skinned positions and normals from the workspace into the ring (the
+ * dynamic lists): the fights' biggest costs after the ticks. Instead the
+ * game hands over the virtual bones' matrices (GXPortSkinGpu) and skips the
+ * skin; a list called with that workspace as its arrays is drawn from the
+ * model's own bind-pose arrays, built once into the vertex pool with each
+ * vertex's bone as its matrix index (PNMTXIDX: the vertex program already
+ * indexes ten position and normal matrices, as on the GameCube), split into
+ * draws of at most ten bones, each draw loading its bones' matrices (the
+ * model-view times the bone) into the ten slots.
+ *
+ * Anything that can't go that way skins on the CPU after all, from the
+ * matrices kept here (gs_materialize, the same arithmetic as
+ * BuildBoneRange), and takes the old path: texgens from positions or
+ * normals or through a position matrix, lists with their own matrix
+ * indices or direct positions, lines and points, a vertex whose position
+ * and normal lie in different bones, a full vertex pool.
+ * -DXGX_GPU_SKIN=0 turns it off (the game then skins as before). */
+#ifndef XGX_GPU_SKIN
+#define XGX_GPU_SKIN 1
+#endif
+#define GS_MAX 128          /* workspaces with matrices waiting */
+#define GSL_MAX 1024        /* built lists */
+#define GS_SLOTS 8          /* bones a draw: eight of the vertex program's ten matrix slots, the last two
+                               left for other texgens' texture matrices (moved there for the draw) */
+typedef struct {
+    const uint8_t* verts;      /* the workspace (key); NULL: free */
+    const uint8_t* nrms;
+    const uint8_t* src_pos;    /* the model's bind pose: big-endian floats, 12 bytes */
+    const uint8_t* src_nrm;
+    uint32_t npts, nbones, cap;
+    int transient;             /* the shared ring: GXPortSkinWrittenThisFrame when skinned here */
+    uint32_t* first;           /* nbones + 1: each bone's first vertex */
+    float (*xf)[12];           /* row-major 3x4 */
+    float (*rot)[9];           /* row-major 3x3 */
+} GsReg;
+static GsReg s_gs[GS_MAX];
+static uint32_t s_gs_n;
+
+typedef struct {
+    uint32_t offset, count;    /* bytes into mem; vertices (a triangle list) */
+    XgxLayout layout;
+    uint8_t nb, bone[GS_SLOTS];
+} GsDraw;
+typedef struct {
+    const uint8_t* dl;         /* NULL: free */
+    uint32_t nbytes;
+    const uint8_t* src_pos;
+    uint8_t* mem;
+    GsDraw* draw;
+    uint32_t nd, last_used, bytes;
+    int bad;                   /* can't be drawn this way: skin on the CPU */
+} GsList;
+static GsList s_gsl[GSL_MAX];
+static uint32_t s_st_gs_calls, s_st_gs_draws, s_st_gs_cpu, s_st_gs_builds, s_st_gs_regs;
+static const char* s_gs_why = "-";
+
+static GsReg* gs_find(const void* verts) {
+    uint32_t i;
+    if (!verts || !s_gs_n) return NULL;
+    for (i = 0; i < GS_MAX; i++)
+        if (s_gs[i].verts == verts) return &s_gs[i];
+    return NULL;
+}
+
+/* the CPU skin wrote it, or it went: nothing to do on the GPU */
+static void gs_drop(const void* verts) {
+    GsReg* g = gs_find(verts);
+    if (g) {
+        g->verts = NULL;
+        s_gs_n--;
+    }
+}
+
+int GXPortSkinGpuOn(void) {
+#if XGX_GPU_SKIN
+    static int on = -1;
+    if (on < 0) {
+        const char* e = XHW_TEST_BUILD ? getenv("PX_GPU_SKIN") : NULL;
+        on = e ? atoi(e) != 0 : 1;
+        if (!on) xhw_logf("[DLC] GPU skinning off (PX_GPU_SKIN)");
+    }
+    return on;
+#else
+    return 0;
+#endif
+}
+
+int GXPortSkinGpu(const void* verts, const void* normals, const void* src_pos, const void* src_nrm, unsigned npts,
+                  unsigned nbones, const int* counts, const float* xf12, const float* rot9, int transient) {
+    GsReg* g;
+    uint32_t i, at = 0;
+    if (!GXPortSkinGpuOn() || !verts || !src_pos || !nbones) return 0;
+    if (!(g = gs_find(verts))) {
+        for (i = 0; i < GS_MAX && s_gs[i].verts; i++) {}
+        if (i == GS_MAX) {
+            s_gs_why = "too many workspaces";
+            return 0;
+        }
+        g = &s_gs[i];
+        s_gs_n++;
+    }
+    if (g->cap < nbones) {
+        uint32_t* f = (uint32_t*)realloc(g->first, (nbones + 1) * sizeof *f);
+        float(*x)[12];
+        float(*r)[9];
+        if (f) g->first = f;
+        x = f ? (float(*)[12])realloc(g->xf, nbones * sizeof *x) : NULL;
+        if (x) g->xf = x;
+        r = x ? (float(*)[9])realloc(g->rot, nbones * sizeof *r) : NULL;
+        if (r) g->rot = r;
+        if (!f || !x || !r) {
+            g->verts = NULL;
+            s_gs_n--;
+            s_gs_why = "no memory";
+            return 0;
+        }
+        g->cap = nbones;
+    }
+    for (i = 0; i < nbones; i++) {
+        g->first[i] = at;
+        at += (uint32_t)counts[i];
+    }
+    g->first[nbones] = at;
+    if (at != npts) {   /* the bones don't cover the points: not a layout this knows */
+        g->verts = NULL;
+        s_gs_n--;
+        s_gs_why = "bone counts";
+        return 0;
+    }
+    memcpy(g->xf, xf12, nbones * sizeof g->xf[0]);
+    memcpy(g->rot, rot9, nbones * sizeof g->rot[0]);
+    g->verts = (const uint8_t*)verts;
+    g->nrms = (const uint8_t*)normals;
+    g->src_pos = (const uint8_t*)src_pos;
+    g->src_nrm = (const uint8_t*)src_nrm;
+    g->npts = npts;
+    g->nbones = nbones;
+    g->transient = transient;
+    s_st_gs_regs++;
+    return 1;
+}
+
+static inline float gs_be(const uint8_t* p) {
+    uint32_t w = (uint32_t)p[0] << 24 | (uint32_t)p[1] << 16 | (uint32_t)p[2] << 8 | p[3];
+    float f;
+    memcpy(&f, &w, 4);
+    return f;
+}
+
+/* the skin the CPU would have made (BuildBoneRange: the same products and
+ * sums in the same order, single precision), into the workspace; then the
+ * workspace is an ordinary written one */
+static void gs_materialize(GsReg* g) {
+    const uint8_t* src = g->src_pos;
+    float* out = (float*)g->verts;
+    uint32_t b, i;
+    s_st_gs_cpu++;
+    for (b = 0; b < g->nbones; b++) {
+        const float* m = g->xf[b];
+        for (i = g->first[b]; i < g->first[b + 1]; i++, src += 12, out += 3) {
+            const float x = gs_be(src), y = gs_be(src + 4), z = gs_be(src + 8);
+            out[0] = m[0] * x + m[1] * y + m[2] * z + m[3];
+            out[1] = m[4] * x + m[5] * y + m[6] * z + m[7];
+            out[2] = m[8] * x + m[9] * y + m[10] * z + m[11];
+        }
+    }
+    if (g->nrms && g->src_nrm) {
+        src = g->src_nrm;
+        out = (float*)g->nrms;
+        for (b = 0; b < g->nbones; b++) {
+            const float* m = g->rot[b];
+            for (i = g->first[b]; i < g->first[b + 1]; i++, src += 12, out += 3) {
+                const float x = gs_be(src), y = gs_be(src + 4), z = gs_be(src + 8);
+                out[0] = x * m[0] + y * m[1] + z * m[2];
+                out[1] = x * m[3] + y * m[4] + z * m[5];
+                out[2] = x * m[6] + y * m[7] + z * m[8];
+            }
+        }
+    }
+    {
+        const void *v = g->verts, *n = g->nrms;
+        const int transient = g->transient;
+        gs_drop(v);   /* (GXPortSkinWritten drops it too) */
+        if (transient) GXPortSkinWrittenThisFrame(v, n);
+        else GXPortSkinWritten(v, n);
+    }
+}
+
+static uint32_t gs_bone(const GsReg* g, uint32_t idx) {
+    uint32_t lo = 0, hi = g->nbones;   /* the bone whose range holds idx */
+    while (hi - lo > 1) {
+        uint32_t mid = (lo + hi) / 2;
+        if (g->first[mid] <= idx) lo = mid;
+        else hi = mid;
+    }
+    return lo;
+}
+
+static void gsl_free(GsList* l) {
+    if (l->mem) xgx_vbuf_free(l->mem);
+    free(l->draw);
+    memset(l, 0, sizeof *l);
+}
+
+static GsList* gsl_slot(const uint8_t* dl, uint32_t nbytes, const uint8_t* src_pos, int add) {
+    uint32_t h = (((uint32_t)(uintptr_t)dl >> 5) ^ ((uint32_t)(uintptr_t)src_pos >> 4)) * 2654435761u >> 22, k;
+    GsList* free_slot = NULL;
+    for (k = 0; k < 64; k++) {
+        GsList* l = &s_gsl[(h + k) & (GSL_MAX - 1)];
+        if (l->dl == dl && l->nbytes == nbytes && l->src_pos == src_pos) return l;
+        if (!l->dl) {
+            if (!free_slot) free_slot = l;
+            break;
+        }
+    }
+    if (!add) return NULL;
+    if (!free_slot) {   /* the probe run is full: the oldest in it goes */
+        GsList* old = NULL;
+        for (k = 0; k < 64; k++) {
+            GsList* l = &s_gsl[(h + k) & (GSL_MAX - 1)];
+            if (!old || l->last_used < old->last_used) old = l;
+        }
+        gsl_free(old);
+        free_slot = old;
+    }
+    return free_slot;
+}
+
+/* lists not drawn for a while give their vertex memory back; 1: some did */
+static int gsl_evict(uint32_t frame) {
+    uint32_t k;
+    int n = 0;
+    for (k = 0; k < GSL_MAX; k++) {
+        GsList* l = &s_gsl[k];
+        if (l->dl && l->mem && frame - l->last_used > 120) {
+            xgx_vbuf_free(l->mem);
+            l->mem = NULL;
+            l->bad = 0;   /* built again when it comes back */
+            free(l->draw);
+            l->draw = NULL;
+            l->nd = 0;
+            n++;
+        }
+    }
+    return n;
+}
+
+/* The texgens a skinned draw can take. A texgen from the normal or the
+ * position (the characters' reflection maps: src NRM through TEXMTX0) must
+ * see the skinned vector: it gets a texture matrix per bone slot, picked per
+ * vertex as the position matrix is (the back end's per-vertex texture
+ * matrices, XgxLayout.tc_mtx): slot k = M x the bone's (rotation for a
+ * normal, transform for a position). All of them must share the source and
+ * M; any other texgen may use a texture matrix only in a slot the bones
+ * leave free (checked per draw, gs_call). */
+typedef struct {
+    uint32_t mask;      /* texgens from POS/NRM */
+    int from_nrm;
+    float m[3][4];      /* their matrix */
+    uint32_t other_min; /* the lowest texture-matrix slot another texgen uses (XGX_NUM_TEXMTX: none) */
+} GsTexgen;
+
+static char s_gs_tg[160];
+static int gs_state_ok(GsTexgen* tg) {
+    uint32_t i, mtx = 0;
+    tg->mask = 0;
+    tg->from_nrm = 0;
+    tg->other_min = XGX_NUM_TEXMTX;
+    for (i = 0; i < g_xgx.ntexgen && i < XGX_MAX_TEXGEN; i++) {
+        const XgxTexGen* t = &g_xgx.texgen[i];
+        if (t->src <= GX_TG_TANGENT) {
+            const int nrm = t->src == GX_TG_NRM;
+            if ((t->src != GX_TG_POS && !nrm) || (t->type != GX_TG_MTX3x4 && t->type != GX_TG_MTX2x4) ||
+                (t->mtx < GX_TEXMTX0 && t->mtx != GX_IDENTITY) || t->mtx > GX_IDENTITY ||
+                (tg->mask && (nrm != tg->from_nrm || t->mtx != mtx))) {
+                int n = 0;
+                uint32_t j;
+                for (j = 0; j < g_xgx.ntexgen && j < XGX_MAX_TEXGEN && n < (int)sizeof s_gs_tg - 40; j++)
+                    n += snprintf(s_gs_tg + n, sizeof s_gs_tg - (size_t)n, "%s%u: type %u src %u mtx %u", j ? ", " : "",
+                                  j, g_xgx.texgen[j].type, g_xgx.texgen[j].src, g_xgx.texgen[j].mtx);
+                s_gs_why = s_gs_tg;
+                return 0;
+            }
+            tg->mask |= 1u << i;
+            tg->from_nrm = nrm;
+            mtx = t->mtx;
+        } else if (t->mtx < GX_TEXMTX0) {
+            s_gs_why = "texgen through a position matrix";
+            return 0;
+        } else if (t->mtx < GX_IDENTITY) {
+            const uint32_t k = (t->mtx - GX_TEXMTX0) / 3;
+            if (k < tg->other_min) tg->other_min = k;
+        }
+    }
+    if (tg->mask) {
+        if (mtx == GX_IDENTITY) {
+            memset(tg->m, 0, sizeof tg->m);
+            tg->m[0][0] = tg->m[1][1] = tg->m[2][2] = 1.0f;
+        } else {
+            memcpy(tg->m, g_xgx.texmtx[(mtx - GX_TEXMTX0) / 3], sizeof tg->m);
+        }
+    }
+    return 1;
+}
+
+/* Build: the list decoded from the bind-pose arrays, as triangles, each
+ * vertex with its bone; then split into draws of at most GS_SLOTS bones. */
+#define GS_MAXV 65536
+static int gsl_build(GsList* l, const GsReg* g, uint32_t frame) {
+    const uint8_t* dl = l->dl;
+    const uint32_t nbytes = l->nbytes;
+    const uint8_t *save_a[2], *bases[N_ORDER];
+    uint8_t save_s[2], save_le[2];
+    uint32_t total, at = 0, ntri = 0, nverts = 0, cap_tri = 0, i, k, stride_max = 0;
+    uint8_t fmts;
+    int nb, b, ok = 1;
+    uint8_t* verts = NULL;   /* decoded vertices, one batch at a time, then triangles */
+    uint32_t(*tri)[4] = NULL;   /* vertex a, b, c, batch */
+    uint16_t* bone = NULL;
+    uint8_t* vbuf = NULL;   /* every batch's vertices (canonical, + the matrix index) */
+    uint32_t* vfirst = NULL;   /* each batch's first vertex in vbuf */
+    XgxLayout* lay = NULL;
+    GsDraw* draws = NULL;
+    uint32_t nd = 0, cap_d = 0, bytes = 0;
+    l->bad = 1;
+    if (!(nb = dl_scan(dl, nbytes, &total, &fmts))) {
+        s_gs_why = "no draws";
+        return 0;
+    }
+    if (!(lay = (XgxLayout*)malloc((size_t)nb * sizeof *lay))) {
+        s_gs_why = "no memory";
+        return 0;
+    }
+    /* the arrays as the bind pose's for the decode */
+    save_a[0] = g_gx.array[GX_VA_POS];
+    save_s[0] = g_gx.array_stride[GX_VA_POS];
+    save_le[0] = g_gx.array_le[GX_VA_POS];
+    save_a[1] = g_gx.array[GX_VA_NRM];
+    save_s[1] = g_gx.array_stride[GX_VA_NRM];
+    save_le[1] = g_gx.array_le[GX_VA_NRM];
+    g_gx.array[GX_VA_POS] = g->src_pos;
+    g_gx.array_stride[GX_VA_POS] = 12;
+    g_gx.array_le[GX_VA_POS] = 0;
+    if (g->src_nrm) {
+        g_gx.array[GX_VA_NRM] = g->src_nrm;
+        g_gx.array_stride[GX_VA_NRM] = 12;
+        g_gx.array_le[GX_VA_NRM] = 0;
+    }
+    vfirst = (uint32_t*)malloc((size_t)(nb + 1) * sizeof *vfirst);
+    {   /* pass 1: sizes */
+        DlBatch* batch = s_sc_batch;
+        for (b = 0; b < nb; b++) {
+            const uint32_t s = batch[b].layout.stride + 4;
+            if (s > stride_max) stride_max = s;
+            nverts += batch[b].count;
+        }
+    }
+    if (!vfirst || nverts > GS_MAXV || !(vbuf = (uint8_t*)malloc((size_t)nverts * stride_max)) ||
+        !(bone = (uint16_t*)malloc(nverts * sizeof *bone))) {
+        s_gs_why = nverts > GS_MAXV ? "too many vertices" : "no memory";
+        ok = 0;
+    }
+    /* pass 2: decode, each vertex's bone from its position index */
+    b = 0;
+    nverts = 0;
+    while (ok && at < nbytes && b < nb) {
+        uint8_t cmd = dl[at];
+        if (cmd >= 0x80 && cmd < 0xC0) {
+            Plan plan;
+            const uint32_t prim = cmd & 0xF8, n = gx_be16(dl + at + 1);
+            int ps = -1, ns = -1;
+            uint32_t s, v;
+            make_plan(&plan, cmd & 7);
+            s = plan.layout.stride;
+            if (plan.layout.off_mtx >= 0 || plan.layout.off_pos < 0 ||
+                (prim != XGX_TRIANGLES && prim != XGX_TRISTRIP && prim != XGX_TRIFAN && prim != XGX_QUADS)) {
+                s_gs_why = plan.layout.off_mtx >= 0 ? "its own matrix indices" : "not triangles";
+                ok = 0;
+                break;
+            }
+            for (i = 0; i < (uint32_t)plan.n; i++) {
+                const Slot* sl = &plan.slot[i];
+                bases[i] = sl->type == GX_DIRECT ? NULL : g_gx.array[array_attr(sl)];
+                if (sl->attr == GX_VA_POS) ps = (int)i;
+                if (sl->attr == GX_VA_NRM) ns = (int)i;
+            }
+            if (ps < 0 || plan.slot[ps].type == GX_DIRECT ||
+                (ns >= 0 && (plan.slot[ns].type == GX_DIRECT || plan.slot[ns].fmt.cnt == GX_NRM_NBT3 ||
+                             g_gx.desc[GX_VA_NRM] == GX_NONE))) {
+                s_gs_why = "direct positions or normals";
+                ok = 0;
+                break;
+            }
+            lay[b] = plan.layout;
+            lay[b].off_mtx = (int32_t)s;
+            lay[b].stride = s + 4;
+            lay[b].tc_mtx = 0;
+            vfirst[b] = nverts;
+            at += 3;
+            for (v = 0; v < n; v++) {
+                uint8_t* out = vbuf + (size_t)(nverts + v) * stride_max;
+                uint32_t pbone = 0, nbone = 0xFFFFFFFFu;
+                memset(out, 0, s + 4);
+                for (i = 0; i < (uint32_t)plan.n; i++) {
+                    const Slot* sl = &plan.slot[i];
+                    if (sl->type == GX_DIRECT) {
+                        store_fast(sl, dl + at, 1, out);
+                        at += sl->dsize;
+                    } else {
+                        const uint32_t idx = sl->type == GX_INDEX8 ? dl[at] : gx_be16(dl + at);
+                        const uint8_t a = array_attr(sl);
+                        at += sl->type == GX_INDEX8 ? 1 : 2;
+                        if ((int)i == ps || (int)i == ns) {
+                            if (idx >= g->npts) {
+                                s_gs_why = "index past the skin";
+                                ok = 0;
+                            } else if ((int)i == ps) {
+                                pbone = gs_bone(g, idx);
+                            } else {
+                                nbone = gs_bone(g, idx);
+                            }
+                        }
+                        if (bases[i] && ok) store_fast(sl, bases[i] + idx * g_gx.array_stride[a], !g_gx.array_le[a], out);
+                    }
+                }
+                if (nbone != 0xFFFFFFFFu && nbone != pbone) {
+                    s_gs_why = "position and normal in different bones";
+                    ok = 0;
+                }
+                if (!ok) break;
+                bone[nverts + v] = (uint16_t)pbone;
+            }
+            if (!ok) break;
+            /* its triangles, as the back end winds them (seg_list, copy_prim) */
+            {
+                uint32_t want = prim == XGX_QUADS ? n / 4 * 2 : prim == XGX_TRIANGLES ? n / 3 : n >= 3 ? n - 2 : 0;
+                if (ntri + want > cap_tri) {
+                    uint32_t c = cap_tri ? cap_tri : 1024;
+                    void* p;
+                    while (c < ntri + want) c *= 2;
+                    if (!(p = realloc(tri, c * sizeof *tri))) {
+                        s_gs_why = "no memory";
+                        ok = 0;
+                        break;
+                    }
+                    tri = (uint32_t(*)[4])p;
+                    cap_tri = c;
+                }
+                for (v = 0; v < want; v++) {
+                    uint32_t a, bb, c;
+                    if (prim == XGX_QUADS) {
+                        const uint32_t q = (v / 2) * 4;
+                        a = q;
+                        bb = v & 1 ? q + 2 : q + 1;
+                        c = v & 1 ? q + 3 : q + 2;
+                    } else if (prim == XGX_TRIFAN) {
+                        a = 0;
+                        bb = v + 1;
+                        c = v + 2;
+                    } else if (prim == XGX_TRISTRIP) {
+                        a = v + (v & 1);
+                        bb = v + 1 - (v & 1);
+                        c = v + 2;
+                    } else {   /* triangles */
+                        a = v * 3;
+                        bb = a + 1;
+                        c = a + 2;
+                    }
+                    tri[ntri][0] = nverts + a;
+                    tri[ntri][1] = nverts + bb;
+                    tri[ntri][2] = nverts + c;
+                    tri[ntri][3] = (uint32_t)b;
+                    ntri++;
+                }
+            }
+            nverts += n;
+            b++;
+            continue;
+        }
+        if (!(at = dl_skip(dl, at, nbytes))) break;
+    }
+    g_gx.array[GX_VA_POS] = save_a[0];
+    g_gx.array_stride[GX_VA_POS] = save_s[0];
+    g_gx.array_le[GX_VA_POS] = save_le[0];
+    g_gx.array[GX_VA_NRM] = save_a[1];
+    g_gx.array_stride[GX_VA_NRM] = save_s[1];
+    g_gx.array_le[GX_VA_NRM] = save_le[1];
+    if (ok && !ntri) {
+        s_gs_why = "no triangles";
+        ok = 0;
+    }
+    /* The triangles grouped by layout, then by their bones (sorted): a
+     * draw's bones then cover long runs, where the list's own order (strips
+     * wandering over the body) needed a new draw every few triangles. The
+     * order of triangles within one list changes; a list is one material. */
+    if (ok) {
+        uint64_t* key = (uint64_t*)malloc(ntri * sizeof *key);
+        uint32_t(*sorted)[4] = (uint32_t(*)[4])malloc(ntri * sizeof *sorted);
+        if (!key || !sorted) {
+            s_gs_why = "no memory";
+            ok = 0;
+        }
+        for (i = 0; ok && i < ntri; i++) {
+            uint32_t gb = tri[i][3], x0 = bone[tri[i][0]], x1 = bone[tri[i][1]], x2 = bone[tri[i][2]], tmpb;
+            int j;
+            for (j = 0; j < (int)gb; j++)
+                if (memcmp(&lay[j], &lay[gb], sizeof lay[0]) == 0) break;
+            gb = (uint32_t)j;
+            tri[i][3] = gb;
+            if (x0 > x1) tmpb = x0, x0 = x1, x1 = tmpb;
+            if (x1 > x2) tmpb = x1, x1 = x2, x2 = tmpb;
+            if (x0 > x1) tmpb = x0, x0 = x1, x1 = tmpb;
+            key[i] = (uint64_t)gb << 36 | (uint64_t)(x0 & 0xFFF) << 24 | (uint64_t)(x1 & 0xFFF) << 12 | (x2 & 0xFFF);
+        }
+        if (ok) {   /* by key, ties in the list's order (Shell sort; a build is rare) */
+            uint32_t* order = (uint32_t*)malloc(ntri * sizeof *order);
+            uint32_t gap;
+            if (!order) {
+                s_gs_why = "no memory";
+                ok = 0;
+            } else {
+                for (i = 0; i < ntri; i++) order[i] = i;
+                for (gap = ntri / 2; gap > 0; gap /= 2)
+                    for (i = gap; i < ntri; i++) {
+                        const uint32_t v = order[i];
+                        uint32_t j = i;
+                        while (j >= gap && (key[order[j - gap]] > key[v] ||
+                                            (key[order[j - gap]] == key[v] && order[j - gap] > v))) {
+                            order[j] = order[j - gap];
+                            j -= gap;
+                        }
+                        order[j] = v;
+                    }
+                for (i = 0; i < ntri; i++) memcpy(sorted[i], tri[order[i]], sizeof sorted[0]);
+                memcpy(tri, sorted, ntri * sizeof *sorted);
+                free(order);
+            }
+        }
+        free(key);
+        free(sorted);
+    }
+    /* pass 3: draws of at most GS_SLOTS bones, a new draw at each layout */
+    if (ok) {
+        uint32_t t = 0;
+        while (t < ntri && ok) {
+            GsDraw d;
+            uint32_t start = t;
+            memset(&d, 0, sizeof d);
+            d.layout = lay[tri[t][3]];
+            for (; t < ntri && tri[t][3] == tri[start][3]; t++) {
+                uint8_t add[3];
+                int na = 0, j;
+                for (k = 0; k < 3; k++) {
+                    const uint8_t bn = (uint8_t)bone[tri[t][k]];
+                    int have = 0;
+                    if (bone[tri[t][k]] > 255) {
+                        s_gs_why = "bone past 255";
+                        ok = 0;
+                    }
+                    for (j = 0; j < d.nb && !have; j++) have = d.bone[j] == bn;
+                    for (j = 0; j < na && !have; j++) have = add[j] == bn;
+                    if (!have) add[na++] = bn;
+                }
+                if (!ok || d.nb + na > GS_SLOTS) break;
+                for (j = 0; j < na; j++) d.bone[d.nb++] = add[j];
+            }
+            if (!ok) break;
+            d.count = (t - start) * 3;
+            d.offset = start;   /* the first triangle, for pass 4 */
+            if (nd == cap_d) {
+                uint32_t c = cap_d ? cap_d * 2 : 16;
+                void* p = realloc(draws, c * sizeof *draws);
+                if (!p) {
+                    s_gs_why = "no memory";
+                    ok = 0;
+                    break;
+                }
+                draws = (GsDraw*)p;
+                cap_d = c;
+            }
+            draws[nd++] = d;
+            bytes += d.count * d.layout.stride + d.layout.stride;   /* + room to align it */
+        }
+    }
+    /* pass 4: into the vertex pool, each draw at a multiple of its stride */
+    if (ok) {
+        l->mem = (uint8_t*)xgx_vbuf_alloc(bytes);
+        if (!l->mem && gsl_evict(frame)) l->mem = (uint8_t*)xgx_vbuf_alloc(bytes);
+        if (!l->mem) {
+            s_gs_why = "vertex pool full";
+            ok = 0;
+        }
+    }
+    if (ok) {
+        uint8_t* tmp = (uint8_t*)malloc(bytes);
+        uint32_t rel = xgx_vbuf_offset(l->mem), pos = 0, d;
+        if (!tmp) {
+            s_gs_why = "no memory";
+            ok = 0;
+        }
+        for (d = 0; ok && d < nd; d++) {
+            GsDraw* dr = &draws[d];
+            const uint32_t s = dr->layout.stride, first_tri = dr->offset;
+            uint32_t q, slot[256];
+            for (q = 0; q < 256; q++) slot[q] = 0;
+            for (q = 0; q < dr->nb; q++) slot[dr->bone[q]] = q;
+            dr->offset = (rel + pos + s - 1) / s * s - rel;
+            for (q = 0; q < dr->count; q++) {
+                const uint32_t vi = tri[first_tri + q / 3][q % 3];
+                uint8_t* o = tmp + dr->offset + q * s;
+                const float row = (float)(slot[bone[vi]] * 3);   /* PNMTXIDX: the slot's first row */
+                memcpy(o, vbuf + (size_t)vi * stride_max, s - 4);
+                memcpy(o + dr->layout.off_mtx, &row, 4);
+            }
+            pos = dr->offset + dr->count * s;
+        }
+        if (ok) memcpy(l->mem, tmp, pos);   /* the pool is write-combined: one pass */
+        free(tmp);
+    }
+    free(vbuf);
+    free(bone);
+    free(tri);
+    free(vfirst);
+    free(lay);
+    if (!ok) {
+        free(draws);
+        if (l->mem) xgx_vbuf_free(l->mem);
+        l->mem = NULL;
+        return 0;
+    }
+    l->draw = draws;
+    l->nd = nd;
+    l->bytes = bytes;
+    l->bad = 0;
+    s_st_gs_builds++;
+    return 1;
+}
+
+/* an immediate-mode draw reads a waiting workspace: skin it on the CPU */
+static void gs_cpu_for(const void* array) {
+    uint32_t i;
+    for (i = 0; i < GS_MAX; i++)
+        if (s_gs[i].verts && (s_gs[i].verts == array || s_gs[i].nrms == array)) {
+            s_gs_why = "immediate-mode draw";
+            gs_materialize(&s_gs[i]);
+            return;
+        }
+}
+
+/* m (3x4) = a (3x4) x b (3x4 affine) */
+static void gs_mul34(float m[3][4], const float a[3][4], const float* b) {
+    int r;
+    for (r = 0; r < 3; r++) {
+        m[r][0] = a[r][0] * b[0] + a[r][1] * b[4] + a[r][2] * b[8];
+        m[r][1] = a[r][0] * b[1] + a[r][1] * b[5] + a[r][2] * b[9];
+        m[r][2] = a[r][0] * b[2] + a[r][1] * b[6] + a[r][2] * b[10];
+        m[r][3] = a[r][0] * b[3] + a[r][1] * b[7] + a[r][2] * b[11] + a[r][3];
+    }
+}
+
+static void gs_mul33(float m[3][3], const float a[3][3], const float* b) {
+    int r;
+    for (r = 0; r < 3; r++) {
+        m[r][0] = a[r][0] * b[0] + a[r][1] * b[3] + a[r][2] * b[6];
+        m[r][1] = a[r][0] * b[1] + a[r][1] * b[4] + a[r][2] * b[7];
+        m[r][2] = a[r][0] * b[2] + a[r][1] * b[5] + a[r][2] * b[8];
+    }
+}
+
+/* A list called with a registered workspace as its arrays: 1 drawn here;
+ * 0: skinned on the CPU now (gs_materialize), the old path draws it */
+static int gs_call(const uint8_t* dl, uint32_t nbytes, GsReg* g) {
+    const uint32_t frame = xgx_present_count();
+    float save_p[XGX_NUM_POSMTX][3][4], save_n[XGX_NUM_POSMTX][3][3], base_p[3][4], base_n[3][3];
+    float save_t[XGX_NUM_TEXMTX][3][4];
+    XgxTexGen save_tg[XGX_MAX_TEXGEN];
+    GsTexgen tg;
+    GsList* l;
+    uint32_t d, k;
+    const uint32_t cur = (g_xgx.cur_posmtx / 3) % XGX_NUM_POSMTX;
+    if (!gs_state_ok(&tg) || (g_gx.desc[GX_VA_NRM] != GX_NONE && g_gx.array[GX_VA_NRM] != g->nrms)) {
+        if (g_gx.desc[GX_VA_NRM] != GX_NONE && g_gx.array[GX_VA_NRM] != g->nrms) s_gs_why = "other normals";
+        gs_materialize(g);
+        return 0;
+    }
+    l = gsl_slot(dl, nbytes, g->src_pos, 1);
+    if (!l->dl) {
+        l->dl = dl;
+        l->nbytes = nbytes;
+        l->src_pos = g->src_pos;
+    }
+    l->last_used = frame;
+    if (!l->mem && (l->bad || !gsl_build(l, g, frame))) {
+        gs_materialize(g);
+        return 0;
+    }
+    /* other texgens' texture matrices in the bone slots move to the two
+     * left free (GS_SLOTS); more than two of them: the CPU */
+    int moved = 0;
+    uint32_t from[2] = { 0, 0 }, to = GS_SLOTS;
+    if (tg.other_min < GS_SLOTS) {
+        for (k = 0; k < g_xgx.ntexgen && k < XGX_MAX_TEXGEN; k++) {
+            const XgxTexGen* t = &g_xgx.texgen[k];
+            uint32_t j, m;
+            if ((tg.mask >> k & 1) || t->mtx < GX_TEXMTX0 || t->mtx >= GX_IDENTITY) continue;
+            j = (t->mtx - GX_TEXMTX0) / 3;
+            if (j >= GS_SLOTS) {   /* stays; it mustn't be where a moved one goes */
+                if (j < GS_SLOTS + 2) to = GS_SLOTS + 2;
+                continue;
+            }
+            for (m = 0; m < (uint32_t)moved && from[m] != j; m++) {}
+            if (m == (uint32_t)moved) {
+                if (moved == 2) {
+                    moved = 3;
+                    break;
+                }
+                from[moved++] = j;
+            }
+        }
+        if (moved > 2 || (moved && to != GS_SLOTS)) {
+            s_gs_why = "texture matrices in the bone slots";
+            gs_materialize(g);
+            return 0;
+        }
+    }
+    s_st_gs_calls++;
+    if (tg.mask || moved) {
+        memcpy(save_t, g_xgx.texmtx, sizeof save_t);
+        memcpy(save_tg, g_xgx.texgen, sizeof save_tg);
+        for (k = 0; k < XGX_MAX_TEXGEN; k++) {
+            XgxTexGen* t = &g_xgx.texgen[k];
+            if (tg.mask >> k & 1) {
+                t->mtx = GX_TEXMTX0;   /* per vertex: slot k's (XgxLayout.tc_mtx) */
+            } else if (moved && k < g_xgx.ntexgen && t->mtx >= GX_TEXMTX0 && t->mtx < GX_IDENTITY) {
+                const uint32_t j = (t->mtx - GX_TEXMTX0) / 3;
+                const int m = j == from[0] ? 0 : moved > 1 && j == from[1] ? 1 : -1;
+                if (m >= 0) t->mtx = GX_TEXMTX0 + 3 * (GS_SLOTS + (uint32_t)m);
+            }
+        }
+        for (k = 0; k < (uint32_t)moved; k++) memcpy(g_xgx.texmtx[GS_SLOTS + k], save_t[from[k]], sizeof save_t[0]);
+        g_xgx.dirty |= XGX_DIRTY_TEXMTX | XGX_DIRTY_TEXGEN;
+    }
+    memcpy(save_p, g_xgx.posmtx, sizeof save_p);
+    memcpy(save_n, g_xgx.nrmmtx, sizeof save_n);
+    memcpy(base_p, g_xgx.posmtx[cur], sizeof base_p);
+    memcpy(base_n, g_xgx.nrmmtx[cur], sizeof base_n);
+    for (d = 0; d < l->nd; d++) {
+        const GsDraw* dr = &l->draw[d];
+        XgxLayout lay = dr->layout;
+        for (k = 0; k < dr->nb; k++) {
+            const uint32_t bn = dr->bone[k];
+            gs_mul34(g_xgx.posmtx[k], (const float(*)[4])base_p, g->xf[bn]);
+            gs_mul33(g_xgx.nrmmtx[k], (const float(*)[3])base_n, g->rot[bn]);
+            g_xgx.posmtx_mask |= 1u << k;
+            if (tg.mask) {
+                if (tg.from_nrm) {   /* M x (rotation | 0): the normal's translation is M's own */
+                    float r[12];
+                    const float* q = g->rot[bn];
+                    r[0] = q[0], r[1] = q[1], r[2] = q[2], r[3] = 0;
+                    r[4] = q[3], r[5] = q[4], r[6] = q[5], r[7] = 0;
+                    r[8] = q[6], r[9] = q[7], r[10] = q[8], r[11] = 0;
+                    gs_mul34(g_xgx.texmtx[k], (const float(*)[4])tg.m, r);
+                } else {
+                    gs_mul34(g_xgx.texmtx[k], (const float(*)[4])tg.m, g->xf[bn]);
+                }
+            }
+        }
+        lay.tc_mtx = tg.mask;
+        g_xgx.dirty |= XGX_DIRTY_POSMTX | (tg.mask ? XGX_DIRTY_TEXMTX | XGX_DIRTY_TEXGEN : 0);
+        xgx_vtx_use(l->mem + dr->offset);
+        xgx_draw(XGX_TRIANGLES, dr->count, &lay, &g_xgx);
+        g_xgx.dirty = 0;
+        s_st_gs_draws++;
+    }
+    /* the game's matrices back: it loaded them and may draw with them next */
+    memcpy(g_xgx.posmtx, save_p, sizeof save_p);
+    memcpy(g_xgx.nrmmtx, save_n, sizeof save_n);
+    g_xgx.posmtx_mask |= (1u << XGX_NUM_POSMTX) - 1;
+    g_xgx.dirty |= XGX_DIRTY_POSMTX;
+    if (tg.mask || moved) {
+        memcpy(g_xgx.texmtx, save_t, sizeof save_t);
+        memcpy(g_xgx.texgen, save_tg, sizeof save_tg);
+        g_xgx.dirty |= XGX_DIRTY_TEXMTX | XGX_DIRTY_TEXGEN;
+    }
+    return 1;
+}
+
 static int dlc_call(const uint8_t* dl, uint32_t nbytes) {
     uint32_t frame = xgx_present_count();
     DlEntry* e;
@@ -3135,6 +3933,12 @@ static int dlc_call(const uint8_t* dl, uint32_t nbytes) {
         s_dlc_nfree = DLC_MAX;
         s_dlc_ready = 1;
     }
+#if XGX_GPU_SKIN
+    if (s_gs_n) {   /* a skinned model's list: on the GPU, or skinned on the CPU now */
+        GsReg* g = gs_find(g_gx.array[GX_VA_POS]);
+        if (g && gs_call(dl, nbytes, g)) return 1;
+    }
+#endif
     e = dlc_find(dl, nbytes);
     /* a list of more than one draw has a batch table, an allocation of its
      * own (a cache miss a call, round hw5's profile): asked for now, it
@@ -3277,6 +4081,12 @@ void gx_vtx_frame_end(void) {
                      s_ru_why[0], s_ru_why[1], s_ru_why[2], s_ru_why[3], s_ru_why[4], s_ru_why[5], s_keep_n,
                      s_keep_bytes / 1024, s_keep_refused);
             memset(s_ru_why, 0, sizeof s_ru_why);
+#if XGX_GPU_SKIN
+            xhw_logf("[DLC] GPU skin: %u skins handed over, %u list calls (%u draws), %u lists built, %u skinned on "
+                     "the CPU after all (last why: %s); %u waiting",
+                     s_st_gs_regs, s_st_gs_calls, s_st_gs_draws, s_st_gs_builds, s_st_gs_cpu, s_gs_why, s_gs_n);
+            s_st_gs_regs = s_st_gs_calls = s_st_gs_draws = s_st_gs_builds = s_st_gs_cpu = 0;
+#endif
             s_st_lines = s_st_line_drop = s_st_line_clip = s_st_line_box = 0;
             memset(s_begin_n, 0, sizeof s_begin_n);
             memset(s_begin_who, 0, sizeof s_begin_who);
