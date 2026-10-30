@@ -87,6 +87,8 @@ unsigned long xhw_thread_eip(void* kthread, unsigned long* esp_out) {
 static uint16_t* s_hist;
 static uint16_t* s_hist_sim;   /* the samples taken during the simulation ticks */
 static uint16_t* s_hist_mix;   /* the mixer thread's samples ([PROFA]) */
+static uint16_t* s_hist_rend;  /* the samples taken during the game's draw ([PROFR]: [PERF]'s render) */
+static uint32_t s_rend_placed;
 static uint32_t s_mix_placed, s_mix_outside;
 /* [PROFT]: only the samples of frames that took XHW_PROF_STALL_MS or more
  * (a room's first frame, a pickup): a frame's samples wait in s_fb until
@@ -270,6 +272,11 @@ static void report(void) {
     if (s_hist_sim) {
         rep("[PROFS] %u samples in the simulation\n", s_sim_placed);
         report_hist("[PROFS]", s_hist_sim);
+    }
+    if (s_hist_rend) {
+        rep("[PROFR] %u samples in the game's draw\n", s_rend_placed);
+        report_hist("[PROFR]", s_hist_rend);
+        s_rend_placed = 0;
     }
     if (s_hist_mix) {
         rep("[PROFA] %u samples in the mixer thread (%u outside the image)\n", s_mix_placed, s_mix_outside);
@@ -474,7 +481,11 @@ static DWORD WINAPI sampler(LPVOID arg) {
         }
         if (eip >= xhw_image_base && eip < xhw_image_end) {
             uint32_t b = (eip - xhw_image_base) >> BUCKET_SHIFT;
-            int sim = xhw_perf_bucket() == XHW_PERF_LOGIC;
+            int bucket = xhw_perf_bucket(), sim = bucket == XHW_PERF_LOGIC;
+            if (s_hist_rend && bucket == XHW_PERF_RENDER) {
+                if (s_hist_rend[b] != 0xFFFF) s_hist_rend[b]++;
+                s_rend_placed++;
+            }
             if (s_hist[b] != 0xFFFF) s_hist[b]++;
             s_placed++;
             if (s_hist_sim && sim) {
@@ -514,6 +525,7 @@ void xhw_prof_start(void) {
     s_hist_sim = (uint16_t*)calloc(s_nbuckets, sizeof s_hist_sim[0]);
     s_hist_stall = (uint16_t*)calloc(s_nbuckets, sizeof s_hist_stall[0]);
     s_hist_mix = (uint16_t*)calloc(s_nbuckets, sizeof s_hist_mix[0]);
+    s_hist_rend = (uint16_t*)calloc(s_nbuckets, sizeof s_hist_rend[0]);
     s_libc = (CallerTable*)calloc(1, sizeof *s_libc);
     s_callers = (CallerTable*)calloc(1, sizeof *s_callers);
     s_wn = (code_end() - xhw_image_base + (1u << BUCKET_SHIFT) - 1) >> BUCKET_SHIFT;
