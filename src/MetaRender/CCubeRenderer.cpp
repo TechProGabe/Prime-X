@@ -7,6 +7,9 @@
 #include "Kyoto/Graphics/CCubeMaterial.hpp"
 #include "Kyoto/Graphics/CCubeModel.hpp"
 #include "Kyoto/Graphics/CCubeSurface.hpp"
+#ifdef TARGET_XBOX
+#include "port_xbox_gx.h" // PORT_XBOX: GXPortStaticAdd/Remove
+#endif
 #include "Kyoto/Graphics/CDrawable.hpp"
 #include "Kyoto/Graphics/CDrawablePlaneObject.hpp"
 #include "Kyoto/Graphics/CGX.hpp"
@@ -535,6 +538,37 @@ void CCubeRenderer::AddStaticGeometry(const rstl::vector< CMetroidModelInstance 
     }
     x1c_areaListItems.push_back(CAreaListItem(geometry, octTree, textures, models, areaIdx));
     GXInvalidateVtxCache();
+#ifdef TARGET_XBOX
+    // PORT_XBOX: the room's geometry (its arrays and surfaces' display lists)
+    // is static while it is registered: the GX layer's cached lists of it
+    // skip their content checks (GXPortStaticAdd)
+    {
+      uintptr_t lo = ~uintptr_t(0), hi = 0;
+      for (int i = 0; i < geometry->size(); ++i) {
+        const CMetroidModelInstance& inst = geometry->at(i);
+        const void* ptrs[5] = {inst.GetVertexPointer(), inst.GetNormalPointer(), inst.GetColorPointer(),
+                               inst.GetTCPointer(), inst.GetPackedTCPointer()};
+        const uint sizes[5] = {inst.GetVertexSize(), inst.GetNormalSize(), inst.GetColorSize(), inst.GetTCSize(),
+                               inst.GetPackedTCSize()};
+        for (int k = 0; k < 5; ++k) {
+          if (ptrs[k] != nullptr && sizes[k] != 0) {
+            lo = rstl::min_val(lo, reinterpret_cast< uintptr_t >(ptrs[k]));
+            hi = rstl::max_val(hi, reinterpret_cast< uintptr_t >(ptrs[k]) + sizes[k]);
+          }
+        }
+        const rstl::vector< void* >& surfaces = inst.GetSurfaces();
+        for (int k = 0; k < surfaces.size(); ++k) {
+          const CCubeSurface surface(surfaces[k]);
+          const uintptr_t dl = reinterpret_cast< uintptr_t >(surface.GetDisplayList());
+          lo = rstl::min_val(lo, dl);
+          hi = rstl::max_val(hi, dl + surface.GetDisplayListSize());
+        }
+      }
+      if (hi > lo) {
+        GXPortStaticAdd(geometry, reinterpret_cast< const void* >(lo), static_cast< unsigned >(hi - lo));
+      }
+    }
+#endif
   }
 }
 
@@ -553,6 +587,9 @@ void CCubeRenderer::RemoveStaticGeometry(const rstl::vector< CMetroidModelInstan
   if (search != x1c_areaListItems.end()) {
     x1c_areaListItems.erase(search);
   }
+#ifdef TARGET_XBOX
+  GXPortStaticRemove(geometry); // PORT_XBOX: its cached lists go before its memory does
+#endif
 }
 
 void CCubeRenderer::SetModelMatrix(const CTransform4f& xf) { CGraphics::SetModelMatrix(xf); }

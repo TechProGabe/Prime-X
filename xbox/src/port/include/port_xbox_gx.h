@@ -19,6 +19,12 @@ int GXPortBoxCulled(const float bmin[3], const float bmax[3]);
 // as n GXPosition1x8 calls would. 0: the batch isn't exactly that (make the
 // calls).
 int GXPortPositions1x8(const unsigned char* idx, unsigned n);
+/* Memory the game promises not to write while registered (a room's static
+ * geometry from the disc: CCubeRenderer::AddStaticGeometry): cached
+ * display lists that read only such memory skip their content checks.
+ * Remove drops the lists cached from it, before the memory is freed. */
+void GXPortStaticAdd(const void* key, const void* lo, unsigned bytes);
+void GXPortStaticRemove(const void* key);
 
 int GXPortRainLines(const short* xyz, unsigned n, short dz, unsigned short c0, unsigned short c1);
 
