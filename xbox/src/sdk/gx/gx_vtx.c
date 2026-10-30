@@ -1857,8 +1857,11 @@ static void cen_report(void) {
  * samples are cache misses in game memory, a few thousand a frame in Main
  * Plaza's ~1600 lists */
 #define DLC_STABLE2 (DLC_STABLE + 600)
+/* `stable` of a list read wholly from registered static memory
+ * (GXPortStaticAdd): never checked; GXPortStaticRemove drops it */
+#define DLC_STATIC 0xFFFFFFFFu
 static int dlc_content_changed(DlEntry* e, uint32_t frame) {
-    if (e->checked == frame) return 0;
+    if (e->checked == frame || e->stable == DLC_STATIC) return 0;
 #if defined(XHW_PMC) && XHW_PMC
     if (xhw_ablate(XHW_AB_RECHECK)) return 0;   /* the probe's window 5 */
 #endif
@@ -2184,6 +2187,71 @@ static void check_verts(const DlEntry* e, const DlBatch* b, int nb, const uint8_
 #endif
 
 /* decode the whole list into one buffer; 0 when it can't be cached */
+/* Static memory (GXPortStaticAdd): a room's geometry while it is loaded.
+ * Round hw15: the content checks of Main Plaza's ~1600 world lists (16
+ * sampled words per list and array range, cache misses in game memory)
+ * were ~5% of the console's CPU there; the disc's geometry never changes
+ * in place. -DXGX_STATIC_LISTS=0 turns it off. */
+#ifndef XGX_STATIC_LISTS
+#define XGX_STATIC_LISTS 1
+#endif
+#define STATIC_MAX 32
+static struct {
+    const void* key;
+    uintptr_t lo, hi;
+} s_static[STATIC_MAX];
+static int s_nstatic;
+static uint32_t s_st_static_lists, s_st_static_drops;
+
+static int static_has(const void* p, uint32_t bytes) {
+    uintptr_t a = (uintptr_t)p, b = a + bytes;
+    int i;
+    for (i = 0; i < s_nstatic; i++)
+        if (a >= s_static[i].lo && b <= s_static[i].hi && b >= a) return 1;
+    return 0;
+}
+
+/* the list and every array range it reads lie in static memory */
+static int dlc_static(const DlEntry* e) {
+    uint32_t i;
+    if (!XGX_STATIC_LISTS || !s_nstatic || !static_has(e->dl, e->nbytes)) return 0;
+    for (i = 0; i < e->nrange; i++)
+        if (!static_has(e->range[i].p, e->range[i].bytes)) return 0;
+    s_st_static_lists++;
+    return 1;
+}
+
+void GXPortStaticAdd(const void* key, const void* lo, unsigned bytes) {
+    int i;
+    if (!XGX_STATIC_LISTS || !key || !lo || !bytes) return;
+    for (i = 0; i < s_nstatic; i++)
+        if (s_static[i].key == key) break;
+    if (i == s_nstatic) {
+        if (s_nstatic == STATIC_MAX) return;   /* not static then: the lists keep their checks */
+        s_nstatic++;
+    }
+    s_static[i].key = key;
+    s_static[i].lo = (uintptr_t)lo;
+    s_static[i].hi = (uintptr_t)lo + bytes;
+    xhw_logf("[DLC] static memory: %u KB at %p (%d ranges; %u lists marked, %u dropped so far)", bytes / 1024, lo,
+             s_nstatic, s_st_static_lists, s_st_static_drops);
+}
+
+void GXPortStaticRemove(const void* key) {
+    int i, k;
+    for (i = 0; i < s_nstatic; i++)
+        if (s_static[i].key == key) break;
+    if (i == s_nstatic) return;
+    /* the lists marked static that start in it go: the memory is freed next */
+    for (k = 0; k < DLC_MAX; k++)
+        if (s_dlc[k].dl && s_dlc[k].stable == DLC_STATIC &&
+            (uintptr_t)s_dlc[k].dl >= s_static[i].lo && (uintptr_t)s_dlc[k].dl < s_static[i].hi) {
+            dlc_drop(k);
+            s_st_static_drops++;
+        }
+    s_static[i] = s_static[--s_nstatic];
+}
+
 static int dlc_build(DlEntry* e, uint32_t frame) {
     static IdxRange r;
     DlBatch *batch, *merged;
@@ -2281,7 +2349,7 @@ static int dlc_build(DlEntry* e, uint32_t frame) {
     e->fkey = fmt_key(fmts);
     e->hash = content_hash(e);
     e->qhash = content_qhash(e);
-    e->stable = 0;
+    e->stable = dlc_static(e) ? DLC_STATIC : 0;
     e->checked = frame;
     s_st_dl_builds++;
     return 1;

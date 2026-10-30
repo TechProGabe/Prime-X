@@ -161,6 +161,10 @@ combiners; ThinLTO + PGO for releases.
     vertex program's key and the texgen rows are not worked out again (the
     rows are when a unit's linear texture changed size). The same constants
     and program either way.
+  - Static memory (M3.3, `-DXGX_STATIC_LISTS=0`): a cached display list
+    read wholly from registered static memory (a room's geometry, while
+    `CCubeRenderer` has it) skips its content checks; unregistering drops
+    those lists before the memory is freed or moved.
   - The rain's lines (M5): `GXPortRainLines` keeps its batch's box, and
     `clip_lines` tests the box's corners once; a batch wholly inside skips
     the per-line test (`-DXGX_LINE_BOX=0`). Same vertices drawn.
@@ -264,6 +268,7 @@ One line per edit to `src/`, `include/`, `extern/musyx` or
 | `src/MetaRender/CCubeRenderer.cpp` | `DrawUnsortedGeometry` prefetches the box and flags of the model four ahead | speed: the loop over every world model waits on each model's lines (~3% of Main Plaza's CPU, round hw9); a hint only |
 | `include/MetroidPrime/CObjectList.hpp`, `src/MetroidPrime/CStateManager.cpp` | `CObjectList::PortPrefetchAhead`: the walks in `PreThinkObjects`, `Think`, `UpdateSortedLists`, `PreRender` and `DrawWorld` prefetch the entity three links ahead | speed: each walk waits on every entity's lines in turn (~4% of Main Plaza's CPU, round hw9); a hint only |
 | `src/Kyoto/Alloc/CGameAllocator.cpp`, `src/Kyoto/Particles/CElementGen.cpp`, `src/Kyoto/Particles/CParticleSwoosh.cpp` | the clock reads that only feed write-only timing stats are left out: `gAllocatorTime` (two a game allocation), `CElementGen`'s `x2cc`/`x2d0` and `CParticleSwoosh`'s `x1c4_`/`x1c8_` (two per system update and render) | speed: `xhw_time_ns` was ~1% of the fight's CPU (round hw13), most of it from these; nothing reads the stats |
+| `src/MetaRender/CCubeRenderer.cpp` | `AddStaticGeometry` registers the room's geometry memory (the hull of its arrays and display lists) with `GXPortStaticAdd`; `RemoveStaticGeometry` unregisters it (`GXPortStaticRemove`, which drops the lists cached from it) | speed: the content checks of Main Plaza's ~1600 cached world lists were ~5% of the console's CPU (round hw15); the disc's geometry never changes in place, and the game removes it before freeing or moving it (heap compaction does remove/add) |
 | `include/MetroidPrime/CSortedLists.hpp`, `src/MetroidPrime/CSortedLists.cpp` | `CSortedListManager` keeps each sorted list's coordinates in list order (`xPortKey`, 24 KB), moved with the ids; the binary searches and `MoveInList` read them | speed: every near-list query runs twelve binary searches over 44-byte nodes scattered through 45 KB (`BuildNearList` ~3% of a fight's ticks, round hw12); the same comparisons on the same values |
 
 Imported unchanged but added to the game build (MetroidPrimePort compiles
