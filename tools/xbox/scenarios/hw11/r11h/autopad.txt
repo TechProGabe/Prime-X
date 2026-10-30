@@ -1,0 +1,12 @@
+# r11h: the pause screen over Main Plaza (hw8 free play: 14-17 fps there), Game Timing: Fixed; profiler build
+env PX_NEXT_XBE=F:\Applications\Prime-X-r11i\default.xbe
+env PX_SIM_AUTO=0
+env MP_BOOT_WORLD=83F6FF6F:D5CDB809
+1500 SHOT
+2000 START
+2300 SHOT
+2900 RIGHT
+3200 SHOT
+3800 START
+4000 SHOT
+4400 NEXT

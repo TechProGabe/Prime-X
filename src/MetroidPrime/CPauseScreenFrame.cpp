@@ -207,7 +207,7 @@ static const SGameOption skPortDisplayOptions[] = {
     {PORT_OPTION(PortXboxOptions::kXO_WidescreenHud), -1, 0.f, 1.f, 1.f, kOT_DoubleEnum},
     {PORT_OPTION(PortXboxOptions::kXO_Fov), -1, 0.f, 2.f, 1.f, kOT_TripleEnum},
     {PORT_OPTION(PortXboxOptions::kXO_FpsCounter), -1, 0.f, 1.f, 1.f, kOT_DoubleEnum},
-    {PORT_OPTION(PortXboxOptions::kXO_GameTiming), -1, 0.f, 1.f, 1.f, kOT_DoubleEnum},
+    {PORT_OPTION(PortXboxOptions::kXO_GameTiming), -1, 0.f, 2.f, 1.f, kOT_TripleEnum},
     {PORT_OPTION(PortXboxOptions::kXO_VideoOutput), -1, 0.f, 2.f, 1.f, kOT_TripleEnum},
     {kGO_RestoreDefaults, 35, 0.f, 1.f, 1.f, kOT_RestoreDefaults},
 };
@@ -265,7 +265,7 @@ static const SGameOption skFrontControllerOptions[] = {
 };
 static const SGameOption skFrontGameplayOptions[] = {
     {PORT_OPTION(PortXboxOptions::kXO_SkipCutscenes), -1, 0.f, 1.f, 1.f, kOT_DoubleEnum},
-    {PORT_OPTION(PortXboxOptions::kXO_GameTiming), -1, 0.f, 1.f, 1.f, kOT_DoubleEnum},
+    {PORT_OPTION(PortXboxOptions::kXO_GameTiming), -1, 0.f, 2.f, 1.f, kOT_TripleEnum},
 };
 static const SGameOption skFrontSystemOptions[] = {
     {PORT_OPTION(PortXboxOptions::kXO_Screenshots), -1, 0.f, 1.f, 1.f, kOT_DoubleEnum},

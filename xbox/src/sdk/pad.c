@@ -82,6 +82,33 @@ const xhw_pad* xsdk_pad_raw(int port) {
     return port >= 0 && port < PORTS && s_raw_ok[port] ? &s_raw[port] : NULL;
 }
 
+/* Presses between two reads. The game reads the pad once a tick; with Game
+ * Timing: Auto at 30 Hz ticks that is every other frame, and a tap shorter
+ * than that fell between two reads. A frame boundary that saw no PADRead
+ * since the last one samples the buttons, and the next read sees them held
+ * (its release comes a read later). While reads keep up (60 Hz ticks: one
+ * or more a frame) nothing is latched. -DXSDK_PAD_LATCH=0 turns it off. */
+#ifndef XSDK_PAD_LATCH
+#define XSDK_PAD_LATCH 1
+#endif
+static uint32_t s_latch[PORTS];
+static int s_reads;
+
+void xsdk_pad_frame(void) {
+    int i;
+    if (!XSDK_PAD_LATCH) return;
+    if (s_reads) {
+        s_reads = 0;
+        memset(s_latch, 0, sizeof s_latch);
+        return;
+    }
+    xhw_pad_poll();
+    for (i = 0; i < PORTS; i++) {
+        xhw_pad p;
+        if (xhw_pad_get(i, &p)) s_latch[i] |= p.buttons;
+    }
+}
+
 u32 PADRead(PADStatus* status) {
     u32 motors = 0;
     uint32_t all = 0;
@@ -89,8 +116,11 @@ u32 PADRead(PADStatus* status) {
     xhw_pad_poll();
     for (i = 0; i < PORTS; i++) {
         s_raw_ok[i] = xhw_pad_get(i, &s_raw[i]);
+        if (s_raw_ok[i]) s_raw[i].buttons |= s_latch[i];
+        s_latch[i] = 0;
         if (s_raw_ok[i]) all |= s_raw[i].buttons;
     }
+    s_reads++;
     /* the settings menu is up, or its closing press is still held */
     block = xsdk_menu_block(all);
     for (i = 0; i < PORTS; i++) {

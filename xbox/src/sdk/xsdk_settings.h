@@ -21,6 +21,12 @@ typedef struct {
 
 enum { XSDK_TRIGGER_Z_OFF = 0, XSDK_TRIGGER_Z_LEFT, XSDK_TRIGGER_Z_RIGHT };
 
+/* Game Timing, in the Port Options row's order. Auto: 60 game updates a
+ * second while the frame fits, 30 (drawn at 60, blended between updates)
+ * when it doesn't. Fixed: 60 a second, as the GameCube (a slow frame runs
+ * more updates). Flex: one update a frame, dt = the frame's time. */
+enum { XSDK_SIM_AUTO = 0, XSDK_SIM_FIXED, XSDK_SIM_FLEX };
+
 typedef struct {
     int video_720p;          /* 1: use 720p when the dashboard allows it (experimental) */
     int progressive;         /* 1: 480p when the dashboard allows it; 0: 480i */
@@ -33,7 +39,7 @@ typedef struct {
     int hud_wide;            /* 1: at 16:9 the HUD spreads to the screen's edges (PortDebug::HudWide) */
     int fov;                 /* first-person field of view, degrees (55: the GameCube's) */
     int skip_cutscenes;      /* 1: every cutscene can be skipped (PortSkipCutscenes) */
-    int sim_adaptive;        /* 1: one game update per frame, dt = the frame's time (PortDebug::SimAdaptive) */
+    int sim_mode;            /* XSDK_SIM_*: Game Timing (port_debug.cpp) */
     xsdk_port_settings port[4];
 } xsdk_settings;
 

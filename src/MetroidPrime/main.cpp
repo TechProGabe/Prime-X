@@ -529,6 +529,9 @@ CGameArchitectureSupport::~CGameArchitectureSupport() {
 // PORT_XBOX: [PERF]'s "ticks per render" (xhw_perf.c): the game updates run
 // this frame
 extern "C" void xhw_perf_ticks(uint32_t n);
+// PORT_XBOX: [PERF]'s "render" bucket is the game's draw (vi.c)
+extern "C" void xsdk_perf_draw_begin(void);
+extern "C" void xsdk_perf_render_end(void);
 #endif
 
 bool CGameArchitectureSupport::UpdateTicks() {
@@ -552,6 +555,11 @@ bool CGameArchitectureSupport::UpdateTicks() {
     }
   } else {
     period = 1.0 / static_cast< double >(PortDebug::SimRate());
+#ifdef TARGET_XBOX
+    // PORT_XBOX: Game Timing: Auto runs 30 Hz ticks while the frame doesn't
+    // fit in 16 ms (port_debug.cpp), Fixed and Auto's 60 Hz as above
+    period = PortDebug::XboxTickPeriod();
+#endif
   }
   x7c_tickClock.SetPeriod(period);
   unsigned ticks =
@@ -1171,7 +1179,13 @@ int CMain::RsMain(int argc, const char* const* argv) {
       dt = archSupport->GetTickPeriod();
       // Advance the animation clock with simulation ticks so draw-time
       // animations stay real-time at any presentation frame rate.
+#ifdef TARGET_XBOX
+      // PORT_XBOX: the render clock counts 1/60 s steps; a 30 Hz tick is two
+      // (Flex's frame-long ticks their share), so textures scroll in real time
+      CGraphics::TickRenderTimings(PortDebug::XboxRenderTimingSteps(sTicksAdvanced, dt));
+#else
       CGraphics::TickRenderTimings(sTicksAdvanced);
+#endif
       double t1 = archSupport->GetStopwatch2().GetElapsedTime();
       AddFrameTime(xf0_tickTimes, t1 / dt);
       x118_averageTickTime = xf0_tickTimes.GetAverage().data();
@@ -1197,17 +1211,38 @@ int CMain::RsMain(int argc, const char* const* argv) {
           interpolation = 0.f;
         else if (interpolation > 1.f)
           interpolation = 1.f;
+#ifdef TARGET_XBOX
+        // PORT_XBOX: vi.c paces every frame to 60 Hz (the frame limiter is
+        // always on); Auto's 30 Hz ticks draw between the last two
+        if (!PortDebug::XboxPresentBlend())
+          interpolation = -1.f;
+#else
         if (PortDebug::FrameLimitEnabled())
           interpolation = -1.f;
+#endif
         PortDebug::PresentOverride(interpolation);
         CCameraManager::SetPresentationInterpolation(interpolation);
         // The render clock steps 1/60 s per tick (TickRenderTimings above).
+#ifdef TARGET_XBOX
+        // PORT_XBOX: the render clock steps a tick's period (XboxRenderTimingSteps)
+        CGraphics::SetRenderTimePresentLag(
+            interpolation >= 0.f && interpolation < 1.f && PortDebug::ParticleInterpolation()
+                ? (1.f - interpolation) * static_cast< float >(dt)
+                : 0.f);
+#else
         CGraphics::SetRenderTimePresentLag(
             interpolation >= 0.f && interpolation < 1.f && PortDebug::ParticleInterpolation()
                 ? (1.f - interpolation) / 60.f
                 : 0.f);
+#endif
         aurora::phase::set(aurora::phase::Main, "game draw");
+#ifdef TARGET_XBOX
+        xsdk_perf_draw_begin(); // PORT_XBOX: [PERF] render
+#endif
         archSupport->GetIOWinManager().Draw();
+#ifdef TARGET_XBOX
+        xsdk_perf_render_end(); // PORT_XBOX: [PERF] render
+#endif
         CCameraManager::SetPresentationInterpolation(-1.f);
         CGraphics::SetSimTimePresentLag(0.f);
         CGraphics::SetRenderTimePresentLag(0.f);

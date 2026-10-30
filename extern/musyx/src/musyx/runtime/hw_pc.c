@@ -18,6 +18,16 @@
 #include "musyx/synth.h"
 #include "musyx/port_voices.h"
 #include "musyx/pc_audio_math.h"
+#ifdef TARGET_XBOX
+/* PORT_XBOX: the mixer's inner loops in 32-bit arithmetic, bit-exact
+ * (xbox/src/port/include/px_mixer.h); -DPX_MIXER_FAST=0 for hw_pc.c's own */
+#ifndef PX_MIXER_FAST
+#define PX_MIXER_FAST 1
+#endif
+#include "px_mixer.h"
+#else
+#define PX_MIXER_FAST 0
+#endif
 
 // Audio parameters
 #define SAL_SAMPLES_PER_FRAME 160
@@ -160,6 +170,9 @@ static s32 voiceRms[SYNTH_MAX_VOICES];
 static s16 polyphaseTable[POLYPHASE_PHASES][POLYPHASE_TAPS];
 static s16 sincTable[SINC_PHASES][SINC_TAPS];
 static u8 resampleTablesInitialized = 0;
+#if PX_MIXER_FAST
+static int polyphaseFits32; /* PORT_XBOX: px_mixer.h, pxMixTapsFit32 */
+#endif
 
 // Mix accumulation buffers
 static s32 mixBufferL[SAL_SAMPLES_PER_FRAME];
@@ -265,6 +278,9 @@ static void initResampleTables(void) {
     sincTable[phase][SINC_TAPS - 1] = clampCoeff(32767 - accum);
   }
 
+#if PX_MIXER_FAST
+  polyphaseFits32 = pxMixTapsFit32((const int16_t(*)[4])polyphaseTable, POLYPHASE_PHASES); /* PORT_XBOX */
+#endif
   resampleTablesInitialized = 1;
 }
 
@@ -505,6 +521,16 @@ static int resampleVoice(u32 voiceIdx, s32* out, int numSamples, u32 pitch) {
 
     const u32 phase = (state->curPos & 0xFFFF) >> 9;
     const s16* c = polyphaseTable[phase];
+#if PX_MIXER_FAST
+    if (polyphaseFits32) { /* PORT_XBOX: the same sum in 32 bits (px_mixer.h) */
+      const s32 u0 = temp[idx++ & 3];
+      const s32 u1 = temp[idx++ & 3];
+      const s32 u2 = temp[idx++ & 3];
+      const s32 u3 = temp[idx++ & 3];
+      out[i] = clamp16((u0 * c[0] + u1 * c[1] + u2 * c[2] + u3 * c[3]) >> 15);
+      continue;
+    }
+#endif
     const long long t0 = temp[idx++ & 3];
     const long long t1 = temp[idx++ & 3];
     const long long t2 = temp[idx++ & 3];
@@ -570,12 +596,14 @@ static int renderVoiceSegment(DSPvoice* vp, s32* mainL, s32* mainR, s32* mainS, 
   fillSourceBuffer(vp, voiceIdx, frameSamples, pitch);
   int nSamples = resampleVoice(voiceIdx, voiceDecodeBuf, frameSamples, pitch);
   voiceEffPitch[voiceIdx] = pitch;
+#ifndef TARGET_XBOX /* PORT_XBOX: the RMS only feeds MP_LOG_VOICES' trace */
   {
     long long sum = 0;
     for (int i = 0; i < nSamples; ++i)
       sum += (long long)voiceDecodeBuf[i] * voiceDecodeBuf[i];
     voiceRms[voiceIdx] = nSamples > 0 ? (s32)sqrt((double)sum / nSamples) : 0;
   }
+#endif
   if (MusyxPortIsSampleMuted(vp->smp_id)) {
     memset(voiceDecodeBuf, 0, (size_t)nSamples * sizeof(s32));
   }
@@ -594,6 +622,27 @@ static int renderVoiceSegment(DSPvoice* vp, s32* mainL, s32* mainR, s32* mainS, 
   }
 #endif
 
+#if PX_MIXER_FAST
+  /* PORT_XBOX: px_mixer.h's 32-bit loops; the envelope once for the nine buffers */
+  {
+    int32_t env[PX_MIX_MAX];
+    const int n = nSamples < PX_MIX_MAX ? nSamples : PX_MIX_MAX;
+    pxMixEnvelope(env, n, (s16)adsrStart, adsrDelta);
+    const uint32_t srcMax = pxMixMaxAbs(voiceDecodeBuf, n);
+#define PX_RAMP(buf, last, d)                                                                       pxMixRamp(buf ? buf + frameOffset : NULL, voiceDecodeBuf, n, (s16)vp->last + d * frameOffset, d, env,             srcMax)
+    PX_RAMP(mainL, lastVolL, dVolL);
+    PX_RAMP(mainR, lastVolR, dVolR);
+    PX_RAMP(mainS, lastVolS, dVolS);
+    PX_RAMP(auxAL, lastVolLa, dVolLa);
+    PX_RAMP(auxAR, lastVolRa, dVolRa);
+    PX_RAMP(auxAS, lastVolSa, dVolSa);
+    PX_RAMP(auxBL, lastVolLb, dVolLb);
+    PX_RAMP(auxBR, lastVolRb, dVolRb);
+    PX_RAMP(auxBS, lastVolSb, dVolSb);
+#undef PX_RAMP
+  }
+  return voiceDone;
+#endif
   mixRampChannel(mainL ? mainL + frameOffset : NULL, voiceDecodeBuf, nSamples,
                  (s16)vp->lastVolL + dVolL * frameOffset, dVolL, (s16)adsrStart, adsrDelta);
   mixRampChannel(mainR ? mainR + frameOffset : NULL, voiceDecodeBuf, nSamples,
@@ -968,6 +1017,13 @@ void salCtrlDsp(s16* dest) {
   }
 }
 
+#ifdef TARGET_XBOX
+/* PORT_XBOX: [PERF]'s audio share, the mixer's own time per frame
+ * (px_sdl3.cpp: waits on the hw lock are taken out) */
+void px_mixer_frame_begin(void);
+void px_mixer_frame_end(void);
+#endif
+
 static int salAudioThreadFunc(void* data) {
   (void)data;
   SDL_SetCurrentThreadPriority(SDL_THREAD_PRIORITY_HIGH);
@@ -981,6 +1037,9 @@ static int salAudioThreadFunc(void* data) {
       continue;
     }
 
+#ifdef TARGET_XBOX
+    px_mixer_frame_begin(); /* PORT_XBOX: [PERF] audio */
+#endif
     if (userCallback) {
       userCallback();
     }
@@ -1012,6 +1071,9 @@ static int salAudioThreadFunc(void* data) {
       }
       SDL_PutAudioStreamData(salAudioStream, buf, SAL_BUFFER_BYTES);
     }
+#ifdef TARGET_XBOX
+    px_mixer_frame_end(); /* PORT_XBOX: [PERF] audio */
+#endif
 
     if (salAudioStream == NULL || queuedBytes < 0)
       SDL_Delay(5); // one 160-sample frame at 32 kHz in silent/device-loss mode

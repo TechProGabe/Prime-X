@@ -91,6 +91,11 @@ static struct {
     int ntc_carry;
     uint32_t seg_prim;    /* a strip or fan being built to become a list (seg_list) */
     uint32_t seg_start;   /* where its vertices start (after a waiting list it joined) */
+    /* GXPortRainLines' vertices: the first box_verts of the batch lie in
+     * box_min..box_max (positions as stored), so clip_lines can test the
+     * box's corners once instead of every line (XGX_LINE_BOX) */
+    uint32_t box_verts;
+    float box_min[3], box_max[3];
 } B;
 
 static void sig_recompute(void);
@@ -486,7 +491,7 @@ static int list_prim(uint32_t prim, uint32_t n) {
 #define LINE_GUARD 2.0f
 #define CLIP_MAX_STRIDE 256
 #define CLIP_PLANES 5
-static uint32_t s_st_lines, s_st_line_drop, s_st_line_clip;
+static uint32_t s_st_lines, s_st_line_drop, s_st_line_clip, s_st_line_box;
 
 /* The clip-space rows for the batch, once: cx, cy, cw and the near plane's
  * distance cz + cw, from the projection times the position matrix. 0 when
@@ -542,6 +547,9 @@ static void lerp_vertex(uint8_t* dst, const uint8_t* a, const uint8_t* b, float 
 /* Most lines are wholly inside (drawn as they are) or wholly outside one
  * plane (dropped), told apart by their ends' outcodes; only the rest get
  * Liang-Barsky's divisions. */
+#ifndef XGX_LINE_BOX
+#define XGX_LINE_BOX 1
+#endif
 static void clip_lines(void) {
     const XgxLayout* l = &B.plan.layout;
     const uint32_t s = l->stride;
@@ -550,6 +558,26 @@ static void clip_lines(void) {
     uint8_t tmp[2][CLIP_MAX_STRIDE];
     uint32_t i, out = 0;
     if (!clip_rows(r)) return;
+    /* The rain (GXPortRainLines) knows its batch's box: when all eight
+     * corners are inside every plane, so is every line in it (the planes
+     * are linear in the position) and none is clipped or dropped: the same
+     * vertices without the per-line test (docs/fps-plan.md M5) */
+    if (XGX_LINE_BOX && B.box_verts == B.done && B.done && l->off_pos >= 0) {
+        uint32_t c, outc = 0;
+        for (c = 0; c < 8 && !outc; c++) {
+            float corner[CLIP_MAX_STRIDE / 4], d[CLIP_PLANES];
+            float* x = corner + l->off_pos / 4;
+            x[0] = c & 1 ? B.box_max[0] : B.box_min[0];
+            x[1] = c & 2 ? B.box_max[1] : B.box_min[1];
+            x[2] = c & 4 ? B.box_max[2] : B.box_min[2];
+            outc |= clip_dist((const uint8_t*)corner, l, r, d);
+        }
+        if (!outc) {
+            s_st_lines += B.done / 2;
+            s_st_line_box += B.done / 2;
+            return;
+        }
+    }
     for (i = 0; i + 1 < B.done; i += 2) {
         uint8_t* v0 = base + i * s;
         uint8_t* v1 = v0 + s;
@@ -706,6 +734,7 @@ static void begin_batch(uint32_t prim, int vtxfmt, uint32_t n) {
     B.vtxfmt = vtxfmt;
     B.seg_prim = list ? prim : 0;
     B.seg_start = 0;
+    B.box_verts = 0;
     B.expected = n;
     B.done = 0;
     B.cursor = 0;
@@ -1270,8 +1299,13 @@ void GXSetVtxAttrFmt(GXVtxFmt fmt, GXAttr attr, GXCompCnt cnt, GXCompType type, 
 
 void GXSetArray(GXAttr attr, const void* data, u32 size, u8 stride, bool le) {
     (void)size;
-    gx_vtx_close();
     if (attr >= GX_VA_MAX_ATTR) return;
+    /* the same array again (a model sets its 5-12 arrays before each draw,
+     * most of them unchanged): nothing to close or re-sign (1.0% of Main
+     * Plaza's CPU on the console, round hw10; docs/fps-plan.md M3.4) */
+    if (g_gx.array[attr] == (const uint8_t*)data && g_gx.array_stride[attr] == stride && g_gx.array_le[attr] == le)
+        return;
+    gx_vtx_close();
     g_gx.array[attr] = (const uint8_t*)data;
     g_gx.array_stride[attr] = stride;
     g_gx.array_le[attr] = le;
@@ -3247,13 +3281,14 @@ void gx_vtx_frame_end(void) {
             for (i = 0; i < FLUSH_WHO; i++)
                 if (s_begin_n[i]) n += snprintf(line + n, sizeof line - (size_t)n, " %08x:%u", s_begin_who[i], s_begin_n[i]);
             xhw_logf("[DLC] immediate batches begun from:%s", n ? line : " -");
-            xhw_logf("[DLC] lines %u: %u outside the view, %u clipped", s_st_lines, s_st_line_drop, s_st_line_clip);
+            xhw_logf("[DLC] lines %u: %u outside the view, %u clipped, %u in batches wholly inside", s_st_lines,
+                     s_st_line_drop, s_st_line_clip, s_st_line_box);
             xhw_logf("[DLC] dynamic reuse misses (best slot): not kept %u, other frame %u, ring %u, arrays %u/%u, "
                      "written %u | skin workspaces: %u kept (%u KB), %u refused",
                      s_ru_why[0], s_ru_why[1], s_ru_why[2], s_ru_why[3], s_ru_why[4], s_ru_why[5], s_keep_n,
                      s_keep_bytes / 1024, s_keep_refused);
             memset(s_ru_why, 0, sizeof s_ru_why);
-            s_st_lines = s_st_line_drop = s_st_line_clip = 0;
+            s_st_lines = s_st_line_drop = s_st_line_clip = s_st_line_box = 0;
             memset(s_begin_n, 0, sizeof s_begin_n);
             memset(s_begin_who, 0, sizeof s_begin_who);
         }
@@ -3344,6 +3379,39 @@ int GXPortRainLines(const short* xyz, unsigned n, short dz, unsigned short c0, u
     }
     s = B.plan.layout.stride;
     sc = ps->scale;
+    if (n) {   /* the batch's box, for clip_lines (B.box_verts) */
+        short lo[3], hi[3];
+        int box_ok = B.box_verts == B.done;
+        for (i = 0; i < 3; i++) lo[i] = hi[i] = xyz[i];
+        for (i = 0; i < n; i++) {
+            const short* q = xyz + 3 * i;
+            uint32_t k;
+            for (k = 0; k < 3; k++) {
+                if (q[k] < lo[k]) lo[k] = q[k];
+                if (q[k] > hi[k]) hi[k] = q[k];
+            }
+            {   /* the streak's other end, as stored below */
+                const short z2 = (s16)(q[2] + dz);
+                if (z2 < lo[2]) lo[2] = z2;
+                if (z2 > hi[2]) hi[2] = z2;
+            }
+        }
+        if (box_ok) {
+            float bmin[3], bmax[3];
+            for (i = 0; i < 3; i++) {   /* sc > 0 or < 0: the stored values' order */
+                const float a = lo[i] * sc, b = hi[i] * sc;
+                bmin[i] = a < b ? a : b;
+                bmax[i] = a < b ? b : a;
+                if (B.box_verts) {
+                    if (B.box_min[i] < bmin[i]) bmin[i] = B.box_min[i];
+                    if (B.box_max[i] > bmax[i]) bmax[i] = B.box_max[i];
+                }
+                B.box_min[i] = bmin[i];
+                B.box_max[i] = bmax[i];
+            }
+            B.box_verts = B.done + 2 * n;
+        }
+    }
     /* Position and colour fill the whole vertex (12 + 4 bytes, the rain's
      * layout): every byte is stored, so no clears, and the colour is one
      * word. memset and memcpy calls per vertex were ~4% of the console's CPU

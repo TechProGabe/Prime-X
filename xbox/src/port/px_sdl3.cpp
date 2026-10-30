@@ -33,8 +33,31 @@ struct SDL_Thread {
   xhw_event* done;
 };
 
+// The mixer thread's own time per 5 ms frame, for [PERF]'s "audio" share
+// (hw_pc.c brackets each frame). The hw lock (hwDisableIrq on the game
+// thread, hwIRQEnterCritical on the mixer) can make the mixer wait while the
+// game runs: those waits are taken out.
+static uint32_t s_mixer_tls = 0xFFFFFFFFu;
+static uint64_t s_mixer_t0, s_mixer_blocked;
+
+static bool on_mixer(void) { return s_mixer_tls != 0xFFFFFFFFu && xhw_tls_get(s_mixer_tls) != nullptr; }
+
+void px_mixer_frame_begin(void) {
+  s_mixer_blocked = 0;
+  s_mixer_t0 = xhw_perf_now();
+}
+
+void px_mixer_frame_end(void) {
+  const uint64_t span = xhw_perf_now() - s_mixer_t0;
+  xhw_perf_audio(span > s_mixer_blocked ? span - s_mixer_blocked : 0);
+}
+
 static void thread_entry(void* arg) {
   SDL_Thread* t = static_cast< SDL_Thread* >(arg);
+  // MusyX's mixer is the only SDL thread
+  if (s_mixer_tls != 0xFFFFFFFFu)
+    xhw_tls_set(s_mixer_tls, t);
+  xhw_prof_set_mixer_thread();
   t->status = t->fn(t->data);
   xhw_event_signal(t->done);
 }
@@ -46,6 +69,8 @@ SDL_Thread* px_SDL_CreateThread(SDL_ThreadFunction fn, const char* name, void* d
   t->fn = fn;
   t->data = data;
   t->done = xhw_event_create();
+  if (s_mixer_tls == 0xFFFFFFFFu)
+    s_mixer_tls = xhw_tls_alloc();
   // MusyX's mixer is the only SDL thread: above the game thread, as the
   // GameCube's DSP interrupt was
   if (!xhw_thread_start(thread_entry, t, 1, 64 * 1024)) {
@@ -69,8 +94,16 @@ bool px_SDL_SetCurrentThreadPriority(SDL_ThreadPriority) { return true; }
 SDL_Mutex* px_SDL_CreateMutex(void) { return reinterpret_cast< SDL_Mutex* >(xhw_mutex_create()); }
 void px_SDL_DestroyMutex(SDL_Mutex*) {}
 void px_SDL_LockMutex(SDL_Mutex* m) {
-  if (m)
-    xhw_mutex_lock(reinterpret_cast< xhw_mutex* >(m));
+  if (m == nullptr)
+    return;
+  xhw_mutex* x = reinterpret_cast< xhw_mutex* >(m);
+  if (!on_mixer()) {
+    xhw_mutex_lock(x);
+  } else if (!xhw_mutex_trylock(x)) {
+    const uint64_t t0 = xhw_perf_now();
+    xhw_mutex_lock(x);
+    s_mixer_blocked += xhw_perf_now() - t0;
+  }
 }
 void px_SDL_UnlockMutex(SDL_Mutex* m) {
   if (m)

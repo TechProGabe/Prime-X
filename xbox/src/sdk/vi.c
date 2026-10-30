@@ -32,6 +32,8 @@ GXRenderModeObj GXNtsc480Int = {
 
 static u64 sim_period_ns(void) { return 1000000000ull / 60; }
 
+void px_sim_frame(void);   /* port_debug.cpp */
+
 unsigned xsdk_frame_count(void) { return s_retrace; }
 
 void VIInit(void) {}
@@ -102,6 +104,8 @@ void xsdk_frame_boundary(void) {
     next_ns += period;
 
     s_retrace++;
+    px_sim_frame();     /* Game Timing: Auto picks the next frame's tick rate (port_debug.cpp) */
+    xsdk_pad_frame();   /* pad.c: presses between two reads of a 30 Hz tick */
     xhw_mem_tick();   /* low on memory: ARAM chunks to the disc or the swap file */
     if (s_retrace % 1800 == 0) {   /* every 30 s */
         xsdk_aram_log();
@@ -152,6 +156,12 @@ int xsdk_strobe_blend(void) {
     }
     return on;
 }
+
+/* Prime's main loop (main.cpp, TARGET_XBOX) brackets the game's draw
+ * (CIOWinManager::Draw: the world's traversal, culling, GX state) with
+ * these, so [PERF]'s "sim" is the ticks and "render" the traversal; its
+ * ticks are counted in UpdateTicks instead */
+void xsdk_perf_draw_begin(void) { s_render_prev = xhw_perf_enter(XHW_PERF_RENDER); }
 
 void xsdk_perf_render_end(void) {
     if (s_render_prev >= 0) xhw_perf_leave(s_render_prev);

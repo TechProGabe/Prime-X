@@ -218,6 +218,8 @@ void xgx_set_overlay(const xgx_overlay* o);   /* copied; NULL takes it down */
 unsigned xgx_present_count(void);
 /* One [FBDUMP] screenshot of the next presented frame. */
 void xgx_fbdump_next(void);
+/* the [NV2A] draw statistics since the last report, now (a chained scene's end) */
+void xgx_stats_now(void);
 
 /* Texture data formats handed to the back end. All but DXT1/DXT3 are rows top
  * to bottom (the back end swizzles); DXT1/DXT3 are 4x4 blocks in rows. Level 0 then

@@ -441,6 +441,10 @@ private:
   // tick's first move.
   CPortVarMemory xPortVars; // PVRT variables, initialised from the description's defaults
   uint xPortStepGeneration;
+#ifdef TARGET_XBOX
+  // PORT_XBOX: the frames that step took (2 in a 30 Hz tick, Game Timing: Auto)
+  uchar xPortStepFrames;
+#endif
   uint xPortGlobalGeneration;
   CVector3f xPortPrevGlobalTranslation;
   bool xPortPresenting;

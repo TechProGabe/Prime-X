@@ -17,6 +17,26 @@ The user's policy for this plan (asked 2026-10-30):
 | console rounds | **one round per milestone**: the builder stages it (upload + chain script) and stops; the user launches it |
 | exactness | bit-exact agreement with retail or Dolphin is not required; approximations that change nothing a player can see are in |
 
+## 0. Progress (updated as items land)
+
+| item | state |
+|---|---|
+| M0.1 mixer cost in [PERF] | built: `px_mixer_frame_begin`/`end` (hw_pc.c -> px_sdl3.cpp), hw-lock waits taken out |
+| M0.2 mixer thread in the profiler | built: `[PROFA]`, `xhw_prof_set_mixer_thread`; prof_report.py folds it |
+| M0.3 ticks apart from traversal | built: the game's draw in `XHW_PERF_RENDER`; [PERF] `ms per tick` |
+| M0.4 statistics per scene | built: `xgx_stats_now` at NEXT; prof_report.py: `pb_busy` fold (COLD), GPU-wait share |
+| M0.5 test hooks | built: `PX_SIM_AUTO`, `PX_SIM_RATE`, `PX_INTERP` (and `PX_SIM_ADAPTIVE`) |
+| round hw11 | chain written (`tools/xbox/scenarios/hw11`): Fixed scenes for the baseline, Auto scenes for M1 |
+| M1.1 Game Timing: Auto | built, default; Auto / Fixed / Flex row; `[TIMING]` lines, [PERF]'s auto share. xemu: holds 30 Hz in the pirate room (xemu is slow), no fault |
+| M1.2 interpolated presentation | on at 30 Hz ticks (`XboxPresentBlend`); `FrameLimitEnabled` stays true for the clock's cadence leeway |
+| M1.3 60 Hz assumptions | render clock steps scaled (`XboxRenderTimingSteps`), its present lag a tick's period; pad presses latched between 30 Hz reads (`pad.c`); HUD memo counter: counts unpauses, nothing to do |
+| M2.1 RMS and trace | the RMS is gone from the Xbox build |
+| M2.2 the mix in 32 bits | built, bit-exact (`px_mixer.h`, `test_mixer.py`): the ramps and the resampler's taps. Not float/SSE: the bounds-checked integer path is exact and needs no new buffers |
+| M2.3 bus skipping | already there (zero ramps return at once) |
+| M3.4 lazy `GXSetArray` | built (same array: no close, no re-sign) |
+| M3.5 pushbuffer kick | built, adaptive (32768 words while the GPU keeps up) |
+| M5 rain clip | built: the batch's box tested once (`XGX_LINE_BOX`) |
+
 ## 1. Where the time goes (the model everything below rests on)
 
 Measured on red at 480i, profiler builds (LTO + PGO), `[PERF]` lines of

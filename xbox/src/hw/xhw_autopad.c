@@ -277,6 +277,7 @@ void xhw_autopad_apply(int port, xhw_pad* out) {
             const char* next = getenv("PX_NEXT_XBE");
             if (f >= e->frame && next) {
                 xhw_logf("[AUTOPAD] NEXT at frame %u", f);
+                xgx_stats_now();   /* the scene's tail of [NV2A] statistics */
                 xhw_launch_xbe(next);
             }
             continue;

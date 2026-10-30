@@ -102,6 +102,38 @@ reads; big-endian memory-card files; logs that survive long sessions; our
 own GX on the NV2A with generated vertex programs and TEV on the register
 combiners; ThinLTO + PGO for releases.
 
+- **Game Timing: Auto** (2026-10-30, the user's policy in
+  `docs/fps-plan.md`): the default. 60 game updates a second while the
+  frame's CPU time fits in 16 ms; when 3 of 4 frames don't, 30 a second,
+  drawn at 60 between the last two (MetroidPrimePort's frame interpolation:
+  actors, skinned poses, particles, swooshes, beams, the camera); back to 60
+  when a 60 Hz frame (a tick's measured cost plus the frame's draw work)
+  has been under 14 ms for 30 frames, after at least a second at 30
+  (`port_debug.cpp`, `px_sim_frame` from vi.c's frame boundary). At 60 Hz it
+  is Fixed exactly. Fixed (retail: 60 a second, a slow frame runs more) and
+  Flex (one update a frame, dt = the frame) stay as choices. Under Auto at
+  30 Hz the world is drawn up to a tick (33 ms) behind the simulation and the
+  pad is read at 30 Hz; `pad.c` latches presses seen at a frame boundary
+  no read followed, so a tap isn't lost between two reads. `SimRate`/
+  `SimPeriod` stay 60: the projectile weapons step in 1/60 s substeps at
+  any tick. `CStateManager::xf80_hudMessageFrameCount` (the plan's HUD memo
+  worry) counts unpauses, not ticks: nothing to scale. settings.ini's
+  `timing = auto|fixed|flex` (the old `game_timing = 1` reads as Flex).
+  Test builds: `env PX_SIM_AUTO=0|1`, `PX_SIM_RATE=30|60` (held),
+  `PX_INTERP=0|1`, `PX_SIM_ADAPTIVE=0|1`; lockstep runs hold 60 Hz unless
+  `PX_SIM_RATE` says otherwise.
+
+- **FPS plan, GX layer and back end** (2026-10-30, `docs/fps-plan.md`;
+  each with its switch):
+  - `GXSetArray` of the array already set returns before closing the
+    batch or re-signing the arrays (M3.4): the same state either way.
+  - The pushbuffer kick (M3.5): 32768 words while the GPU was idle at the
+    last 16 frame starts, 8192 (as before) otherwise (`XGX_PB_KICK_IDLE`,
+    `-DXGX_PB_KICK_IDLE=8192` turns it off). Judged on red only.
+  - The rain's lines (M5): `GXPortRainLines` keeps its batch's box, and
+    `clip_lines` tests the box's corners once; a batch wholly inside skips
+    the per-line test (`-DXGX_LINE_BOX=0`). Same vertices drawn.
+
 - **Boot music inside the XBE** (round hw2, 2026-10-27): the first boot's
   music is appended to `default.xbe` (IMA ADPCM, 8.3 MB, footer "PXIN"),
   not shipped as `intro.pcm` beside it: "so people can't miss it". After
@@ -174,7 +206,12 @@ One line per edit to `src/`, `include/`, `extern/musyx` or
 | `src/Kyoto/Alloc/CGameAllocator.cpp` | no OOM callback or dump while operator new asks (`gPortXboxQuietOom`); a freed block decommits the whole 64 KB chunks inside it (`xhw_lazy_decommit`) | operator new falls back to malloc; freed load buffers stop costing Xbox RAM (round hw5's out of memory) |
 | `src/MetroidPrime/main.cpp` | the GX FIFO 32 bytes (128 KB claimed for `InitGraphicsFifo`'s arithmetic), not 384 KB | our GX never reads or writes it; image memory (.bss is committed at load) |
 | `include/Kyoto/Graphics/CGX.hpp` | `SGXState::x4c_flags`' bitfields in reverse order | x86 fills bitfields from the low bit: `CGX::SetNumChans` set bit 7 while `FlushState` tests bit 0, so the channel count never reached GX (the white arm cannon in Chozo and Magmoor: its shadow pass lost COLOR1; the scene's look changing after Morph Ball, whose shadow sets the count directly) |
-| `src/MetroidPrime/CPauseScreenFrame.cpp` | a Game Timing row (Fixed / Flex) in the pause Display rows and the title's Port Options Gameplay rows | `PortDebug::SimAdaptive` (MetroidPrimePort's adaptive ticks): at ~40 fps the fixed 60 Hz ticks ran ~1.5 game updates a drawn frame on a CPU-bound console; Fixed (retail) stays the default |
+| `src/MetroidPrime/CPauseScreenFrame.cpp` | a Game Timing row (Auto / Fixed / Flex; Fixed / Flex until 2026-10-30) in the pause Display rows and the title's Port Options Gameplay rows | `PortDebug::SimAdaptive` (MetroidPrimePort's adaptive ticks): at ~40 fps the fixed 60 Hz ticks ran ~1.5 game updates a drawn frame on a CPU-bound console; Auto the default since 2026-10-30 ("Game Timing: Auto" above) |
+| `extern/musyx/src/musyx/runtime/hw_pc.c` | `salAudioThreadFunc` brackets each mixed frame with `px_mixer_frame_begin`/`end` (`px_sdl3.cpp`) | [PERF]'s "audio" share was a hook nothing called; the mixer's own time, waits on the hw lock taken out (docs/fps-plan.md M0.1) |
+| `extern/musyx/src/musyx/runtime/hw_pc.c` | the voice mix (`renderVoiceSegment`'s nine ramps) and the polyphase resampler's tap sum through `px_mixer.h` (32-bit arithmetic where the operands' bounds allow it, the envelope once a subframe; `-DPX_MIXER_FAST=0` for the old loops); no per-voice RMS (it fed `MP_LOG_VOICES`' trace only) | speed: two 64-bit products and clamps a sample a buffer on the CPU the GameCube's DSP did this on (M2); bit-exact, `tools/xbox/test_mixer.py` |
+| `src/MetroidPrime/main.cpp` | the game's draw (`CIOWinManager::Draw`) in [PERF]'s render bucket (`xsdk_perf_draw_begin`, vi.c) | "sim" held the ticks and the world's traversal together; now "sim" / ticks is a tick's cost, and [PROFS] a tick-only profile (M0.3) |
+| `src/Kyoto/Particles/CElementGen.cpp`, `include/Kyoto/Particles/CElementGen.hpp`, `src/platform/port_element_gen.cpp` | a system that stepped two frames in a tick (a 30 Hz tick) is drawn between its states too: `xPortStepFrames`, and `PortBeginPresent` draws back along the last frame's motion (`x80_timeDeltaScale` = 1 - frames x (1 - t), down to -1) | Game Timing: Auto's 30 Hz ticks: only one-frame steps were blended, so every particle stepped at 30 Hz while the rest moved at 60; a particle's two frames are close to a straight line |
+| `src/MetroidPrime/main.cpp` | `UpdateTicks` takes its fixed step from `PortDebug::XboxTickPeriod` (1/60, or 1/30 under Auto); the blend between ticks follows `XboxPresentBlend` instead of the frame limiter; `TickRenderTimings` gets 1/60 s steps (`XboxRenderTimingSteps`), the render clock's present lag a tick's period instead of 1/60 | Game Timing: Auto (M1); at 30 Hz ticks the textures would scroll at half speed; under Flex they ran slow below 60 fps too |
 | `src/MetaRender/CCubeRenderer.cpp` | `PostRenderFogs` draws no fog volumes | the pass needs the depth itself from its Z16 copies (density ramp offsets); ours are in-front masks, so a volume drew as nothing or a solid fog-coloured box (Twin Fires Tunnel) |
 | `src/Kyoto/Graphics/CCubeMaterial.cpp` | `SetCurrent` doesn't read a PBR/WRAP record (the maps repeat) | the disc's materials have none (they come with Remastered conversions); the read parsed the material table on every material set, ~1% of the console's CPU |
 | `src/MetroidPrime/CPauseScreenFrame.cpp` | the title screen's Options/Port Options put the value tables at the selected right row's own offset, not selection times the left table's pitch, measured from the second row (the first worker's idle position is off the rows' spacing) | round hw6: "the divider sits on the text" on the lower Video rows (Widescreen HUD, Field of View, FPS counter); 2026-10-29, the user: the middle value table two rows low on every row past the first |

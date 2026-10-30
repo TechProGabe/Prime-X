@@ -102,7 +102,7 @@ static void defaults(xsdk_settings* st) {
     st->hud_wide = 0;
     st->fov = 55;
     st->skip_cutscenes = 0;
-    st->sim_adaptive = 0;
+    st->sim_mode = XSDK_SIM_AUTO;
     for (p = 0; p < 4; p++) {
         xsdk_port_settings* ps = &st->port[p];
         ps->stick_deadzone = 0.20f;
@@ -172,7 +172,13 @@ static int parse(FILE* f, xsdk_settings* st) {
             if (_stricmp(key, "hud_wide") == 0) st->hud_wide = atoi(val) != 0;
             else if (_stricmp(key, "fov") == 0) st->fov = clampi(atoi(val), 45, 75);
             else if (_stricmp(key, "skip_cutscenes") == 0) st->skip_cutscenes = atoi(val) != 0;
-            else if (_stricmp(key, "game_timing") == 0) st->sim_adaptive = atoi(val) != 0;
+            /* "timing" since Auto came (2026-10-30); before, game_timing = 1
+             * was Flex and 0 the default (Fixed; the default is Auto now) */
+            else if (_stricmp(key, "timing") == 0)
+                st->sim_mode = _stricmp(val, "fixed") == 0  ? XSDK_SIM_FIXED
+                               : _stricmp(val, "flex") == 0 ? XSDK_SIM_FLEX
+                                                            : XSDK_SIM_AUTO;
+            else if (_stricmp(key, "game_timing") == 0 && atoi(val) != 0) st->sim_mode = XSDK_SIM_FLEX;
         } else if (_stricmp(section, "input") == 0) {
             if (_stricmp(key, "rumble") == 0) st->rumble = clampi(atoi(val), 0, 100) / 100.0f;
             else if (_stricmp(key, "cstick_1p") == 0) st->cstick_1p = atoi(val) != 0;
@@ -200,7 +206,7 @@ int xsdk_settings_equal(const xsdk_settings* a, const xsdk_settings* b) {
     if (a->video_720p != b->video_720p || a->progressive != b->progressive || a->widescreen != b->widescreen ||
         a->fps != b->fps || a->shots != b->shots || a->led != b->led ||
         pct(a->rumble) != pct(b->rumble) || a->cstick_1p != b->cstick_1p || a->hud_wide != b->hud_wide ||
-        a->fov != b->fov || a->skip_cutscenes != b->skip_cutscenes || a->sim_adaptive != b->sim_adaptive)
+        a->fov != b->fov || a->skip_cutscenes != b->skip_cutscenes || a->sim_mode != b->sim_mode)
         return 0;
     for (p = 0; p < 4; p++) {
         const xsdk_port_settings *x = &a->port[p], *y = &b->port[p];
@@ -219,10 +225,12 @@ static void log_summary(const char* what) {
     const xsdk_settings* st = &g_xsdk_settings;
     const xsdk_port_settings* p1 = &st->port[0];
     xhw_logf("[SETTINGS] %s: 720p %d, progressive %d, widescreen %d, fps %d, screenshots %d, led %d, "
-             "HUD wide %d, FOV %d, rumble %d, C-stick in 1P %d, port 1 dead zones %d/%d, trigger click %d, trigger Z %d",
+             "HUD wide %d, FOV %d, rumble %d, C-stick in 1P %d, port 1 dead zones %d/%d, trigger click %d, trigger Z %d, "
+             "timing %s",
              what, st->video_720p, st->progressive, st->widescreen, st->fps, st->shots, st->led, st->hud_wide,
              st->fov, pct(st->rumble), st->cstick_1p,
-             pct(p1->stick_deadzone), pct(p1->cstick_deadzone), p1->trigger_click, p1->trigger_z);
+             pct(p1->stick_deadzone), pct(p1->cstick_deadzone), p1->trigger_click, p1->trigger_z,
+             st->sim_mode == XSDK_SIM_FIXED ? "fixed" : st->sim_mode == XSDK_SIM_FLEX ? "flex" : "auto");
 }
 
 static xsdk_settings s_scratch;   /* read-backs and recovery */
@@ -291,9 +299,13 @@ static void write_all(FILE* f, const xsdk_settings* st) {
     fprintf(f, "; Leave it 0 on a console with a modchip that drives the LED (Kronos and similar).\n");
     fprintf(f, "[system]\nscreenshots = %d\nled_effects = %d\n\n", st->shots, st->led);
     fprintf(f, "; hud_wide = 1: at 16:9 the HUD reaches the screen's edges. fov: 45-75 degrees, 55 is the GameCube's.\n");
-    fprintf(f, "; game_timing = 1: one game update per drawn frame (more fps); 0: 60 a second, as the GameCube.\n");
-    fprintf(f, "[game]\nhud_wide = %d\nfov = %d\nskip_cutscenes = %d\ngame_timing = %d\n\n", st->hud_wide,
-            st->fov, st->skip_cutscenes, st->sim_adaptive);
+    fprintf(f, "; timing: auto (60 game updates a second; in heavy scenes 30, drawn smoothly at 60), fixed (60 a\n");
+    fprintf(f, "; second, as the GameCube) or flex (one update a drawn frame).\n");
+    fprintf(f, "[game]\nhud_wide = %d\nfov = %d\nskip_cutscenes = %d\ntiming = %s\n\n", st->hud_wide, st->fov,
+            st->skip_cutscenes,
+            st->sim_mode == XSDK_SIM_FIXED  ? "fixed"
+            : st->sim_mode == XSDK_SIM_FLEX ? "flex"
+                                            : "auto");
     fprintf(f, "; cstick_1p = 1: the C-stick does smash attacks in 1P modes and training too (not the camera).\n");
     fprintf(f, "[input]\nrumble = %d\ncstick_1p = %d\n\n", pct(st->rumble), st->cstick_1p);
     fprintf(f, "; trigger_z = left or right: that trigger is Z (grab) instead of L/R; off: both are L/R.\n");

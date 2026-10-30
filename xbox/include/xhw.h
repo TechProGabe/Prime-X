@@ -92,7 +92,12 @@ uint64_t xhw_perf_now(void);                   /* rdtsc, for xhw_perf_audio */
 void xhw_perf_audio(uint64_t ticks);           /* mixer thread: time spent mixing */
 void xhw_perf_frame(uint32_t draws, uint32_t verts);   /* once per presented frame */
 void xhw_perf_ticks(uint32_t n);               /* simulation ticks run before a render pass */
+/* the last presented frame: microseconds in each XHW_PERF_* bucket, ticks run */
+void xhw_perf_last_frame(uint32_t us[XHW_PERF_N], uint32_t* ticks);
 int xhw_perf_bucket(void);                     /* the game thread's current bucket (the profiler's [PROFS]) */
+/* the game's addition to each [PERF] line (port_debug.cpp: Game Timing:
+ * Auto's share of frames at 30 Hz ticks); NULL: none */
+extern const char* (*xhw_perf_tag)(void);
 /* MXCSR flush-to-zero (+ DAZ where the CPU has it) on the calling thread:
  * the probe's ablation window 1 (xhw_pmc.c; xhw_ablate in xgx_probe.h) */
 void xhw_set_ftz(int on);
@@ -101,6 +106,9 @@ void xhw_set_ftz(int on);
  * no-ops in other builds. Game thread; the sampler does the work. */
 void xhw_prof_scene_enter(void);
 void xhw_prof_match_end(void);
+/* The mixer thread (px_sdl3.cpp, on itself): a sample that finds it running
+ * goes to the [PROFA] histogram instead of the game code it preempted. */
+void xhw_prof_set_mixer_thread(void);
 /* -DXHW_PGO=1 (xhw_pgo.c, an XBOX_PGO=gen build): the -fprofile-generate
  * counters so far as [PGOC] lines (tools/xbox/pgo_raw.py); no-op otherwise */
 void xhw_pgo_dump(const char* why);                 /* from xhw_led_match_end: TIME!/GAME! */

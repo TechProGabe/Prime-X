@@ -29,6 +29,12 @@
  * build (prof_report.py --full reads either). The game thread only raises a
  * flag; the sampler, which already logs from its own thread, does the work.
  *
+ * The mixer (MusyX's thread, above the game's priority) preempts the game
+ * thread every 5 ms; the game thread's stack then still shows the code it
+ * was interrupted in. When the mixer thread is found preempted (by this
+ * sampler) with an interrupt frame in the image, it was the one running:
+ * the sample goes to the [PROFA] histogram, not the game's.
+ *
  * xhw_thread_eip() is always built: the watchdog uses it to say where the
  * game thread is stuck. */
 #include <windows.h>
@@ -53,9 +59,10 @@
 #endif
 #define TOP XHW_PROF_TOP
 
-static PKTHREAD s_game;
+static PKTHREAD s_game, s_mixer;
 
 void xhw_prof_set_game_thread(void) { s_game = KeGetCurrentThread(); }
+void xhw_prof_set_mixer_thread(void) { s_mixer = KeGetCurrentThread(); }
 void* xhw_game_thread(void) { return s_game; }
 
 /* the interrupted EIP from a thread's kernel stack, 0 when none */
@@ -79,6 +86,8 @@ unsigned long xhw_thread_eip(void* kthread, unsigned long* esp_out) {
 #if XHW_PROF
 static uint16_t* s_hist;
 static uint16_t* s_hist_sim;   /* the samples taken during the simulation ticks */
+static uint16_t* s_hist_mix;   /* the mixer thread's samples ([PROFA]) */
+static uint32_t s_mix_placed, s_mix_outside;
 /* [PROFT]: only the samples of frames that took XHW_PROF_STALL_MS or more
  * (a room's first frame, a pickup): a frame's samples wait in s_fb until
  * the next frame starts, and go into s_hist_stall if it ran that long */
@@ -262,6 +271,11 @@ static void report(void) {
         rep("[PROFS] %u samples in the simulation\n", s_sim_placed);
         report_hist("[PROFS]", s_hist_sim);
     }
+    if (s_hist_mix) {
+        rep("[PROFA] %u samples in the mixer thread (%u outside the image)\n", s_mix_placed, s_mix_outside);
+        report_hist("[PROFA]", s_hist_mix);
+        s_mix_placed = s_mix_outside = 0;
+    }
     if (s_hist_stall && s_stall_frames) {
         /* waiting: the game thread wasn't running (a read, a lock, a sleep);
          * outside: it ran in the kernel or another module */
@@ -391,7 +405,7 @@ static DWORD WINAPI sampler(LPVOID arg) {
     uint64_t next = xhw_time_ns() + (uint64_t)XHW_PROF_SECS * 1000000000ull;
     (void)arg;
     for (;;) {
-        ULONG eip, esp = 0, caller = 0;
+        ULONG eip, esp = 0, caller = 0, aeip = 0;
         KIRQL old;
         Sleep(1);
         if (s_whole_dump) {   /* before a reset raised with it: the match's end comes first */
@@ -404,7 +418,10 @@ static DWORD WINAPI sampler(LPVOID arg) {
             whole_clear();
         }
         old = KeRaiseIrqlToDpcLevel();   /* the game thread can't run or exit while we read its stack */
-        if (!s_game || s_game->State != 1) {
+        if (s_mixer && s_hist_mix && s_mixer->State == 1) aeip = xhw_thread_eip(s_mixer, NULL);
+        if (aeip) {
+            eip = 0;   /* the mixer was running, not the game */
+        } else if (!s_game || s_game->State != 1) {
             s_waiting++;
             s_wh.waiting++;
             eip = 0;
@@ -418,6 +435,16 @@ static DWORD WINAPI sampler(LPVOID arg) {
             }
         }
         KfLowerIrql(old);
+        if (aeip) {
+            if (aeip >= xhw_image_base && aeip < xhw_image_end) {
+                uint32_t b = (aeip - xhw_image_base) >> BUCKET_SHIFT;
+                if (s_hist_mix[b] != 0xFFFF) s_hist_mix[b]++;
+                s_mix_placed++;
+            } else {
+                s_mix_outside++;
+            }
+            goto next_sample;
+        }
         if (s_hist_stall) {   /* [PROFT]: the frame before this one, if it was long */
             uint32_t f = xhw_frame_count();
             if (f != s_fb_frame) {
@@ -470,6 +497,7 @@ static DWORD WINAPI sampler(LPVOID arg) {
             s_outside++;
             s_wh.outside++;
         }
+    next_sample:
         if (xhw_time_ns() >= next) {
             report();
             next = xhw_time_ns() + (uint64_t)XHW_PROF_SECS * 1000000000ull;
@@ -485,6 +513,7 @@ void xhw_prof_start(void) {
     s_hist = (uint16_t*)calloc(s_nbuckets, sizeof s_hist[0]);
     s_hist_sim = (uint16_t*)calloc(s_nbuckets, sizeof s_hist_sim[0]);
     s_hist_stall = (uint16_t*)calloc(s_nbuckets, sizeof s_hist_stall[0]);
+    s_hist_mix = (uint16_t*)calloc(s_nbuckets, sizeof s_hist_mix[0]);
     s_libc = (CallerTable*)calloc(1, sizeof *s_libc);
     s_callers = (CallerTable*)calloc(1, sizeof *s_callers);
     s_wn = (code_end() - xhw_image_base + (1u << BUCKET_SHIFT) - 1) >> BUCKET_SHIFT;
