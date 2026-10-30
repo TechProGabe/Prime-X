@@ -26,7 +26,7 @@ The user's policy for this plan (asked 2026-10-30):
 | M0.3 ticks apart from traversal | built: the game's draw in `XHW_PERF_RENDER`; [PERF] `ms per tick` |
 | M0.4 statistics per scene | built: `xgx_stats_now` at NEXT; prof_report.py: `pb_busy` fold (COLD), GPU-wait share |
 | M0.5 test hooks | built: `PX_SIM_AUTO`, `PX_SIM_RATE`, `PX_INTERP` (and `PX_SIM_ADAPTIVE`) |
-| round hw11 | chain written (`tools/xbox/scenarios/hw11`): Fixed scenes for the baseline, Auto scenes for M1 |
+| round hw11 | ran on red 2026-10-30: numbers below |
 | M1.1 Game Timing: Auto | built, default; Auto / Fixed / Flex row; `[TIMING]` lines, [PERF]'s auto share. xemu: holds 30 Hz in the pirate room (xemu is slow), no fault |
 | M1.2 interpolated presentation | on at 30 Hz ticks (`XboxPresentBlend`); `FrameLimitEnabled` stays true for the clock's cadence leeway |
 | M1.3 60 Hz assumptions | render clock steps scaled (`XboxRenderTimingSteps`), its present lag a tick's period; pad presses latched between 30 Hz reads (`pad.c`); HUD memo counter: counts unpauses, nothing to do |
@@ -36,6 +36,44 @@ The user's policy for this plan (asked 2026-10-30):
 | M3.4 lazy `GXSetArray` | built (same array: no close, no re-sign) |
 | M3.5 pushbuffer kick | built, adaptive (32768 words while the GPU keeps up) |
 | M5 rain clip | built: the batch's box tested once (`XGX_LINE_BOX`) |
+
+### Round hw11 (red, 2026-10-30): the numbers
+
+Profiler build of b628024, 480i. fps: the bulk of each scene's [PERF]
+lines (5 s each), loads and cinematics left out. Milliseconds a frame in
+the steady part of the scene; "render" is now the game's own draw
+(traversal, GX state calls, immediate-mode vertices), "sim" the ticks.
+
+| scene | Fixed fps | Auto fps | ms per tick | render | dlist | draw | audio |
+|---|---|---|---|---|---|---|---|
+| pirate fight (r11c / r11i) | 18.5-21 | 25-26 | 7.2-7.4 | 12.6-13.2 (Auto 13.5-14.3) | 8.2-10.4 | 6.0-6.6 | 13-15% |
+| Main Plaza (r11d / r11j) | 35-36 | 37-39 | 4.0 | 9.5-10 (Auto 10-10.7) | 3.5-5.8 | 7.6-7.9 | 4% |
+| Landing Site (r11b / r11k) | 26-59 | 28-59 | 4-10 | 4-10 | 1.7-14 | 1-3.8 | 7-14% |
+| Lava Lake (r11f / r11l) | 28-29 | 34 | 7.3 | 10 (Auto 11.6) | 5.1 | 4.0 | 9% |
+| Phendrana visors (r11e) | 44-59 | | 3 | 4.5-7 | 1-2.5 | 2.2-3 | 4-23% |
+| Frigate opening (r11g) | 50-60 | | 5 | 3-6 | 0.2-3.8 | 0.7-3.2 | 2-4% |
+| pause screen (r11h) | 46.5 | | 1 | 5.7 | 5.2 | 2.1 | 4-15% |
+
+What it says:
+
+- Auto works (100% of the heavy rooms' frames at 30 Hz, no flapping) and
+  gives +30% in the fight and +20% in Lava Lake, less than the model:
+  the frame is now the draw work, R = render + dlist + draw = 28 ms in
+  the fight, 21 in Main Plaza and Lava Lake. Interpolation costs ~1 ms of
+  render. Under Auto the tick is a minor cost (sim 9-10 ms a frame in the
+  fight, ~4 in Main Plaza).
+- The game's own draw ("render", 10-14 ms) is the largest single bucket
+  now, ahead of the display lists. Rain (GXPortRainLines + the immediate
+  flush) is ~5% of the fight room (Frigate Crash Site is rainy).
+- The mixer is 13-15% of the fight's CPU, up to 23% in Phendrana: a
+  real cost after the 32-bit path. [PROFA]: the mix loop (salCtrlDsp)
+  70%, the reverb (ReverbSTDCallback, CheapReverb) 18%.
+- The GPU waits nowhere but the visors (Phendrana: gpu 3-7 ms a frame).
+- The audio fault of hw10 (stuck from the third scene on) did not happen
+  in twelve chained scenes.
+- In the fight, the dynamic (skinned) lists are GXCallDisplayList 9.7% +
+  memcpy/memmove 7.7% + BuildBoneRange 1%: what GPU skinning (M4, built
+  after this round) removes.
 
 ## 1. Where the time goes (the model everything below rests on)
 
