@@ -30,11 +30,25 @@ rounds and their files: `C:\xemu\hw\prime\ROUNDS.md`.
    bounds first. xemu pirate room profile (`39F2DE28:B9ABCD56`, 6 reports):
    `BuildBoneRange` 5.2 -> 3.4% of the samples, `dyn_fetch_batch` 6.7 ->
    5.4, `TriBoxOverlap` 2.2 -> 1.1. Most repeat calls left are other
-   instances of the same model (other pose): nothing to reuse. Next lever:
-   GPU skinning (a matrix palette: Prime's virtual bones are one matrix a
-   vertex; the constant budget allows ~13 bones a draw, so lists split by
-   bone set). Big: the dl cache, the VP generator and the game's skinned
-   draw all change.
+   instances of the same model (other pose): nothing to reuse. Game
+   Timing: Fixed runs 3.4 updates per drawn frame in xemu's pirate room
+   at ~17 fps (`[PERF]`'s "ticks per render" works since 2026-10-30): in
+   fights the catch-up is most of the frame; Flex runs one. The user's
+   choice; worth telling them.
+   Next lever, GPU skinning, sized 2026-10-30: models have 3-82 virtual
+   bones (pirate-class 35-50; a virtual bone is one matrix a vertex, at
+   most 3 joints blended on the CPU). The VP already takes a per-vertex
+   matrix index (`a0` = PNMTXIDX, 10 position and normal matrices, used on
+   the console by Melee-X), so a dynamic list can be drawn from the model's
+   own arrays with each vertex's virtual bone as its matrix index and the
+   palette (current PNMTX x bone, NRM x bone rotation) loaded per draw:
+   no VP change. To handle: lists split into draws of at most 10 bones
+   (strips become triangle lists: memory); `CSkinRules` (the bones) is
+   shared by every instance, so `Calculate` must copy its pose's matrices;
+   texgen from position or normal (reflections) wants skinned model-space
+   values: CPU path; a vertex whose position and normal fall in different
+   bones: CPU path; skinning itself can only be skipped lazily (sPointGen,
+   morphs, anything that reads the workspace).
 2. The HUD minimap is 150-300 draws a frame (fill and outline alternate per
    surface, `GXSetTevKColor` between): only a different draw method would
    join them; only if it keeps the retail look exactly.
