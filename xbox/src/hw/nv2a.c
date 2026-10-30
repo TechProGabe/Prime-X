@@ -1360,23 +1360,69 @@ static uint32_t* push_screen_target(uint32_t* p) {
     return p;
 }
 
-/* M6a's first step (docs/fps-plan.md): does red's DMA pusher take a
- * subroutine call (address | 2) and its return (0x00020000)? pbkit only
- * jumps. With PX_PB_CALL_TEST=1 (test builds) the first frame calls a
- * three-word segment that sets the depth clear value, then sets the colour
- * clear value itself, waits for the GPU and logs what PGRAPH holds (xemu's
- * NV_PGRAPH_ZSTENCILCLEARVALUE 0x1A88, COLORCLEARVALUE 0x186C), the pusher's
- * state and the fault count. A pusher without calls faults on the call word
- * or stalls (wait_idle reports it after 2 s). The clears set both values
- * again before they use them. */
+/* M6a's first step (docs/fps-plan.md): can the DMA pusher run a segment
+ * outside the pushbuffer and come back? With PX_PB_CALL_TEST=1 (test
+ * builds) the first frame runs two cases, each a segment that sets the
+ * depth clear value, then the main buffer setting the colour clear value:
+ *   jump: the old-style JUMP (0x20000000 | address, what pbkit uses) into
+ *         the segment, whose last word JUMPs back to the word after;
+ *   call: a subroutine CALL (address | 2) and RETURN (0x00020000). Round
+ *         hw14 on red: the segment ran, the return faulted the pusher.
+ * PFIFO's interrupt is held off during each case so the pusher's error
+ * code (NV_PFIFO_CACHE1_DMA_STATE bits 29-31) is read before pbkit's
+ * handler clears it; then it is let through and recovers as usual. */
 #define CALL_TEST_Z 0x00A5C3E1u
 #define CALL_TEST_C 0x5A3C1E0Fu
+#if XHW_TEST_BUILD
+static void pb_test_case(const char* name, volatile uint32_t* seg, uint32_t phys, int call, uint32_t z_want,
+                         uint32_t c_want) {
+    volatile uint32_t* r = (volatile uint32_t*)0xFD000000u;
+    volatile const uint32_t* g = (volatile const uint32_t*)0xFD400000u;
+    uint32_t faults, en, st = 0, *p, ret, n = 0;
+    uint64_t t0;
+    wait_idle();
+    faults = s_gf_count;
+    p = pb_begin();
+    seg[n++] = (1u << 18) | (SUBCH_3D << 13) | NV097_SET_ZSTENCIL_CLEAR_VALUE;
+    seg[n++] = z_want;
+    ret = ((uint32_t)(uintptr_t)(p + 1)) & 0x03FFFFFFu;   /* the word after the jump or call */
+    seg[n++] = call ? 0x00020000u : 0x20000000u | ret;
+    __asm__ __volatile__("sfence" ::: "memory");
+    en = r[0x2140 / 4];
+    r[0x2140 / 4] = en & ~(1u << 12);   /* NV_PFIFO_INTR_EN_0: no DMA_PUSHER interrupt for now */
+    *p++ = call ? (phys | 2u) : (0x20000000u | phys);
+    p = pb_push1(p, NV097_SET_COLOR_CLEAR_VALUE, c_want);
+    pb_end(p);
+    t0 = xhw_time_ns();
+    while (xhw_time_ns() - t0 < 500000000ull) {   /* back at PUT, or stopped on an error */
+        st = r[0x3228 / 4];
+        if ((st >> 29) & 7) break;
+        if (r[0x3244 / 4] == r[0x3240 / 4] && !(r[0x2100 / 4] & (1u << 12))) break;
+    }
+    st = r[0x3228 / 4];
+    {
+        uint32_t get = r[0x3244 / 4], put = r[0x3240 / 4], intr = r[0x2100 / 4];
+        r[0x2140 / 4] = en;   /* pbkit's handler takes any error now and steps past it */
+        wait_idle();
+        {
+            uint32_t z = g[0x1A88 / 4], c = g[0x186C / 4];
+            xhw_logf("[NV2A] pushbuffer %s test: %s | segment at %08x, back to %08x; depth clear %08x (want %08x), "
+                     "colour clear %08x (want %08x); at the end: get %08x put %08x dma_state %08x (error %u) intr %08x; "
+                     "faults %u new",
+                     name, z == z_want && c == c_want && s_gf_count == faults && !((st >> 29) & 7) ? "PASS" : "FAIL",
+                     (unsigned)phys, (unsigned)ret, (unsigned)z, (unsigned)z_want, (unsigned)c, (unsigned)c_want,
+                     (unsigned)get, (unsigned)put, (unsigned)st, (unsigned)((st >> 29) & 7), (unsigned)intr,
+                     (unsigned)(s_gf_count - faults));
+        }
+    }
+}
+#endif
+
 static void pb_call_test(void) {
 #if XHW_TEST_BUILD
     static int s_done;
     volatile uint32_t* seg;
-    volatile const uint32_t* r = (volatile const uint32_t*)0xFD000000u;
-    uint32_t phys, faults, *p;
+    uint32_t phys;
     const char* e;
     if (s_done) return;
     s_done = 1;
@@ -1384,30 +1430,12 @@ static void pb_call_test(void) {
     if (!e || atoi(e) != 1) return;
     seg = (volatile uint32_t*)MmAllocateContiguousMemoryEx(4096, 0, MAXRAM, 0, PAGE_READWRITE | PAGE_WRITECOMBINE);
     if (!seg) {
-        xhw_logf("[NV2A] call test: no memory");
+        xhw_logf("[NV2A] pushbuffer tests: no memory");
         return;
     }
     phys = (uint32_t)MmGetPhysicalAddress((PVOID)seg) & 0x03FFFFFFu;
-    seg[0] = (1u << 18) | (SUBCH_3D << 13) | NV097_SET_ZSTENCIL_CLEAR_VALUE;
-    seg[1] = CALL_TEST_Z;
-    seg[2] = 0x00020000u;   /* return */
-    __asm__ __volatile__("sfence" ::: "memory");
-    wait_idle();
-    faults = s_gf_count;
-    p = pb_begin();
-    *p++ = phys | 2u;       /* call */
-    p = pb_push1(p, NV097_SET_COLOR_CLEAR_VALUE, CALL_TEST_C);
-    pb_end(p);
-    wait_idle();
-    {
-        volatile const uint32_t* g = (volatile const uint32_t*)0xFD400000u;
-        uint32_t z = g[0x1A88 / 4], c = g[0x186C / 4];
-        xhw_logf("[NV2A] call test: %s | segment at %08x; depth clear %08x (want %08x), colour clear %08x (want "
-                 "%08x); get %08x put %08x dma_state %08x; faults %u new",
-                 z == CALL_TEST_Z && c == CALL_TEST_C && s_gf_count == faults ? "PASS" : "FAIL", (unsigned)phys,
-                 (unsigned)z, (unsigned)CALL_TEST_Z, (unsigned)c, (unsigned)CALL_TEST_C, (unsigned)r[0x3244 / 4],
-                 (unsigned)r[0x3240 / 4], (unsigned)r[0x3228 / 4], (unsigned)(s_gf_count - faults));
-    }
+    pb_test_case("jump", seg, phys, 0, CALL_TEST_Z, CALL_TEST_C);
+    pb_test_case("call", seg + 16, phys + 64, 1, CALL_TEST_Z ^ 0x00FFFFFFu, CALL_TEST_C ^ 0x00FFFFFFu);
     /* left allocated: four KB, once */
 #endif
 }
@@ -3536,8 +3564,18 @@ static void put_ranges(uint32_t first, uint32_t count) {
     }
 }
 
+/* the rect texture size each unit's texgen rows were built with
+ * (build_texgen scales a linear texture's s and t by it): 0 for none */
+static uint32_t s_tg_rect[4];
+
+static uint32_t unit_rect_key(const XgxState* st, int u) {
+    const XgxMap* mp = &st->map[s_d_unit_map[u]];
+    const Tex* t = mp->tex && mp->tex < MAX_TEX && s_tex[mp->tex].used ? &s_tex[mp->tex] : NULL;
+    return t && t->rect ? 0x80000000u | (uint32_t)t->w << 16 | (uint32_t)t->h : 0;
+}
+
 void xgx_draw(uint32_t prim, uint32_t count, const XgxLayout* layout, XgxState* st) {
-    int i, pf;
+    int i, pf, units_new = 0, maps_only, lay_new;
     uint32_t first, d, lay;
 
     if (!count) return;
@@ -3617,9 +3655,22 @@ void xgx_draw(uint32_t prim, uint32_t count, const XgxLayout* layout, XgxState* 
      * with a Z texture the mask's kind (mask_rgb) is read from the map. */
     /* (a uniform texture bound or unbound changes the units too) */
     if ((d & DIRTY_UNITS) && ((d & (XGX_DIRTY_TEV | XGX_DIRTY_TEXGEN)) || st->nind || st->ztex ||
-                              bound_maps(st) != s_d_maps || s_d_any_tconst || maps_uniform(st)))
+                              bound_maps(st) != s_d_maps || s_d_any_tconst || maps_uniform(st))) {
         derive_units(st);
-    if ((d & DIRTY_VK) || lay != s_d_layout) {
+        units_new = 1;
+    }
+    /* Only the textures changed (69% of Main Plaza's draws) and the units
+     * stayed: the vertex program's key is the same (it reads the units,
+     * channels, texgens and lights, not the textures), and so are the
+     * texgen rows unless a unit's linear texture changed size (s_tg_rect).
+     * Both were worked out again for every such draw (round hw13: xgx_draw
+     * ~17% of Main Plaza's CPU). -DXGX_MAPS_FAST=0 turns it off. */
+#ifndef XGX_MAPS_FAST
+#define XGX_MAPS_FAST 1
+#endif
+    maps_only = XGX_MAPS_FAST && !units_new && (d & (DIRTY_VK | DIRTY_TG)) == XGX_DIRTY_MAPS;
+    lay_new = lay != s_d_layout;
+    if (((d & DIRTY_VK) && !maps_only) || lay_new) {
         VpKey old = s_d_vk;
         if (lay >> 3 != s_d_layout >> 3) d |= XGX_DIRTY_TEXGEN;   /* per-vertex texture matrices on or off */
         derive_vk(st, layout);
@@ -3637,10 +3688,18 @@ void xgx_draw(uint32_t prim, uint32_t count, const XgxLayout* layout, XgxState* 
 #ifdef XGX_DEBUG_TRACE
     if (s_fbdump_once || s_shot_once) trace_draw(prim, count, st, s_d_rp->approximated, layout);   /* autopad SHOT or BACK */
 #endif
-    if ((d & DIRTY_TG) || (s_d_tg_posmtx && (d & XGX_DIRTY_POSMTX))) {
+    if (maps_only && !lay_new && !(s_d_tg_posmtx && (d & XGX_DIRTY_POSMTX))) {
+        for (i = 0; i < s_d_nunits; i++)
+            if (unit_rect_key(st, i) != s_tg_rect[i]) break;
+        if (i < s_d_nunits) maps_only = 0;   /* a linear texture of another size: the rows again */
+    } else {
+        maps_only = 0;
+    }
+    if (((d & DIRTY_TG) && !maps_only) || (s_d_tg_posmtx && (d & XGX_DIRTY_POSMTX))) {
         int pv = 0;
         for (i = 0; i < s_d_nunits; i++) {
             build_texgen(st, i, unit_texgen(st, (uint32_t)s_d_unit_tc[i]));
+            s_tg_rect[i] = unit_rect_key(st, i);
             pv |= s_d_vk.tex[i].pv_mtx;
         }
         if (pv) build_texmtx(st);
