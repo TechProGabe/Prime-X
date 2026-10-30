@@ -152,6 +152,29 @@ part, not the last report): the back end is far bigger than [PROFR]'s
 first read said: `xgx_draw` 16-17% and `GXCallDisplayList` 11% of all
 samples, about 2 us a draw. 69% of those draws change only the textures.
 
+### Round hw15 (red, 2026-10-30): texture-only draws, the pushbuffer tests again
+
+One profiler image of 008192f (`-O3`), Auto throughout. Steady stretches:
+
+| scene | hw14 | hw15 | draw bucket |
+|---|---|---|---|
+| pirate fight | 33 | 34-35 | 6.6 -> 5.7 ms |
+| Main Plaza | 38-39 | 43-44 | 8.1 -> 5.6 ms |
+| Lava Lake | 42-43 | 44-45 | 4.2 -> 3.6 ms |
+| Landing Site (rain) | 35-37 | 35-37 | |
+
+`XGX_MAPS_FAST` (texture-only draws keep the vertex-program key and the
+texgen rows) is most of it; the write-only clock reads the rest. No fault.
+
+**Both pushbuffer tests passed on red** (r15e): the JUMP round trip and
+the CALL/RETURN, the pusher's error code 0 each time. hw14's failure came
+on frame 1, with pbkit's one PGRAPH/PFIFO context switch of the boot in
+the same frame ("context switches: 1 ... at frame 1"); a channel switch
+while a subroutine is active is the likeliest way to lose its return. A
+JUMP holds no state in the pusher, so M6a is built on JUMPs: the main
+buffer jumps into a recorded segment whose last word jumps back to the
+word after, patched for each use.
+
 ## 1. Where the time goes (the model everything below rests on)
 
 Measured on red at 480i, profiler builds (LTO + PGO), `[PERF]` lines of
