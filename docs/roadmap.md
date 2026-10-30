@@ -28,8 +28,9 @@ line under it says how far it got.
       visors, 4:3 and 16:9
       - every world renders in xemu (room sweep, 14 rooms) and on red;
         visors switch; 4:3, 16:9 and 720p letterboxing work. Parity is
-        unjudged: Dolphin is on the build PC (2026-10-28) but needs a save
-        in the rooms to compare
+        unjudged: Dolphin reference frames in any room since 2026-10-30
+        (`tools/xbox/dolphin_ref.py`, no save needed), the comparisons
+        not made yet
 - [ ] Phase 4: audio, input, saves (Frigate to the landing site, save,
       reload; Dolphin `.gci` both ways)
       - MusyX sound and music, streamed music, rumble, pads and the button
@@ -80,11 +81,12 @@ line under it says how far it got.
 - Landing cinematic (Tallon Overworld), the gunship coming down through
   the atmosphere: a box around its glow sprite (the user saw it black on
   red in hw7; hw7's r7b shot at frame 600 has a lighter square around the
-  sprite). The sprite's alpha or blend is wrong: its quad's edges should
-  fade out. Not looked at yet.
-- Rendering not yet compared with Dolphin (installed, needs a save in the
-  rooms): the arm cannon in bright rooms, Phendrana's elevator steam, the
-  visors.
+  sprite). The sprite's alpha or blend is wrong: Dolphin (2026-10-30,
+  ~33 s into `dolphin_ref.py landing`) draws a soft starburst that fades
+  to nothing at its edges, no box.
+- Rendering not yet compared with Dolphin (reference frames now come
+  from `tools/xbox/dolphin_ref.py`): the arm cannon in bright rooms,
+  Phendrana's elevator steam, the visors.
 
 ## Console history
 
