@@ -98,6 +98,11 @@ rounds and their files: `C:\xemu\hw\prime\ROUNDS.md`.
   `CCubeModel`'s next-surface prefetch takes the header's port line too.
 - PGO profile retrained (all five scenarios gave profiles); LTO + PGO
   autopad build: room sweep 14/14. Plain build sweep 14/14 too.
+- Soaks in xemu: pirate room 25 min with 5 MB held back (free steady
+  ~3.5 MB, 32.8k frames), Main Plaza with 7 MB held back (reclaims and
+  ARAM swap working until Samus died, no invulnerability), Phendrana's
+  Ice Ruins and Magmoor's Lava Lake ~18 min each on the LTO + PGO image:
+  no FATAL, THROW or out of memory.
 - The pause screen (inventory doll, hw8's 14-17 fps): 30 dynamic lists, 0
   volatile, 0 index-only, ~40-46 fps in xemu.
 - Profiler: `[PROFT]`, hitch frames only (150 ms+), with their waiting
