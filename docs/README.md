@@ -3,7 +3,7 @@
 | document | what it covers |
 |---|---|
 | [handoff.md](handoff.md) | where things stand, where to start, this PC, open questions |
-| [history.md](history.md) | sessions and console rounds hw1-hw9, as the handoff had them (2026-10-27 to 29) |
+| [history.md](history.md) | earlier sessions and console rounds hw1-hw9, as the handoff had them |
 | [plan.md](plan.md) | the plan: targets, phases 0-7 with tasks and gates, risks |
 | [decisions.md](decisions.md) | the user's scope decisions, technical decisions, edits to imported code |
 | [sources.md](sources.md) | reference repos, pinned commits, licenses, what's taken from each |

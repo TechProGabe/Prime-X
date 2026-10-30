@@ -64,8 +64,8 @@ Open:
   tick; Game Timing: Fixed catches up 3-4 ticks a frame, Flex would run
   one (~35 fps).
 - Hitches of 250-300 ms at pickups and some doors (hw9 free play): not
-  explained; hw10's profiler builds log [PROFT] (the samples of frames of
-  150 ms or more, and whether they waited).
+  measured since. hw10's room-entry stalls (0.3-1.3 s) were ~65% waiting
+  (disc reads); the profiler build logs [PROFT] for any such frame.
 - Audio stuck ("Sound hardware is stuck", silent until a power-off):
   hw9 r9e, hw10's first r10a and every hw10 scene from r10c on (it began
   at a relaunch). The codec stops taking frames; resets don't help. The
@@ -79,7 +79,7 @@ Open:
 Fixed on red in hw10: the landing cinematic's glow box and the
 lightning-lit clouds' hard edge; the thermal and X-ray palettes.
 
-Fixed, not yet seen on red (hw10's free play):
+Fixed, not yet seen on red (hw10 had no free play):
 
 - The pause screen at 14-17 fps (hw8; ~40-46 fps in xemu), the charge
   beam (hw8), Port Options' value cells off their rows (hw6, hw8).
@@ -103,7 +103,7 @@ without input).
 | 2026-10-29 | hw7 | red | seven-scene chain r7a-g; r7e froze in audio start-up (fixed `f73d0d7`) |
 | 2026-10-29 | hw8 | red | r8g only (Flex, Landing Site 40.2 fps median); free play: no out of memory, pause screen 14-17 fps, charge beam dead |
 | 2026-10-29 | hw9 | red | chain r9a-e (r9f froze in audio start-up); free play to Parasite Queen: visuals fine, fights 10-20 fps. Hardware testing paused after it (the user) |
-| 2026-10-30 | hw10 | red | chain r10a-h ran: landing glow box gone, visors' palettes right, Landing Site 34-59 (hw9 dipped to 17), Main Plaza 30-36, fights 17-18 (3.4 ticks per render); audio stuck from r10c on (the old fault) |
+| 2026-10-30 | hw10 | red | chain r10a-h ran: landing glow box gone, visors' palettes right, Landing Site 34-59 (hw9 dipped to 17), Main Plaza 30-36, fights 17-18 (3.4 ticks per render); audio stuck from r10c on (the old fault); no free play |
 
 ## Performance per build
 
@@ -119,6 +119,12 @@ Console numbers only (xemu's are in `docs/performance.md`).
 | hw5 r5c (profiler) | Main Plaza | 480i | 21-46 | low while it streams in |
 | hw5 r5d (profiler) | Frigate opening | 480i | 26-43 | |
 | hw5 r5e (profiler) | Phendrana | 480i | 36-43 | |
+| hw10 r10c (profiler) | Landing Site | 480i | 34-59 (low 24) | Fixed; hw9's r9b dipped to 17-22 |
+| hw10 r10d (profiler) | Frigate Crash Site, pirate fight | 480i | 17-18 | Fixed: 3.4 ticks per render, sim ~12 ms a tick; 33-36 after the fight |
+| hw10 r10e (profiler) | Main Plaza | 480i | 30-36 | Fixed; hw9's r9c 24-32 |
+| hw10 r10f (profiler) | Phendrana, visors | 480i | 48-60 | thermal and X-ray palettes |
+| hw10 r10g (profiler) | Lava Lake | 480i | 27-28 | Fixed |
+| hw10 r10h (profiler) | Frigate opening | 480i | 50-60 | Fixed |
 
 ## Future (after v1, not planned)
 

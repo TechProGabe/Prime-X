@@ -16,7 +16,7 @@ then `docs/plan.md`, `docs/decisions.md`, `docs/sources.md`.
 | doc | why |
 |---|---|
 | `docs/handoff.md` | current state and the next task; update it at the end of every session |
-| `docs/history.md` | earlier sessions and console rounds (hw1-hw9), moved out of the handoff |
+| `docs/history.md` | earlier sessions and console rounds (hw1-hw9), moved out of the handoff as they age |
 | `docs/roadmap.md` | each phase's gate and how far it got, known issues, console history |
 | `docs/plan.md` | phases 0-7, each with tasks and a gate |
 | `docs/decisions.md` | what the user decided and why; scope; edits to imported code |

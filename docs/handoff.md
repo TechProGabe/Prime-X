@@ -3,7 +3,7 @@
 Update this at the end of every session: what was done, what's next,
 what's broken, anything the next agent would otherwise rediscover.
 
-## Where it stands (2026-10-30, evening)
+## Where it stands (2026-10-30, end of day)
 
 The game plays through every world in xemu (room sweep: 14 rooms, no
 failure, plain and LTO + PGO) and on the red console (~35-45 fps in most
@@ -12,6 +12,8 @@ rooms at 480i, fights 17-18 at hw10). Everything is committed and pushed on
 landing glow box and the visors are fixed on hardware, Landing Site and
 Main Plaza are faster than hw9, fights are still 17-18 fps (Fixed's
 catch-up), and the audio got stuck from the third scene of the chain on.
+The round is closed (no free play: the user). No round is planned; the
+next is the user's call.
 
 Every sweep room matches Dolphin (`tools/xbox/dolphin_ref.py`) except
 Magmoor's fog volumes, which the port doesn't draw (Next 3). Verify builds
@@ -24,16 +26,22 @@ deploy with `tools/xbox/console.py` (console FTP 192.168.158.113,
 `PX_HW=/c/xemu/hw/prime`; back up `E:\UDATA\50580001` first). The profile
 was trained on 452e820 (the morning of 2026-10-30); the renderer changed a
 little since: retrain before a release. Console rounds and their files:
-`C:\xemu\hw\prime\ROUNDS.md`; older sessions and rounds: `docs/history.md`.
+`C:\xemu\hw\prime\ROUNDS.md`; older sessions and rounds (hw1-hw9, and the
+night of 2026-10-30): `docs/history.md`.
 
 ## Next session, in order
 
 1. **Audio stuck** (hw10, "Console round hw10"): the old fault, seen in
    the chain from r10c on. Next: what each XBE leaves at exit; a warm
-   reset before the cold one. hw10's free play is still to run.
+   reset before the cold one. Only a console round can test a change.
 2. **Fights**: hw10's r10d ran 17-18 fps at 3.4 ticks per render (sim
    ~12 ms a tick): Fixed's catch-up is most of the frame; Flex would give
-   ~35. Tell the user (Port Options' Game Timing). In: skinned lists over
+   ~35. The user knows (2026-10-30, Fixed vs Flex explained: Flex runs
+   one update a frame with dt = the frame's time, at most 1/30 s, so below
+   30 fps the game slows instead; hw7 measured Main Plaza 31.9 -> 35.3 and
+   Landing Site 34.9 -> 37.9 with Flex; never measured in a fight). A cap
+   on Fixed's catch-up would be the other lever (the game would run slow
+   in fights instead of dropping frames): the user's call. In: skinned lists over
    the dynamic budget go index-only; same-frame reuse of skinned vertices;
    per-model skin workspaces (`GXPortSkinKeep`, on since 2026-10-30, 1 MB,
    given back when memory runs short); `TriBoxOverlap` rejects on the
@@ -95,8 +103,10 @@ logs and shots in `C:\xemu\hw\prime\logs-hw10` (the save folder pulled
 whole: each scene's log is `boot_Prime-X-r10x.log`, its shots
 `shot_Prime-X-r10x_NN.bmp`); the first attempt's r10a in `logs-hw10a`;
 the save folder before the upload in `logs-hw10pre`. Maps
-`prime_x.hw10.map` (profiler), `prime_x.hw10ship.map`. Free play not run
-yet.
+`prime_x.hw10.map` (profiler), `prime_x.hw10ship.map`. No free play (the
+user), so the pause screen, the gunship and the pickup hitches weren't
+measured; the console still has `Prime-X` (ship) and `Prime-X-prof`
+(profiler, no script) for a later session.
 
 - **The landing glow box is gone on red** (r10b shot 14: a starburst
   fading out, as Dolphin), and the lightning-lit clouds fade (shot 13):
@@ -114,6 +124,10 @@ yet.
   a frame would be ~28 ms (~35 fps). Flex is the user's lever; capping
   Fixed's catch-up would slow the game down instead (a choice for the
   user). After the fight, 33-36 fps.
+- Room-entry stalls of 0.3-1.3 s in every scene (`MP stall`), as before;
+  the [PROFT] frames (150 ms or more) were ~65% waiting (the game thread
+  not running: disc reads), not computing. Lowest free memory in the
+  chain 3.7 MB; no fault, hang or out of memory in eight scenes.
 - **Audio stuck** ("Sound hardware is stuck"): the first attempt's r10a
   (the console switched off and on before, previous exit recorded as an
   in-game reset) and, in the second attempt, every scene from r10c on.
@@ -171,57 +185,6 @@ yet.
   Dolphin's frame of it but Magmoor's fog volumes; Ice Temple's and the
   quarry's odd poses (gun raised, left hand up) are Samus's idle
   animations, in retail too.
-
-## Session 2026-10-30 (night, unattended): fights, xemu only
-
-- The kept-workspace mismatch (why `GXPortSkinKeep` was off) is xemu's:
-  the verify build checksummed each kept workspace after its skin and at
-  every draw (never changed), hashed the fetched arrays around each call
-  and logged MXCSR: the same array bytes and MXCSR gave two references a
-  bit apart in a packed normal, back to back ("arrays changed during the
-  call ... array bytes the same"). On since; a reclaimer gives the
-  workspaces back when memory runs short (`GXPortSkinKeepEpoch`; test
-  hook `env PX_SKIN_REVOKE_AT=<frame>`: pirate room renders the same
-  before and after, verify clean).
-- `TriBoxOverlap`: the triangle's bounds tested before the edge axes.
-- A skinned list's position and normal fetches in one pass
-  (`dyn_fetch_pos_nrm`).
-- `CHierarchyPoseBuilder::BuildTransform` resumes from the deepest chain
-  link already walked under the same tree version (its own samples 0.8
-  -> 0.1% in the pirate room). `prof_report.py`'s "one frame up" table
-  scans the stack for return addresses and catches stale ones (it showed
-  3.7% here, 8-10% "under" `RecursivelyBuild` in Main Plaza): judge by the
-  functions' own samples.
-- `[PERF]`'s "ticks per render" counts the game updates (was always 0).
-- Particles: the last lifetime's reciprocal kept (emulated FRECPE + two
-  fma calls per `PortSetSystemTime`); `SqrtF`/`InvSqrtF`'s max without
-  nxdk's x87 `fmaxf`. `RecursivelyBuild` makes its children's matrix once.
-  `CCubeModel`'s next-surface prefetch takes the header's port line too.
-- PGO profile retrained (all five scenarios gave profiles); LTO + PGO
-  autopad build: room sweep 14/14. Plain build sweep 14/14 too.
-- Soaks in xemu: pirate room 25 min with 5 MB held back (free steady
-  ~3.5 MB, 32.8k frames), Main Plaza with 7 MB held back (reclaims and
-  ARAM swap working until Samus died, no invulnerability), Phendrana's
-  Ice Ruins and Magmoor's Lava Lake ~18 min each on the LTO + PGO image:
-  no FATAL, THROW or out of memory.
-- The pause screen (inventory doll, hw8's 14-17 fps): 30 dynamic lists, 0
-  volatile, 0 index-only, ~40-46 fps in xemu.
-- Profiler: `[PROFT]`, hitch frames only (150 ms+), with their waiting
-  time. In xemu a room's first frame under `MP_BOOT_WORLD` is mostly
-  waiting (`CGameArea::Validate` loads the area synchronously, a boot
-  artifact). The console's free-play hitches (hw9: 250-300 ms "draw"
-  stalls at pickups and some doors) aren't explained yet: a `[PROFT]`
-  profile from the console would say whether they wait or compute.
-- Tried and reverted (no gain xemu can show): the sorted lists' sort keys
-  mirrored beside their ids (the nodes fit the Pentium III's L2, and xemu
-  doesn't model cache misses); an SSE `put_nrm` (bit-identical by a host
-  test over 20M inputs, but no faster in xemu, which runs packed SSE a
-  lane at a time). Both might help on the console; unmeasurable here.
-- Looked at, left: the landing glow box (fixed the next day: fog colour
-  on additive blends), the HUD minimap
-  (reordering fills and outlines changes overlap), pbkit's kick size
-  (tuned on the console), `acos`/`sin` in `CQuaternion::Slerp` (nxdk's
-  x87 versions; ~1%, results would move).
 
 ## Working notes
 
