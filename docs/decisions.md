@@ -130,6 +130,12 @@ combiners; ThinLTO + PGO for releases.
   - The pushbuffer kick (M3.5): 32768 words while the GPU was idle at the
     last 16 frame starts, 8192 (as before) otherwise (`XGX_PB_KICK_IDLE`,
     `-DXGX_PB_KICK_IDLE=8192` turns it off). Judged on red only.
+  - GPU skinning's vertex memory (M4): its lists may hold 1 MB of the
+    vertex pool (`XGX_GPU_SKIN_KB`) and never its last 512 KB; the room's
+    cached lists evict them first when they need room. A model that falls
+    back to the CPU four times (texgens the slots can't serve) skins on
+    the CPU from then on: it was drawing half its lists on the GPU and then
+    skinning anyway, every frame (round hw12, Main Plaza).
   - Draw merging (M3.1, `-DXGX_MERGE=0`): a draw that changes no state
     joins the one before into its BEGIN/END when the primitive (lists,
     quads, lines, points; strips stitched with degenerate triangles),
