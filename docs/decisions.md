@@ -165,6 +165,12 @@ combiners; ThinLTO + PGO for releases.
     read wholly from registered static memory (a room's geometry, while
     `CCubeRenderer` has it) skips its content checks; unregistering drops
     those lists before the memory is freed or moved.
+  - Texture lookups by object (`XGX_TEX_MEMO`, `-DXGX_TEX_MEMO=0`;
+    `-DXGX_TEX_MEMO_VERIFY=1` checks every hit against the full lookup):
+    the same GXTexObj (address and contents) finds the same cache entry and
+    mip count until any entry is added, dropped or moved. Revalidation of
+    the texels runs as before. xemu's Main Plaza: ~6 million hits, none
+    differing from the full lookup.
   - The rain's lines (M5): `GXPortRainLines` keeps its batch's box, and
     `clip_lines` tests the box's corners once; a batch wholly inside skips
     the per-line test (`-DXGX_LINE_BOX=0`). Same vertices drawn.

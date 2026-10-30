@@ -82,6 +82,33 @@ typedef struct {
 } MapBind;
 static MapBind s_bound[XGX_MAX_MAPS];
 
+/* bind_new's lookup by texture object: Prime's textures keep their
+ * GXTexObj in the CTexture, so the same object (address and contents)
+ * comes back every frame; its entry and mip count are remembered until any
+ * entry is added, dropped or moved (s_cache_gen). Round hw15: bind_new was
+ * 8% of Main Plaza's draw, most of it find()'s chain and the level count.
+ * -DXGX_TEX_MEMO=0 turns it off. */
+#ifndef XGX_TEX_MEMO
+#define XGX_TEX_MEMO 1
+#endif
+#define TEX_MEMO 256
+typedef struct {
+    const TexObj* o;
+    TexObj obj;
+    const uint8_t* tlut_data;
+    uint32_t gen;
+    int idx;
+    uint32_t levels;
+} TexMemo;
+static TexMemo s_memo[TEX_MEMO];
+static uint32_t s_cache_gen = 1;
+#ifndef XGX_TEX_MEMO_VERIFY
+#define XGX_TEX_MEMO_VERIFY 0   /* 1: every memo hit is checked against find() ([TEX] memo lines) */
+#endif
+#if XGX_TEX_MEMO_VERIFY
+static uint32_t s_memo_checks, s_memo_bad;
+#endif
+
 static uint32_t bucket_of(const uint8_t* data) { return ((uint32_t)(uintptr_t)data >> 5) % CACHE_BUCKETS; }
 
 static void chain_init(void) {
@@ -107,6 +134,7 @@ static EntryCold* cold_of(const Entry* e) { return &s_cold[e - s_cache]; }
 /* a new entry at the end of the array, linked */
 static Entry* entry_add(const uint8_t* data) {
     Entry* e = &s_cache[s_count];
+    s_cache_gen++;
     memset(e, 0, sizeof *e);
     memset(&s_cold[s_count], 0, sizeof s_cold[s_count]);
     e->data = data;
@@ -364,6 +392,7 @@ static void drop_at(int i) {
         xgx_tex_destroy(e->tex);
     }
     memset(s_bound, 0, sizeof s_bound);
+    s_cache_gen++;
     chain_unlink(i);
     if (i != last) {
         chain_unlink(last);
@@ -935,6 +964,38 @@ static void bind_new(uint32_t map, const TexObj* o, const TlutObj* tl) {
     Entry* e;
     XgxMap* m = &g_xgx.map[map];
     MapBind* b = &s_bound[map];
+    TexMemo* mm = &s_memo[((uintptr_t)o >> 4) % TEX_MEMO];
+    sep = tl && ci_separate(o);
+    if (XGX_TEX_MEMO && mm->o == o && mm->gen == s_cache_gen && mm->tlut_data == (tl && !sep ? tl->data : NULL) &&
+        words_same(&mm->obj, o, sizeof *o / 4)) {
+        e = &s_cache[mm->idx];
+        levels = mm->levels;
+#if XGX_TEX_MEMO_VERIFY
+        {   /* the slow path's answer, which the memo must equal */
+            uint32_t lv = 1;
+            Entry* f;
+            if (o->mipmap) {
+                uint32_t w = o->w, h = o->h;
+                while ((w > 1 || h > 1) && lv < (o->max_lod ? o->max_lod + 1u : 11u)) {
+                    w = w > 1 ? w / 2 : 1;
+                    h = h > 1 ? h / 2 : 1;
+                    lv++;
+                }
+            }
+            f = find(o->data, o->w, o->h, key_fmt(o), (uint8_t)lv, tl && !sep ? tl->data : NULL);
+            s_memo_checks++;
+            if (f != e || lv != levels) {
+                if (s_memo_bad++ < 8)
+                    xhw_logf("[TEX] memo wrong: %ux%u fmt %u at %p: entry %d, find %d; levels %u, %u", o->w, o->h, o->fmt,
+                             (const void*)o->data, (int)(e - s_cache), f ? (int)(f - s_cache) : -1, levels, lv);
+                e = f;
+                levels = lv;
+            }
+            if ((s_memo_checks & 0xFFFF) == 0) xhw_logf("[TEX] memo: %u checked, %u wrong", s_memo_checks, s_memo_bad);
+        }
+#endif
+        goto found;
+    }
     if (o->mipmap) {
         uint32_t w = o->w, h = o->h;
         levels = 1;
@@ -949,8 +1010,8 @@ static void bind_new(uint32_t map, const TexObj* o, const TlutObj* tl) {
 #endif
     /* the GX size (never 0: w and h are) only when the texels are hashed or
      * uploaded, not for a lookup that finds a texture already checked */
-    sep = tl && ci_separate(o);
     e = find(o->data, o->w, o->h, key_fmt(o), (uint8_t)levels, tl && !sep ? tl->data : NULL);
+found:
     if (e && e->efb && s_frame - e->last_used > TEX_IDLE_FRAMES && (e->w != o->w || e->h != o->h)) {
         drop(e);   /* an idle copy's memory, now a texture of another size */
         e = NULL;
@@ -1017,6 +1078,14 @@ static void bind_new(uint32_t map, const TexObj* o, const TlutObj* tl) {
         e->checked = s_frame;
     }
     e->last_used = s_frame;
+    if (XGX_TEX_MEMO) {   /* this object finds this entry until the cache changes */
+        mm->o = o;
+        mm->obj = *o;
+        mm->tlut_data = tl && !sep ? tl->data : NULL;
+        mm->gen = s_cache_gen;
+        mm->idx = (int)(e - s_cache);
+        mm->levels = levels;
+    }
     {   /* HSD rebinds the texture a map already has through another texture
          * object (a new one per material): no change, no dirty bit, so the
          * back end doesn't rebuild the units and combiners for it (~40% of a
