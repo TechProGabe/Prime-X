@@ -289,6 +289,9 @@ profiler builds, six 1 ms-sample reports):
   `RecursivelyBuild` the same way, whose own samples are small.)
 - `RecursivelyBuild` makes its children's rotation matrix once instead
   of once per child (at scale 1 the node's own matrix): same values.
+- `CFrustumPlanes::BoxInFrustumPlanes` tests the plane that rejected the
+  last box first (neighbouring boxes fail the same side): 1.4 -> 0.9% in
+  the Frigate, 1.3 -> 0.8% in Main Plaza.
 - `[PERF]`'s "ticks per render" now counts the game updates: Game Timing
   Fixed runs 3.4 a drawn frame there at ~17 fps; most of a slow fight
   frame is catch-up. Flex runs one.

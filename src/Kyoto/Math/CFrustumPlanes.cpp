@@ -61,12 +61,30 @@ CFrustumPlanes::CFrustumPlanes(const CTransform4f& xf, float fov, float aspect, 
 }
 
 bool CFrustumPlanes::BoxInFrustumPlanes(const CAABox& box) const {
+#ifdef TARGET_XBOX
+  // PORT_XBOX: the plane that turned the last box away first: neighbouring
+  // boxes (a room's models, in order) mostly fall outside the same side.
+  // Every plane still has to pass, so the answer is the same.
+  static int sLastOut = 0;
+  const int n = x0_planes.size();
+  if (sLastOut < n && !box.InsidePlane(x0_planes[sLastOut])) {
+    return false;
+  }
+  for (int i = 0; i < n; ++i) {
+    if (i != sLastOut && !box.InsidePlane(x0_planes[i])) {
+      sLastOut = i;
+      return false;
+    }
+  }
+  return true;
+#else
   for (int i = 0; i < x0_planes.size(); ++i) {
     if (!box.InsidePlane(x0_planes[i])) {
       return false;
     }
   }
   return true;
+#endif
 }
 
 bool CFrustumPlanes::BoxInFrustumPlanes(const rstl::optional_object< CAABox >& box) const {
