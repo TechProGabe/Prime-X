@@ -18,7 +18,9 @@ Newer builds also log callers (return addresses, one frame up): [PROFL] for
 samples inside memcpy/memset/memcmp/memmove, [PROFC] for every sample. Those
 are folded into the calling functions and listed after the functions.
 [PROFS] buckets (v33 on) count only the samples taken during the simulation
-ticks; they are listed last, as the simulation's own profile.
+ticks; they are listed last, as the simulation's own profile. [PROFT] buckets
+count only the samples of frames that took 150 ms or more (hitches: a room's
+first frame, a pickup).
 
 --full reads the whole-match profile instead: the [PROFH] lines an autopad
 build logs at a match's end, or the prof.bin a profiler build writes to
@@ -224,16 +226,17 @@ def periodic(a, funcs):
         if m:
             cur = {'total': int(m[1]), 'placed': int(m[2]), 'buckets': collections.Counter(),
                    'libc': collections.Counter(), 'callers': collections.Counter(), 'libc_n': 0, 'callers_n': 0,
-                   'sim': collections.Counter(), 'sim_n': 0}
+                   'sim': collections.Counter(), 'sim_n': 0, 'stall': collections.Counter(), 'stall_n': 0}
             reports.append(cur)
             continue
         if cur is None:
             continue
-        m = re.search(r'\[PROF([LCS])\] (\d+) samples', line)
+        m = re.search(r'\[PROF([LCST])\] (\d+) samples', line)
         if m:
-            cur[{'L': 'libc_n', 'C': 'callers_n', 'S': 'sim_n'}[m[1]]] += int(m[2])
+            cur[{'L': 'libc_n', 'C': 'callers_n', 'S': 'sim_n', 'T': 'stall_n'}[m[1]]] += int(m[2])
             continue
-        for tag, key in (('[PROFL]', 'libc'), ('[PROFC]', 'callers'), ('[PROFS]', 'sim'), ('[PROF]', 'buckets')):
+        for tag, key in (('[PROFL]', 'libc'), ('[PROFC]', 'callers'), ('[PROFS]', 'sim'), ('[PROFT]', 'stall'),
+                         ('[PROF]', 'buckets')):
             if tag in line:
                 for addr, n in re.findall(r'([0-9a-f]{8}):(\d+)', line):
                     cur[key][int(addr, 16)] += int(n)
@@ -258,12 +261,13 @@ def periodic(a, funcs):
         hist = collections.Counter()
         for r in use:
             hist.update(r[key])
-        by = funcs.fold(hist, a.first) if key == 'sim' else funcs.fold_exact(hist)
+        by = funcs.fold(hist, a.first) if key in ('sim', 'stall') else funcs.fold_exact(hist)
         print(f'\n{title}: {n_all} samples ({100.0 * n_all / placed:.1f}% of the image\'s)')
         table(by, n_all, a.n)
 
     callers('libc', 'memcpy/memset/memcmp/memmove, by calling function')
     callers('sim', 'simulation ticks only, by function')
+    callers('stall', "frames of 150 ms or more only ([PROFT]: a room's first frame, a pickup), by function")
     callers('callers', 'all samples, by calling function (one frame up)')
 
 

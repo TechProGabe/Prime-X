@@ -51,7 +51,12 @@ Each run at 480p 4:3, 480p 16:9 and 720p. Results go in a table in
 - `[NV2A]` frame census: draws, vertices, texture uploads, EFB copies,
   program loads per frame (`tools/xbox/census_report.py`).
 - The sampling profiler (`-DXHW_PROF=1`, `tools/xbox/prof_report.py`) and
-  instruction counts in xemu (`-icount`).
+  instruction counts in xemu (`-icount`). Trust a function's own samples;
+  the "one frame up" table scans the stack for return addresses and
+  catches stale ones. `[PROFT]` (2026-10-30) keeps only the samples of
+  frames of 150 ms or more (`XHW_PROF_STALL_MS`): hitches, with how much
+  of them the game thread spent waiting (reads, locks) or outside the
+  image. A SHOT frame is one too (its zlib).
 - Console rounds (`tools/xbox/console_round.py`): many A/B builds in one
   launch on the real console.
 - `simh` lockstep hashes (`tools/xbox/simh_diff.py`): an optimisation must

@@ -79,6 +79,16 @@ unsigned long xhw_thread_eip(void* kthread, unsigned long* esp_out) {
 #if XHW_PROF
 static uint16_t* s_hist;
 static uint16_t* s_hist_sim;   /* the samples taken during the simulation ticks */
+/* [PROFT]: only the samples of frames that took XHW_PROF_STALL_MS or more
+ * (a room's first frame, a pickup): a frame's samples wait in s_fb until
+ * the next frame starts, and go into s_hist_stall if it ran that long */
+#ifndef XHW_PROF_STALL_MS
+#define XHW_PROF_STALL_MS 150
+#endif
+#define FB_MAX 4096
+static uint16_t* s_hist_stall;
+static uint32_t s_fb[FB_MAX], s_fb_n, s_fb_ticks, s_fb_frame, s_fb_waiting, s_fb_outside;
+static uint32_t s_stall_frames, s_stall_placed, s_stall_ticks, s_stall_waiting, s_stall_outside;
 static uint32_t s_nbuckets;
 static uint32_t s_placed, s_outside, s_waiting, s_noframe, s_sim_placed;
 
@@ -252,6 +262,15 @@ static void report(void) {
         rep("[PROFS] %u samples in the simulation\n", s_sim_placed);
         report_hist("[PROFS]", s_hist_sim);
     }
+    if (s_hist_stall && s_stall_frames) {
+        /* waiting: the game thread wasn't running (a read, a lock, a sleep);
+         * outside: it ran in the kernel or another module */
+        rep("[PROFT] %u samples in %u frames of %u ms or more (%u ms: %u waiting, %u outside the image)\n",
+            s_stall_placed, s_stall_frames, (unsigned)XHW_PROF_STALL_MS, s_stall_ticks, s_stall_waiting,
+            s_stall_outside);
+        report_hist("[PROFT]", s_hist_stall);
+        s_stall_frames = s_stall_placed = s_stall_ticks = s_stall_waiting = s_stall_outside = 0;
+    }
     s_placed = s_outside = s_waiting = s_noframe = s_sim_placed = 0;
     report_callers("[PROFL]", "in memcpy/memset/memcmp/memmove, by caller", s_libc);
     report_callers("[PROFC]", "by caller (one frame up)", s_callers);
@@ -399,6 +418,33 @@ static DWORD WINAPI sampler(LPVOID arg) {
             }
         }
         KfLowerIrql(old);
+        if (s_hist_stall) {   /* [PROFT]: the frame before this one, if it was long */
+            uint32_t f = xhw_frame_count();
+            if (f != s_fb_frame) {
+                if (s_fb_ticks >= XHW_PROF_STALL_MS) {
+                    uint32_t i;
+                    for (i = 0; i < s_fb_n; i++) {
+                        uint32_t b = (s_fb[i] - xhw_image_base) >> BUCKET_SHIFT;
+                        if (s_hist_stall[b] != 0xFFFF) s_hist_stall[b]++;
+                    }
+                    s_stall_placed += s_fb_n;
+                    s_stall_frames++;
+                    s_stall_ticks += s_fb_ticks;
+                    s_stall_waiting += s_fb_waiting;
+                    s_stall_outside += s_fb_outside;
+                }
+                s_fb_frame = f;
+                s_fb_n = s_fb_ticks = s_fb_waiting = s_fb_outside = 0;
+            }
+            s_fb_ticks++;
+            if (eip >= xhw_image_base && eip < xhw_image_end) {
+                if (s_fb_n < FB_MAX) s_fb[s_fb_n++] = eip;
+            } else if (eip) {
+                s_fb_outside++;
+            } else {
+                s_fb_waiting++;
+            }
+        }
         if (eip >= xhw_image_base && eip < xhw_image_end) {
             uint32_t b = (eip - xhw_image_base) >> BUCKET_SHIFT;
             int sim = xhw_perf_bucket() == XHW_PERF_LOGIC;
@@ -438,6 +484,7 @@ void xhw_prof_start(void) {
     s_nbuckets = ((xhw_image_end - xhw_image_base) >> BUCKET_SHIFT) + 1;
     s_hist = (uint16_t*)calloc(s_nbuckets, sizeof s_hist[0]);
     s_hist_sim = (uint16_t*)calloc(s_nbuckets, sizeof s_hist_sim[0]);
+    s_hist_stall = (uint16_t*)calloc(s_nbuckets, sizeof s_hist_stall[0]);
     s_libc = (CallerTable*)calloc(1, sizeof *s_libc);
     s_callers = (CallerTable*)calloc(1, sizeof *s_callers);
     s_wn = (code_end() - xhw_image_base + (1u << BUCKET_SHIFT) - 1) >> BUCKET_SHIFT;
