@@ -76,6 +76,7 @@ asked for), dumps every frame and keeps one every few seconds:
 python tools/xbox/dolphin_ref.py plaza                    # room_sweep.sh's names, or <MLVL>[:<MREA>]
 python tools/xbox/dolphin_ref.py landing --secs 90 --every 3
 python tools/xbox/dolphin_ref.py plaza --gui              # Dolphin's window, to play from there
+python tools/xbox/dolphin_ref.py A8BE6291 --visor thermal   # a visor held (thermal, scan; X-ray won't engage)
 ```
 
 Frames go to `build-xbox/shots/dolphin/<room>/SSSS.png` (the second of the
