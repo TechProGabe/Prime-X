@@ -130,6 +130,14 @@ combiners; ThinLTO + PGO for releases.
   - The pushbuffer kick (M3.5): 32768 words while the GPU was idle at the
     last 16 frame starts, 8192 (as before) otherwise (`XGX_PB_KICK_IDLE`,
     `-DXGX_PB_KICK_IDLE=8192` turns it off). Judged on red only.
+  - Draw merging (M3.1, `-DXGX_MERGE=0`): a draw that changes no state
+    joins the one before into its BEGIN/END when the primitive (lists,
+    quads, lines, points; strips stitched with degenerate triangles),
+    layout and vertex window match and nothing else went into the
+    pushbuffer between. xemu's Main Plaza: 16% of the unchanged draws join
+    (3% of all); most of the rest follow a draw of another primitive
+    (`[NV2A] unchanged draws not joined:`). Turning strips into lists would
+    join more but triples their vertex memory.
   - The rain's lines (M5): `GXPortRainLines` keeps its batch's box, and
     `clip_lines` tests the box's corners once; a batch wholly inside skips
     the per-line test (`-DXGX_LINE_BOX=0`). Same vertices drawn.

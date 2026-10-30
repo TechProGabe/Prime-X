@@ -554,7 +554,7 @@ static void pb_close(void) {
 
 /* per-interval counters for the [NV2A] frame line */
 static uint32_t s_st_waits, s_st_efb, s_st_tex_kb, s_st_verts, s_st_tex_fail, s_st_pb_peak, s_st_pb_resets;
-static uint32_t s_st_draws, s_st_dirty_none, s_st_dirty_mtx, s_st_dirty[13];
+static uint32_t s_st_draws, s_st_dirty_none, s_st_dirty_mtx, s_st_dirty[13], s_st_merged, s_st_nomrg[5];
 static uint32_t s_st_prim[8];   /* by GX primitive, (prim >> 3) & 7 */
 static uint32_t s_st_vp_sel, s_st_vp_loads, s_st_vp_ins;   /* program switches, loads, instructions loaded */
 
@@ -1650,13 +1650,18 @@ static void stats_report(void) {
     xhw_logf("[NV2A] per %u frames: %u vertex programs loaded (%u instructions), %u program switches",
              n, s_st_vp_loads, s_st_vp_ins, s_st_vp_sel);
     s_st_vp_loads = s_st_vp_ins = s_st_vp_sel = 0;
-    xhw_logf("[NV2A] per %u draws: %u changed nothing, %u only a position matrix | proj %u view %u posmtx %u texmtx "
-             "%u lights %u chans %u texgen %u tev %u tevreg %u pixel %u fog %u maps %u scissor %u",
-             s_st_draws, s_st_dirty_none, s_st_dirty_mtx, s_st_dirty[0], s_st_dirty[1], s_st_dirty[2], s_st_dirty[3],
+    xhw_logf("[NV2A] per %u draws: %u changed nothing (%u joined the draw before), %u only a position matrix | proj "
+             "%u view %u posmtx %u texmtx %u lights %u chans %u texgen %u tev %u tevreg %u pixel %u fog %u maps %u "
+             "scissor %u",
+             s_st_draws, s_st_dirty_none, s_st_merged, s_st_dirty_mtx, s_st_dirty[0], s_st_dirty[1], s_st_dirty[2], s_st_dirty[3],
              s_st_dirty[4], s_st_dirty[5], s_st_dirty[6], s_st_dirty[7], s_st_dirty[8], s_st_dirty[9],
              s_st_dirty[10], s_st_dirty[11], s_st_dirty[12]);
+    xhw_logf("[NV2A] unchanged draws not joined: %u after no open draw, %u after other pushbuffer words, %u another "
+             "primitive, %u another layout, %u another vertex window",
+             s_st_nomrg[0], s_st_nomrg[1], s_st_nomrg[2], s_st_nomrg[3], s_st_nomrg[4]);
+    memset(s_st_nomrg, 0, sizeof s_st_nomrg);
     memset(s_st_dirty, 0, sizeof s_st_dirty);
-    s_st_draws = s_st_dirty_none = s_st_dirty_mtx = 0;
+    s_st_draws = s_st_dirty_none = s_st_dirty_mtx = s_st_merged = 0;
 #if XGX_CENSUS
     census_report();
 #endif
@@ -3424,6 +3429,55 @@ static void emit_fog(const XgxState* st) {
     }
 }
 
+/* Draws that change nothing join the one before (docs/fps-plan.md M3.1):
+ * the same independent primitive (triangles, quads, lines, points), the
+ * same layout and vertex window, nothing written to the pushbuffer since
+ * that draw's END and nothing kicked: its END is taken back and the new
+ * ranges go into the same BEGIN/END. 20-26% of draws changed nothing in
+ * round hw10. -DXGX_MERGE=0 turns it off. */
+#ifndef XGX_MERGE
+#define XGX_MERGE 1
+#endif
+static uint32_t* s_mrg_end;   /* P right after the last draw's END; NULL: none to join */
+static uint32_t* s_mrg_mark;  /* s_pb_mark then: a kick since moves it */
+static uint32_t s_mrg_prim;
+static uint32_t s_mrg_last, s_mrg_have;   /* strips: the last vertex index, the vertices in the open BEGIN */
+static const uint8_t* s_mrg_base;
+static XgxLayout s_mrg_layout;
+
+/* the vertex window a draw's arrays point at (see xgx_draw) and its first index there */
+static const uint8_t* draw_window(const XgxLayout* layout, uint32_t count, uint32_t* first) {
+    const uint8_t* base = s_draw_base;
+    const uint8_t* region = s_draw_base >= s_ring && s_draw_base < s_ring + RING_BYTES ? s_ring
+                            : pool_owns(&s_vb, s_draw_base)                             ? s_vb.base
+                                                                                        : NULL;
+    uint32_t rel = region ? (uint32_t)(s_draw_base - region) : 0;
+    *first = 0;
+    if (region && rel % layout->stride == 0) {
+        uint32_t idx = rel / layout->stride, win = idx & ~(VTX_WINDOW - 1);
+        if (idx - win + count <= 0x10000u) {
+            base = region + win * layout->stride;
+            *first = idx - win;
+        }
+    }
+    return base;
+}
+
+static void put_ranges(uint32_t first, uint32_t count) {
+    while (count > 0) {
+        uint32_t batch = count > 256 * 64 ? 256 * 64 : count, k, words = 0;
+        uint32_t* hdr = P++;
+        for (k = 0; k < batch; k += 256) {
+            uint32_t n = batch - k > 256 ? 256 : batch - k;
+            *P++ = ((n - 1) << 24) | (first + k);
+            words++;
+        }
+        *hdr = words << 18 | NV2A_SUPPRESS_COMMAND_INCREMENT(NV097_DRAW_ARRAYS);
+        first += batch;
+        count -= batch;
+    }
+}
+
 void xgx_draw(uint32_t prim, uint32_t count, const XgxLayout* layout, XgxState* st) {
     int i, pf;
     uint32_t first, d, lay;
@@ -3445,6 +3499,46 @@ void xgx_draw(uint32_t prim, uint32_t count, const XgxLayout* layout, XgxState* 
     pb_open();
 
     d = st->dirty | s_draw_force | (s_vc_valid ? 0 : XGX_DIRTY_ALL);
+#ifndef XGX_DEBUG_TRACE
+    if (XGX_MERGE && !d) {   /* why an unchanged draw didn't join: none open, pushbuffer, primitive, layout, window */
+        if (!s_mrg_end) s_st_nomrg[0]++;
+        else if (P != s_mrg_end || s_pb_mark != s_mrg_mark) s_st_nomrg[1]++;
+        else if (prim != s_mrg_prim) s_st_nomrg[2]++;
+        else if (memcmp(layout, &s_mrg_layout, sizeof *layout) != 0) s_st_nomrg[3]++;
+    }
+    if (XGX_MERGE && !d && P == s_mrg_end && s_pb_mark == s_mrg_mark && prim == s_mrg_prim &&
+        memcmp(layout, &s_mrg_layout, sizeof *layout) == 0) {
+        const uint8_t* base = draw_window(layout, count, &first);
+        if (base == s_mrg_base) {   /* into the open primitive: its END back, the ranges, END again */
+            P -= 2;
+            if (prim == XGX_TRISTRIP) {   /* stitched: the last vertex again, then the first (twice when odd) */
+                const uint32_t extra = 2 + (s_mrg_have & 1);
+                put_ranges(s_mrg_last, 1);
+                put_ranges(first, 1);
+                if (extra == 3) put_ranges(first, 1);
+                s_mrg_have += extra;
+            }
+            put_ranges(first, count);
+            s_mrg_have += count;
+            s_mrg_last = first + count - 1;
+            put1(NV097_SET_BEGIN_END, NV097_SET_BEGIN_END_OP_END);
+            s_mrg_end = P;
+            s_st_dirty_none++;
+            s_st_merged++;
+            s_draws++;
+            s_st_draws++;
+            s_st_prim[(prim >> 3) & 7]++;
+            if (P - s_pb_mark >= PB_KICK) {
+                pb_close();
+                s_mrg_end = NULL;
+            }
+            xhw_perf_leave(pf);
+            return;
+        }
+        s_st_nomrg[4]++;
+    }
+#endif
+    s_mrg_end = NULL;
     {   /* what changed before each draw: what keeps draws from merging */
         uint32_t bits = d & 0x1FFFu;
         if (!d) s_st_dirty_none++;
@@ -3517,21 +3611,7 @@ void xgx_draw(uint32_t prim, uint32_t count, const XgxLayout* layout, XgxState* 
      * start past that raised a PGRAPH data error per draw, ~460 a frame,
      * and froze it), so the arrays point at the start of the 32768-vertex
      * window the draw starts in. */
-    s_attr_base = s_draw_base;
-    first = 0;
-    {
-        const uint8_t* region = s_draw_base >= s_ring && s_draw_base < s_ring + RING_BYTES ? s_ring
-                                : pool_owns(&s_vb, s_draw_base)                             ? s_vb.base
-                                                                                            : NULL;
-        uint32_t rel = region ? (uint32_t)(s_draw_base - region) : 0;
-        if (region && rel % layout->stride == 0) {
-            uint32_t idx = rel / layout->stride, win = idx & ~(VTX_WINDOW - 1);
-            if (idx - win + count <= 0x10000u) {
-                s_attr_base = region + win * layout->stride;
-                first = idx - win;
-            }
-        }
-    }
+    s_attr_base = draw_window(layout, count, &first);
     emit_vertex_arrays(layout, st);
 #ifdef XGX_DEBUG_TRACE
     int skipped = (s_fbdump_once || s_shot_once) && trace_skip(s_draws, count);
@@ -3539,23 +3619,25 @@ void xgx_draw(uint32_t prim, uint32_t count, const XgxLayout* layout, XgxState* 
     if (count)
 #endif
     put1(NV097_SET_BEGIN_END, nv_prim(prim));
-    while (count > 0) {
-        uint32_t batch = count > 256 * 64 ? 256 * 64 : count, k, words = 0;
-        uint32_t* hdr = P++;
-        for (k = 0; k < batch; k += 256) {
-            uint32_t n = batch - k > 256 ? 256 : batch - k;
-            *P++ = ((n - 1) << 24) | (first + k);
-            words++;
-        }
-        *hdr = words << 18 | NV2A_SUPPRESS_COMMAND_INCREMENT(NV097_DRAW_ARRAYS);
-        first += batch;
-        count -= batch;
-    }
+    put_ranges(first, count);
 #ifdef XGX_DEBUG_TRACE
     if (!skipped)
 #endif
     put1(NV097_SET_BEGIN_END, NV097_SET_BEGIN_END_OP_END);
-    if (P - s_pb_mark >= PB_KICK) pb_close();
+    if (prim == XGX_TRIANGLES || prim == XGX_QUADS || prim == XGX_LINES || prim == XGX_POINTS ||
+        (prim == XGX_TRISTRIP && count >= 3)) {
+        s_mrg_end = P;   /* the next draw may join it */
+        s_mrg_have = count;
+        s_mrg_last = first + count - 1;
+        s_mrg_mark = s_pb_mark;
+        s_mrg_prim = prim;
+        s_mrg_base = s_attr_base;
+        s_mrg_layout = *layout;
+    }
+    if (P - s_pb_mark >= PB_KICK) {
+        pb_close();
+        s_mrg_end = NULL;
+    }
     s_draws++;
     s_st_draws++;
     s_st_prim[(prim >> 3) & 7]++;
