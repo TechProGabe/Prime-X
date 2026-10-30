@@ -1349,11 +1349,15 @@ bool CCubeModel::TryLockTextures() const {
 #ifdef TARGET_XBOX
 // PORT_XBOX: the next surface's header asked for while this one draws: each
 // is a cache miss when DrawSurface reads its material index (~1.4% of the
-// console's CPU in Main Plaza, round hw9). A prefetch is only a hint.
+// console's CPU in Main Plaza, round hw9). A prefetch is only a hint. Also
+// the header's line holding the port's index bases and visor word
+// (CCubeSurface::PortBaseIndices at +0x60, PortVisorWord at +0x78).
 static inline void PortPrefetchNextSurface(const CCubeSurface& surface) {
   const CCubeSurface next = surface.GetNextSurface();
   if (next.IsValid()) {
-    __builtin_prefetch(&next.GetCenter());
+    const char* header = reinterpret_cast< const char* >(&next.GetCenter());
+    __builtin_prefetch(header);
+    __builtin_prefetch(header + 0x60);
   }
 }
 #define PORT_PREFETCH_NEXT_SURFACE(s) PortPrefetchNextSurface(s)

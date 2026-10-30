@@ -3,21 +3,22 @@
 Update this at the end of every session: what was done, what's next,
 what's broken, anything the next agent would otherwise rediscover.
 
-## Where it stands (2026-10-29, end of day)
+## Where it stands (2026-10-30, morning)
 
 The game plays through every world in xemu (room sweep: 14 rooms, no
-failure) and on the red console (~35-45 fps in most rooms at 480i, fights
-lower). Everything is committed and pushed on `dev`. **No hardware round
-is planned**: after hw9 the user called hardware testing over; a hw10
-round was staged the same evening and then called off ("I don't want to
-do a hardware test"), so nothing below has been measured on a console.
-Verify builds (`-DXGX_DYN_VERIFY=1`) check every new GX path against the
-old one draw by draw in xemu.
+failure, plain and LTO + PGO) and on the red console (~35-45 fps in most
+rooms at 480i at hw9, fights 10-20). Everything is committed and pushed on
+`dev`. **No hardware round is planned** (the user, after hw9; hw10 was
+staged and called off), so nothing since hw9 has been measured on a
+console. Verify builds (`-DXGX_DYN_VERIFY=1`) check every new GX path
+against the old one draw by draw in xemu; xemu itself is a bit
+non-deterministic in float (session 2026-10-30), so a verify run shows a
+few one-bit normals: compare against that, not zero.
 
 Ship builds are `XBOX_LTO=1 XBOX_PGO=xbox/prime.profdata` (`docs/pgo.md`);
 deploy with `tools/xbox/console.py` (console FTP 192.168.158.113,
 `PX_HW=/c/xemu/hw/prime`; back up `E:\UDATA\50580001` first). The
-profile predates the 2026-10-29 work: retrain before a release. Console
+profile was retrained on 2026-10-30's code (`xbox/prime.profdata.txt`). Console
 rounds and their files: `C:\xemu\hw\prime\ROUNDS.md`.
 
 ## Next session, in order
@@ -52,8 +53,9 @@ rounds and their files: `C:\xemu\hw\prime\ROUNDS.md`.
 2. The HUD minimap is 150-300 draws a frame (fill and outline alternate per
    surface, `GXSetTevKColor` between): only a different draw method would
    join them; only if it keeps the retail look exactly.
-3. LTO + PGO ship build, retrained profile and the room sweep before
-   calling anything a release.
+3. Release: done in xemu on 2026-10-30 (profile retrained on that code,
+   LTO + PGO autopad build, room sweep 14/14); a console round is the
+   user's call.
 4. If memory runs out on red again: another reclaimer is easy to add
    (`xhw_mem_add_reclaim`); left: the display lists' dynamic templates.
 5. Not done, by choice: `GXSetDstAlpha` and the EFB pixel format (Morph
