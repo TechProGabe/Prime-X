@@ -10,7 +10,7 @@
 #ifdef TARGET_XBOX
 // PORT_XBOX: BuildTransform walks a segment's chain from the root, a
 // quaternion product and a matrix a link, for every locator asked for
-// (CAnimData::GetLocatorTransform: weapons, head tracking, effects; 3.7% of
+// (CAnimData::GetLocatorTransform: weapons, head tracking, effects; 0.8% of
 // xemu's pirate room). Each link's running state (rotation, offset,
 // matrix) is kept by builder, tree version and segment, and a later walk
 // resumes from the deepest one kept: the same operations in the same
@@ -90,6 +90,21 @@ void CHierarchyPoseBuilder::RecursivelyBuild(const CSegId& seg, const CTreeNode&
   CVector3f childOffset = offset + matrix * node.GetOffset();
   pose.Insert(seg, childMatrix, childOffset);
 
+#ifdef TARGET_XBOX
+  // PORT_XBOX: the children's matrix once, not per child (and at scale 1 it
+  // is childMatrix itself): the same function of the same quaternion
+  CSegId child = node.GetFirstChildSegment();
+  if (child == CSegId::Null()) {
+    return;
+  }
+  const CMatrix3f childRotMatrix = scale == 1.f ? childMatrix : childRotation.BuildTransform();
+  while (child != CSegId::Null()) {
+    const CSegId childId = child;
+    const CTreeNode& childNode = x38_treeMap[childId];
+    RecursivelyBuild(childId, childNode, pose, childRotation, childRotMatrix, childOffset);
+    child = childNode.GetNextSiblingSegment();
+  }
+#else
   CSegId child = node.GetFirstChildSegment();
   while (child != CSegId::Null()) {
     const CSegId childId = child;
@@ -98,6 +113,7 @@ void CHierarchyPoseBuilder::RecursivelyBuild(const CSegId& seg, const CTreeNode&
                      childOffset);
     child = childNode.GetNextSiblingSegment();
   }
+#endif
 }
 
 void CHierarchyPoseBuilder::RecursivelyBuildNoScale(const CSegId& seg, const CTreeNode& node,

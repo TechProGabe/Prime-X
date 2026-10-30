@@ -276,8 +276,14 @@ profiler builds, six 1 ms-sample reports):
   time; each link's running state is now kept by builder, tree version
   and segment, and a walk resumes from the deepest one kept (same
   operations, same order, same bits; a check build recomputing every
-  call agreed but for one call in 24576, xemu's float noise). Its callees
-  3.7 -> 0.1% of the samples.
+  call agreed but for one call in 24576, xemu's float noise). Its own
+  samples 0.8 -> 0.1%. (The report's "one frame up" table had put 3.7% on
+  it: that table finds callers by scanning the stack for return
+  addresses and picks up stale ones from deep recursions; trust the
+  functions' own samples. It puts 8-10% of Main Plaza "under"
+  `RecursivelyBuild` the same way, whose own samples are small.)
+- `RecursivelyBuild` makes its children's rotation matrix once instead
+  of once per child (at scale 1 the node's own matrix): same values.
 - `[PERF]`'s "ticks per render" now counts the game updates: Game Timing
   Fixed runs 3.4 a drawn frame there at ~17 fps; most of a slow fight
   frame is catch-up. Flex runs one.

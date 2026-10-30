@@ -80,8 +80,11 @@ rounds and their files: `C:\xemu\hw\prime\ROUNDS.md`.
 - A skinned list's position and normal fetches in one pass
   (`dyn_fetch_pos_nrm`).
 - `CHierarchyPoseBuilder::BuildTransform` resumes from the deepest chain
-  link already walked under the same tree version (locator queries:
-  3.7 -> 0.1% of the pirate room's samples).
+  link already walked under the same tree version (its own samples 0.8
+  -> 0.1% in the pirate room). `prof_report.py`'s "one frame up" table
+  scans the stack for return addresses and catches stale ones (it showed
+  3.7% here, 8-10% "under" `RecursivelyBuild` in Main Plaza): judge by the
+  functions' own samples.
 - `[PERF]`'s "ticks per render" counts the game updates (was always 0).
 - Looked at, left: the landing glow box (the game sets that fog itself;
   needs a Dolphin frame to say what retail draws), the HUD minimap
