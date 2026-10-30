@@ -250,17 +250,17 @@ def periodic(a, funcs):
             cur = {'total': int(m[1]), 'placed': int(m[2]), 'buckets': collections.Counter(),
                    'libc': collections.Counter(), 'callers': collections.Counter(), 'libc_n': 0, 'callers_n': 0,
                    'sim': collections.Counter(), 'sim_n': 0, 'stall': collections.Counter(), 'stall_n': 0,
-                   'mix': collections.Counter(), 'mix_n': 0}
+                   'mix': collections.Counter(), 'mix_n': 0, 'rend': collections.Counter(), 'rend_n': 0}
             reports.append(cur)
             continue
         if cur is None:
             continue
-        m = re.search(r'\[PROF([LCSTA])\] (\d+) samples', line)
+        m = re.search(r'\[PROF([LCSTAR])\] (\d+) samples', line)
         if m:
-            cur[{'L': 'libc_n', 'C': 'callers_n', 'S': 'sim_n', 'T': 'stall_n', 'A': 'mix_n'}[m[1]]] += int(m[2])
+            cur[{'L': 'libc_n', 'C': 'callers_n', 'S': 'sim_n', 'T': 'stall_n', 'A': 'mix_n', 'R': 'rend_n'}[m[1]]] += int(m[2])
             continue
         for tag, key in (('[PROFL]', 'libc'), ('[PROFC]', 'callers'), ('[PROFS]', 'sim'), ('[PROFT]', 'stall'),
-                         ('[PROFA]', 'mix'), ('[PROF]', 'buckets')):
+                         ('[PROFA]', 'mix'), ('[PROFR]', 'rend'), ('[PROF]', 'buckets')):
             if tag in line:
                 for addr, n in re.findall(r'([0-9a-f]{8}):(\d+)', line):
                     cur[key][int(addr, 16)] += int(n)
@@ -287,7 +287,7 @@ def periodic(a, funcs):
         hist = collections.Counter()
         for r in use:
             hist.update(r[key])
-        by = funcs.fold(hist, a.first) if key in ('sim', 'stall', 'mix') else funcs.fold_exact(hist)
+        by = funcs.fold(hist, a.first) if key in ('sim', 'stall', 'mix', 'rend') else funcs.fold_exact(hist)
         if key == 'mix':   # not the game thread's samples: a share of every sample taken
             print(f'\n{title}: {n_all} samples ({100.0 * n_all / max(1, total + n_all):.1f}% of all samples, '
                   f'game and mixer)')
@@ -298,6 +298,7 @@ def periodic(a, funcs):
     callers('libc', 'memcpy/memset/memcmp/memmove, by calling function')
     callers('sim', 'simulation ticks only, by function')
     callers('stall', "frames of 150 ms or more only ([PROFT]: a room's first frame, a pickup), by function")
+    callers('rend', "the game's draw only ([PROFR]: [PERF]'s render bucket), by function")
     callers('mix', 'the MusyX mixer thread ([PROFA]), by function')
     callers('callers', 'all samples, by calling function (one frame up)')
 
