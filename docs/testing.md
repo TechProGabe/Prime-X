@@ -64,6 +64,30 @@ Worlds (USA 1.00): Frigate `158EFE17`, Tallon Overworld `39F2DE28`, Chozo
 Ruins `83F6FF6F`, Magmoor Caverns `3EF8237C`, Phendrana Drifts `A8BE6291`,
 Phazon Mines `B1AC4D65`, Impact Crater `C13B09D1`.
 
+## Dolphin reference frames
+
+What retail draws, from the same image in Dolphin, without a save or a
+controller: `tools/xbox/dolphin_ref.py` boots it straight into a new game
+in a room (two Gecko codes on the retail DOL do what `MP_BOOT_WORLD` does:
+the front end goes to the game, the Frigate becomes the world and room
+asked for), dumps every frame and keeps one every few seconds:
+
+```sh
+python tools/xbox/dolphin_ref.py plaza                    # room_sweep.sh's names, or <MLVL>[:<MREA>]
+python tools/xbox/dolphin_ref.py landing --secs 90 --every 3
+python tools/xbox/dolphin_ref.py plaza --gui              # Dolphin's window, to play from there
+```
+
+Frames go to `build-xbox/shots/dolphin/<room>/SSSS.png` (the second of the
+dump; the room is in view ~25 s after boot, the logos and the load before
+it). The whole dump (FFV1 AVI, ~5 MB/s) stays in
+`C:\xemu\dolphin\px-user\Dump\Frames` until the next run: cut a dense run
+from it with `ffmpeg -ss <s> -t <n> -i <avi> -vf fps=4 out%03d.png`.
+Dolphin (portable, `C:\xemu\dolphin\Dolphin-x64`) runs from its own user
+folder `C:\xemu\dolphin\px-user`, native 640x480, D3D, a fresh card in
+slot A. Dolphin movies (`.dtm`) were tried for the input first: with one
+playing, this build rendered no frames at all.
+
 ## Consoles
 
 The user's two consoles, as on Melee-X (its `CLAUDE.md` "Hardware"): **red**

@@ -66,7 +66,10 @@ rounds and their files: `C:\xemu\hw\prime\ROUNDS.md`.
    Ball's shadow IDs, fog volumes, thermal's DSTALPHA blends) and
    Magmoor's heat-haze warp on the GPU (new render-to-texture passes: the
    console has faulted on those before).
-6. Visors and parity: no Dolphin reference frames yet (`docs/renderer.md`).
+6. Visors and parity: Dolphin reference frames in any room with
+   `tools/xbox/dolphin_ref.py` (docs/testing.md "Dolphin reference
+   frames"; no save needed); the comparisons (`docs/renderer.md`) not
+   made yet. First: the landing glow box (retail fades the sprite's edges).
 7. Gate leftovers: the 128 MB hold needs a 128 MB-aware BIOS in xemu; the
    save round trip on red and Dolphin `.gci` (phase 4); Docker/CI (the
    workflow exists, `gh` isn't logged in here).
@@ -117,7 +120,7 @@ rounds and their files: `C:\xemu\hw\prime\ROUNDS.md`.
   test over 20M inputs, but no faster in xemu, which runs packed SSE a
   lane at a time). Both might help on the console; unmeasurable here.
 - Looked at, left: the landing glow box (the game sets that fog itself;
-  needs a Dolphin frame to say what retail draws), the HUD minimap
+  Dolphin now shows retail: a starburst fading out, no box), the HUD minimap
   (reordering fills and outlines changes overlap), pbkit's kick size
   (tuned on the console), `acos`/`sin` in `CQuaternion::Slerp` (nxdk's
   x87 versions; ~1%, results would move).
