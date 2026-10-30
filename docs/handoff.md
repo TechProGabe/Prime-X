@@ -108,7 +108,8 @@ rounds and their files: `C:\xemu\hw\prime\ROUNDS.md`.
   bright -> navy), so X-ray now looks pale lavender in dim rooms. Dolphin
   can't give an X-ray reference with `--visor` (the world pass starts on
   a real visor change in `CPlayerVisor`).
-- Room sweep 14/14 with both (no FATAL, THROW, out of memory); the shots
+- Room sweep 14/14 after each of the two commits (no FATAL, THROW, out
+  of memory); the shots
   differ from the night's by timing only. Every sweep room matches
   Dolphin's frame of it but Magmoor's fog volumes; Ice Temple's and the
   quarry's odd poses (gun raised, left hand up) are Samus's idle
