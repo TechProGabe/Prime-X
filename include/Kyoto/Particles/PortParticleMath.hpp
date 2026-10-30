@@ -290,12 +290,34 @@ inline float InverseScale(float s) {
   return e * ReciprocalStep(e, s);
 }
 
+#ifdef TARGET_XBOX
+// PORT_XBOX: std::fmax as nxdk's fmaxf answers it (a NaN gives the other;
+// differing signs the positive one; else the larger), without its x87
+// library calls (fxam per argument), per particle
+inline float PortFmax(float x, float y) {
+  if (x != x) {
+    return y;
+  }
+  if (y != y) {
+    return x;
+  }
+  const uint32_t sx = FloatBits(x) >> 31, sy = FloatBits(y) >> 31;
+  if (sx != sy) {
+    return sx ? y : x;
+  }
+  return x < y ? y : x;
+}
+#define PORT_FMAX PortFmax
+#else
+#define PORT_FMAX std::fmax
+#endif
+
 // CMath::SqrtF 0x65f70: 0 for v <= 0, else v times twice-refined FRSQRTE of max(v, 1e-35).
 inline float SqrtF(float v) {
   if (!(v > 0.f)) {
     return 0.f;
   }
-  const float m = std::fmax(v, BitsFloat(0x554ad2e));
+  const float m = PORT_FMAX(v, BitsFloat(0x554ad2e));
   float e = ReciprocalSqrtEstimate(m);
   e *= ReciprocalSqrtStep(m, e * e);
   e *= ReciprocalSqrtStep(m, e * e);
@@ -319,7 +341,7 @@ inline CVector3f NormalizeVector(const CVector3f& v) {
 
 // CMath::InvSqrtF 0x66090: twice-refined FRSQRTE of max(v, 1e-35).
 inline float InvSqrtF(float v) {
-  const float m = std::fmax(v, BitsFloat(0x554ad2e));
+  const float m = PORT_FMAX(v, BitsFloat(0x554ad2e));
   float e = ReciprocalSqrtEstimate(m);
   e *= ReciprocalSqrtStep(m, e * e);
   return e * ReciprocalSqrtStep(m, e * e);

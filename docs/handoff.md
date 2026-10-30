@@ -77,6 +77,17 @@ rounds and their files: `C:\xemu\hw\prime\ROUNDS.md`.
   hook `env PX_SKIN_REVOKE_AT=<frame>`: pirate room renders the same
   before and after, verify clean).
 - `TriBoxOverlap`: the triangle's bounds tested before the edge axes.
+- A skinned list's position and normal fetches in one pass
+  (`dyn_fetch_pos_nrm`).
+- `CHierarchyPoseBuilder::BuildTransform` resumes from the deepest chain
+  link already walked under the same tree version (locator queries:
+  3.7 -> 0.1% of the pirate room's samples).
+- `[PERF]`'s "ticks per render" counts the game updates (was always 0).
+- Looked at, left: the landing glow box (the game sets that fog itself;
+  needs a Dolphin frame to say what retail draws), the HUD minimap
+  (reordering fills and outlines changes overlap), pbkit's kick size
+  (tuned on the console), `acos`/`sin` in `CQuaternion::Slerp` (nxdk's
+  x87 versions; ~1%, results would move).
 
 ## Session 2026-10-29 (evening): hw9 read, FPS from the logs, xemu only
 

@@ -59,7 +59,22 @@ float PortLifetimeTween(int frame, int lifetime) {
     return 0.f;
   }
   const float lifeF = lifetime != 0 ? static_cast< float >(lifetime) : 1.f;
+#ifdef TARGET_XBOX
+  // PORT_XBOX: the reciprocal of the last lifetime asked for (a generator's
+  // particles share one): the emulated FRECPE and its two fma steps are
+  // x87 library calls on the Pentium III, per particle per tween
+  static bool sHave = false;
+  static int sLastLifetime;
+  static float sLastInverse;
+  if (!sHave || lifetime != sLastLifetime) {
+    sHave = true;
+    sLastLifetime = lifetime;
+    sLastInverse = PortParticleMath::InverseScale(lifeF);
+  }
+  float tween = static_cast< float >(frame) * sLastInverse;
+#else
   float tween = static_cast< float >(frame) * PortParticleMath::InverseScale(lifeF);
+#endif
   if (0.f - tween >= 0.f) {
     tween = 0.f;
   }
