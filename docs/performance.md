@@ -260,6 +260,21 @@ of it measured on a console (no console round after hw9, the user's call):
   waits, and `-O2` would turn `while (pb_BackBufferbReady[...])` into a
   hang.
 
+2026-10-30 (night), xemu only, the pirate room (`39F2DE28:B9ABCD56`,
+profiler builds, six 1 ms-sample reports):
+
+- Per-model skin workspaces on (above): `BuildBoneRange` 5.2 -> 3.4% of
+  the samples, the skinned fetch 6.7 -> 5.4.
+- `TriBoxOverlap` rejects on the triangle's bounds before the edge axes:
+  2.2 -> 1.1%.
+- A skinned list's position and normal fetches in one pass
+  (`dyn_fetch_pos_nrm`, also for index-only lists): the fetch 6.1 -> 5.4%.
+  Verify: pirate room, Main Plaza, Frigate, and both again with the
+  budget forced down (`-DDLC_DYN_BUDGET=196608u -DDLC_DYN_EXTRA=0u`).
+- `[PERF]`'s "ticks per render" now counts the game updates: Game Timing
+  Fixed runs 3.4 a drawn frame there at ~17 fps; most of a slow fight
+  frame is catch-up. Flex runs one.
+
 ## Levers, roughly in the order to try them
 
 | lever | where | note |

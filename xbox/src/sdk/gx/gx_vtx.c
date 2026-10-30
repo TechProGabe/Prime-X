@@ -2521,6 +2521,56 @@ typedef struct {
     const uint8_t* base;
 } DynFetch;
 
+/* A skinned list's position and normal fetches, little-endian floats (the
+ * skinning's workspace), in one pass over the batch: one index row, one
+ * vertex written, per step instead of two passes. Returns the fetches it
+ * did, as bits of f; 0: not that shape (dyn_fetch_batch, an array at a
+ * time). */
+static uint32_t dyn_fetch_pos_nrm(const DynList* d, const DynBatch* b, const DynFetch* f, int nf, uint8_t* out) {
+    const Slot *sp = NULL, *sn = NULL;
+    int c, cp = -1, cn = -1, fp = -1, fn = -1;
+    const uint8_t *bp, *bn;
+    const uint16_t* idx;
+    uint32_t k, n = b->count, vs = b->plan->layout.stride, nc = b->ncol, stp, stn;
+    uint8_t* v;
+    for (c = 0; c < nf; c++) {
+        if (f[c].attr == GX_VA_POS) fp = c;
+        else if (f[c].attr == GX_VA_NRM) fn = c;
+    }
+    if (fp < 0 || fn < 0 || !g_gx.array_le[GX_VA_POS] || !g_gx.array_le[GX_VA_NRM]) return 0;
+    for (c = 0; c < b->ncol; c++) {
+        const Slot* sl = &b->plan->slot[b->col_slot[c]];
+        uint8_t a = array_attr(sl);
+        if (a == GX_VA_POS) {
+            if (cp >= 0) return 0;
+            cp = c, sp = sl;
+        } else if (a == GX_VA_NRM) {
+            if (cn >= 0) return 0;
+            cn = c, sn = sl;
+        }
+    }
+    if (cp < 0 || cn < 0 || sp->kind != SK_F32_3 || sn->kind != SK_NRM_F32 || sp->dst < 0 || sn->dst < 0) return 0;
+    bp = f[fp].base, bn = f[fn].base;
+    stp = g_gx.array_stride[GX_VA_POS], stn = g_gx.array_stride[GX_VA_NRM];
+    idx = d->idx + b->idx;
+    for (k = 0; k < DYN_PREFETCH && k < n; k++) {
+        __builtin_prefetch(bp + idx[k * nc + cp] * stp);
+        __builtin_prefetch(bn + idx[k * nc + cn] * stn);
+    }
+    v = out;
+    for (k = 0; k < n; k++, idx += nc, v += vs) {
+        float nv[3];
+        if (DYN_PREFETCH && k + DYN_PREFETCH < n) {
+            __builtin_prefetch(bp + idx[DYN_PREFETCH * nc + cp] * stp);
+            __builtin_prefetch(bn + idx[DYN_PREFETCH * nc + cn] * stn);
+        }
+        memcpy(v + sp->dst, bp + idx[cp] * stp, 12);
+        memcpy(nv, bn + idx[cn] * stn, 12);
+        put_nrm(v + sn->dst, nv);
+    }
+    return 1u << fp | 1u << fn;
+}
+
 /* batch i's vertices with this call's arrays fetched: in the scratch buffer,
  * or fetched into the template itself when the batch doesn't fit it */
 static const uint8_t* dyn_batch_verts(DynList* d, int i, const DynFetch* f, int nf) {
@@ -2529,9 +2579,12 @@ static const uint8_t* dyn_batch_verts(DynList* d, int i, const DynFetch* f, int 
     uint8_t* out;
     int k;
     if (!d->tmpl) {   /* index-only: zeroes, then every array (decode_verts' vertices) */
+        uint32_t done;
         out = dyn_io_buf(bytes);
         memset(out, 0, bytes);
-        for (k = 0; k < nf; k++) dyn_fetch_batch(d, b, f[k].attr, f[k].base, out);
+        done = dyn_fetch_pos_nrm(d, b, f, nf, out);
+        for (k = 0; k < nf; k++)
+            if (!(done >> k & 1)) dyn_fetch_batch(d, b, f[k].attr, f[k].base, out);
         return out;
     }
     out = d->tmpl + b->offset;
@@ -2540,7 +2593,11 @@ static const uint8_t* dyn_batch_verts(DynList* d, int i, const DynFetch* f, int 
         memcpy(s_dyn_scratch, out, bytes);
         out = s_dyn_scratch;
     }
-    for (k = 0; k < nf; k++) dyn_fetch_batch(d, b, f[k].attr, f[k].base, out);
+    {
+        uint32_t done = dyn_fetch_pos_nrm(d, b, f, nf, out);
+        for (k = 0; k < nf; k++)
+            if (!(done >> k & 1)) dyn_fetch_batch(d, b, f[k].attr, f[k].base, out);
+    }
     return out;
 }
 
