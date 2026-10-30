@@ -52,49 +52,48 @@ line under it says how far it got.
 
 ## Known issues
 
-- Out of memory on red (hw5 at 215 s, hw6 at 290 s): gone in hw8's free
-  play where hw6 ran out (one reclaim, 16 chunks to the swap file); keep
-  an eye on longer sessions.
+Open:
+
+- Fog volumes aren't drawn (`PostRenderFogs`, docs/decisions.md):
+  Magmoor's lava haze and the other volume fogs (acid, water); what was
+  listed as the "heat haze without its warp" is this pass. Dolphin's Lava
+  Lake is dimmer for it. Needs the depth buffer read as a texture, a new
+  render path (handoff, Next 3; the user's call).
 - Fights are slow on red (hw9 free play, Frigate pirates to Parasite
-  Queen: 10-20 fps): skinned lists over the dynamic budget were decoded
-  every call (index-only now) and every character was skinned again per
-  pass (per-model workspaces since 2026-10-30); neither measured on red
-  (handoff, Next 1).
-- Fixed, not yet seen on red: the pause screen at 14-17 fps (hw8: Samus's
-  lists over the dynamic budget; the extra budget opens at 4 MB free now;
-  xemu 2026-10-30: none volatile or index-only there, ~40-46 fps),
-  the charge beam (hw8, `188fb44`), Port Options' value cells off their
-  rows (hw6, hw8: a fixed grid now, no dividers).
-- Fixed in xemu, not yet seen on red: everything too bright after Morph
-  Ball, the white arm cannon (Chozo, Magmoor).
+  Queen: 10-20 fps). Since: index-only skinned lists past the dynamic
+  budget, per-model skin workspaces, cheaper bone and collision code
+  (2026-10-30); not measured on red (hw10 r10d). Game Timing: Flex runs
+  one update a frame where Fixed catches up.
+- Hitches of 250-300 ms at pickups and some doors (hw9 free play): not
+  explained; hw10's profiler builds log [PROFT] (the samples of frames of
+  150 ms or more, and whether they waited).
+- The audio start-up freeze after a chained launch (hw4 r4c, hw7 r7e,
+  hw9 r9f) and hw9 r9e's stuck audio: since 2026-10-29 the console reads
+  no codec register at all; hw10's eight-scene chain is the test.
 - Inside the gunship: 12-14 fps on red in hw5; the dynamic-list budget is
   doubled since, not measured.
-- Fog volumes aren't drawn (`PostRenderFogs`, docs/decisions.md):
-  Magmoor's lava haze and the other volume fogs (acid, water). What was
-  listed here as the "heat haze without its warp" is this pass (two
-  indirect stages over depth copies). Dolphin's Lava Lake shows the
-  difference: retail's haze dims the lava and its flames. Needs depth
-  copies that carry depth (a new render-to-texture path; docs/renderer.md).
-- The audio start-up freeze after a chained launch (hw4 r4c) came back in
-  hw7 (r7e, the codec read after the cold reset, the CPU held: no watchdog
-  reboot); `f73d0d7` no longer reads the codec after the reset on the
-  console. hw9's r9f froze on the reads before the idle step: since
-  2026-10-29 the console reads no codec register at all (not seen on red).
-  hw9's r9e had its audio stuck (silent until the console was switched
-  off).
-- Fixed in xemu 2026-10-30, not yet seen on red: the landing cinematic's
-  box around the gunship's glow (`GXSetFogColor` was a no-op, so fog's
-  colour was added over every additive effect in fog; retail blackens it
-  for additive blends) and the hard edge of the clouds a lightning flash
-  lights (spot lights' cosine wasn't clamped at 0, as GX clamps it). The
+- Out of memory on red (hw5 at 215 s, hw6 at 290 s): gone in hw8's free
+  play; keep an eye on longer sessions.
+
+Fixed, waiting for the console (hw10):
+
+- The landing cinematic's box around the gunship's glow (fog's colour was
+  added over additive effects: `GXSetFogColor` was a no-op) and the hard
+  edge of the lightning-lit clouds (spot lights' cosine unclamped). The
   user saw the box black on red in hw7 where xemu drew it light: if a
-  black box is still there on red, it is something else.
-- Compared with Dolphin 2026-10-30 (`tools/xbox/dolphin_ref.py`): the 14
-  sweep rooms match, the arm cannon included, except Magmoor's fog
-  volumes (above). Thermal now matches too (its heat palette pass was
-  drawn as plain intensity: a white gun); X-ray uses its palette now
-  (pale lavender), not compared (Dolphin can't hold X-ray without input).
-  Not compared yet: Phendrana's elevator steam.
+  black box is still there, it is something else.
+- Thermal visor: hot things in their heat palette (the gun was white);
+  X-ray through its palette (was grey). New on the GPU: a DEPENDENT_GB
+  texture unit.
+- The pause screen at 14-17 fps (hw8; ~40-46 fps in xemu), the charge
+  beam (hw8), Port Options' value cells off their rows (hw6, hw8).
+- Everything too bright after Morph Ball, the white arm cannon (Chozo,
+  Magmoor).
+
+Compared with Dolphin (2026-10-30, `tools/xbox/dolphin_ref.py`): the 14
+sweep rooms match, the arm cannon and particles included, but for the fog
+volumes; thermal matches; X-ray isn't compared (Dolphin can't hold it
+without input).
 
 ## Console history
 
@@ -107,7 +106,8 @@ line under it says how far it got.
 | 2026-10-28 | hw6 | red | free play: the alpha fix's visuals; out of memory at 290 s; too bright after Morph Ball; Options divider on the text |
 | 2026-10-29 | hw7 | red | seven-scene chain r7a-g; r7e froze in audio start-up (fixed `f73d0d7`) |
 | 2026-10-29 | hw8 | red | r8g only (Flex, Landing Site 40.2 fps median); free play: no out of memory, pause screen 14-17 fps, charge beam dead |
-| 2026-10-29 | hw9 | red | chain r9a-e (r9f froze in audio start-up); free play to Parasite Queen: visuals fine, fights 10-20 fps. The last round: hardware testing over (the user) |
+| 2026-10-29 | hw9 | red | chain r9a-e (r9f froze in audio start-up); free play to Parasite Queen: visuals fine, fights 10-20 fps. Hardware testing paused after it (the user) |
+| 2026-10-30 | hw10 | red | staged, not run yet: chain r10a-h (front end, landing glow, Landing Site, pirate fight, Main Plaza, visors, Lava Lake, Frigate) and free play (`tools/xbox/scenarios/hw10`) |
 
 ## Performance per build
 
