@@ -49,7 +49,11 @@ rounds and their files: `C:\xemu\hw\prime\ROUNDS.md`.
    texgen from position or normal (reflections) wants skinned model-space
    values: CPU path; a vertex whose position and normal fall in different
    bones: CPU path; skinning itself can only be skipped lazily (sPointGen,
-   morphs, anything that reads the workspace).
+   morphs, anything that reads the workspace). Memory is the catch: the
+   static skinned vertices must sit in the vertex pool (GPU-readable; full
+   in hw9's fights) while the dynamic template stays for the CPU-path
+   fallbacks, about twice a character's vertex memory on a console that
+   already runs near 3 MB free there. Not started for that reason.
 2. The HUD minimap is 150-300 draws a frame (fill and outline alternate per
    surface, `GXSetTevKColor` between): only a different draw method would
    join them; only if it keeps the retail look exactly.
