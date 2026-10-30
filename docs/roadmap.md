@@ -59,32 +59,28 @@ Open:
   listed as the "heat haze without its warp" is this pass. Dolphin's Lava
   Lake is dimmer for it. Needs the depth buffer read as a texture, a new
   render path (handoff, Next 3; the user's call).
-- Fights are slow on red (hw9 free play, Frigate pirates to Parasite
-  Queen: 10-20 fps). Since: index-only skinned lists past the dynamic
-  budget, per-model skin workspaces, cheaper bone and collision code
-  (2026-10-30); not measured on red (hw10 r10d). Game Timing: Flex runs
-  one update a frame where Fixed catches up.
+- Fights are slow on red: hw10's pirate fight (r10d) 17-18 fps at 3.4
+  ticks per render (hw9 free play 10-20). The simulation is ~12 ms a
+  tick; Game Timing: Fixed catches up 3-4 ticks a frame, Flex would run
+  one (~35 fps).
 - Hitches of 250-300 ms at pickups and some doors (hw9 free play): not
   explained; hw10's profiler builds log [PROFT] (the samples of frames of
   150 ms or more, and whether they waited).
-- The audio start-up freeze after a chained launch (hw4 r4c, hw7 r7e,
-  hw9 r9f) and hw9 r9e's stuck audio: since 2026-10-29 the console reads
-  no codec register at all; hw10's eight-scene chain is the test.
+- Audio stuck ("Sound hardware is stuck", silent until a power-off):
+  hw9 r9e, hw10's first r10a and every hw10 scene from r10c on (it began
+  at a relaunch). The codec stops taking frames; resets don't help. The
+  start-up freeze (hw4, hw7, hw9 r9f, on codec register reads) didn't
+  happen in hw10's eight launches (no codec reads since 2026-10-29).
 - Inside the gunship: 12-14 fps on red in hw5; the dynamic-list budget is
   doubled since, not measured.
 - Out of memory on red (hw5 at 215 s, hw6 at 290 s): gone in hw8's free
   play; keep an eye on longer sessions.
 
-Fixed, waiting for the console (hw10):
+Fixed on red in hw10: the landing cinematic's glow box and the
+lightning-lit clouds' hard edge; the thermal and X-ray palettes.
 
-- The landing cinematic's box around the gunship's glow (fog's colour was
-  added over additive effects: `GXSetFogColor` was a no-op) and the hard
-  edge of the lightning-lit clouds (spot lights' cosine unclamped). The
-  user saw the box black on red in hw7 where xemu drew it light: if a
-  black box is still there, it is something else.
-- Thermal visor: hot things in their heat palette (the gun was white);
-  X-ray through its palette (was grey). New on the GPU: a DEPENDENT_GB
-  texture unit.
+Fixed, not yet seen on red (hw10's free play):
+
 - The pause screen at 14-17 fps (hw8; ~40-46 fps in xemu), the charge
   beam (hw8), Port Options' value cells off their rows (hw6, hw8).
 - Everything too bright after Morph Ball, the white arm cannon (Chozo,
@@ -107,7 +103,7 @@ without input).
 | 2026-10-29 | hw7 | red | seven-scene chain r7a-g; r7e froze in audio start-up (fixed `f73d0d7`) |
 | 2026-10-29 | hw8 | red | r8g only (Flex, Landing Site 40.2 fps median); free play: no out of memory, pause screen 14-17 fps, charge beam dead |
 | 2026-10-29 | hw9 | red | chain r9a-e (r9f froze in audio start-up); free play to Parasite Queen: visuals fine, fights 10-20 fps. Hardware testing paused after it (the user) |
-| 2026-10-30 | hw10 | red | uploaded, not run yet: chain r10a-h (front end, landing glow, Landing Site, pirate fight, Main Plaza, visors, Lava Lake, Frigate) and free play (`tools/xbox/scenarios/hw10`) |
+| 2026-10-30 | hw10 | red | chain r10a-h ran: landing glow box gone, visors' palettes right, Landing Site 34-59 (hw9 dipped to 17), Main Plaza 30-36, fights 17-18 (3.4 ticks per render); audio stuck from r10c on (the old fault) |
 
 ## Performance per build
 
