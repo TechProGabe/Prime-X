@@ -48,7 +48,12 @@ is a jump), and every number. r11i-l on red answer both.
 
 ## Next session, in order
 
-0. **Round hw11** is uploaded to red (2026-10-30, images from b628024;
+0. **Round hw11 ran** (2026-10-30, logs `C:\xemu\hw\prime\logs-hw11`, map
+   `prime_x.hw11.map`): numbers in `docs/fps-plan.md` section 0. Auto:
+   fight 19-21 -> 25-26 fps, Lava Lake 28 -> 34, Main Plaza 35 -> 38; the
+   draw work is the frame now; mixer 13-15% in fights; no audio fault in
+   twelve chained scenes. r11a's menu presses missed Port Options (the
+   save slots move the rows). It was uploaded to red (2026-10-30, images from b628024;
    the save folder backed up to `C:\xemu\hw\prime\logs-hw11pre`): launch
    `Prime-X-r11a`; the chain ends at the dashboard after r11l. Pull the
    save folder whole. (`tools/xbox/scenarios/hw11/README.md`): read the
