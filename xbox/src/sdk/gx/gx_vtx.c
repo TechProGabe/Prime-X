@@ -91,11 +91,10 @@ static struct {
     int ntc_carry;
     uint32_t seg_prim;    /* a strip or fan being built to become a list (seg_list) */
     uint32_t seg_start;   /* where its vertices start (after a waiting list it joined) */
-    /* GXPortRainLines' vertices: the first box_verts of the batch lie in
-     * box_min..box_max (positions as stored), so clip_lines can test the
-     * box's corners once instead of every line (XGX_LINE_BOX) */
-    uint32_t box_verts;
-    float box_min[3], box_max[3];
+    /* GXPortRainLines' grids found wholly inside the clip planes: vertex
+     * ranges [in_lo, in_hi) clip_lines needn't test (XGX_LINE_BOX) */
+#define IN_RANGES 32
+    uint32_t n_in, in_lo[IN_RANGES], in_hi[IN_RANGES];
 } B;
 
 static void sig_recompute(void);
@@ -558,31 +557,21 @@ static void clip_lines(void) {
     uint8_t tmp[2][CLIP_MAX_STRIDE];
     uint32_t i, out = 0;
     if (!clip_rows(r)) return;
-    /* The rain (GXPortRainLines) knows its batch's box: when all eight
-     * corners are inside every plane, so is every line in it (the planes
-     * are linear in the position) and none is clipped or dropped: the same
-     * vertices without the per-line test (docs/fps-plan.md M5) */
-    if (XGX_LINE_BOX && B.box_verts == B.done && B.done && l->off_pos >= 0) {
-        uint32_t c, outc = 0;
-        for (c = 0; c < 8 && !outc; c++) {
-            float corner[CLIP_MAX_STRIDE / 4], d[CLIP_PLANES];
-            float* x = corner + l->off_pos / 4;
-            x[0] = c & 1 ? B.box_max[0] : B.box_min[0];
-            x[1] = c & 2 ? B.box_max[1] : B.box_min[1];
-            x[2] = c & 4 ? B.box_max[2] : B.box_min[2];
-            outc |= clip_dist((const uint8_t*)corner, l, r, d);
-        }
-        if (!outc) {
-            s_st_lines += B.done / 2;
-            s_st_line_box += B.done / 2;
-            return;
-        }
-    }
+    uint32_t rg = 0;
     for (i = 0; i + 1 < B.done; i += 2) {
         uint8_t* v0 = base + i * s;
         uint8_t* v1 = v0 + s;
         float d0[CLIP_PLANES], d1[CLIP_PLANES];
-        const uint32_t o0 = clip_dist(v0, l, r, d0), o1 = clip_dist(v1, l, r, d1);
+        uint32_t o0, o1;
+        /* a rain grid wholly inside (GXPortRainLines): no test, same vertices */
+        while (rg < B.n_in && i >= B.in_hi[rg]) rg++;
+        if (XGX_LINE_BOX && rg < B.n_in && i >= B.in_lo[rg]) {
+            s_st_line_box++;
+            o0 = o1 = 0;
+        } else {
+            o0 = clip_dist(v0, l, r, d0);
+            o1 = clip_dist(v1, l, r, d1);
+        }
         if (o0 & o1) {   /* both outside one plane */
             s_st_line_drop++;
             continue;
@@ -734,7 +723,7 @@ static void begin_batch(uint32_t prim, int vtxfmt, uint32_t n) {
     B.vtxfmt = vtxfmt;
     B.seg_prim = list ? prim : 0;
     B.seg_start = 0;
-    B.box_verts = 0;
+    B.n_in = 0;
     B.expected = n;
     B.done = 0;
     B.cursor = 0;
@@ -3379,37 +3368,52 @@ int GXPortRainLines(const short* xyz, unsigned n, short dz, unsigned short c0, u
     }
     s = B.plan.layout.stride;
     sc = ps->scale;
-    if (n) {   /* the batch's box, for clip_lines (B.box_verts) */
+    if (XGX_LINE_BOX && n && B.prim == XGX_LINES) {
+        /* This grid's box against the clip planes (the state can't change
+         * before the batch is drawn): wholly outside one, nothing to write;
+         * wholly inside, its lines skip clip_lines' test */
         short lo[3], hi[3];
-        int box_ok = B.box_verts == B.done;
+        float r[4][4];
         for (i = 0; i < 3; i++) lo[i] = hi[i] = xyz[i];
         for (i = 0; i < n; i++) {
             const short* q = xyz + 3 * i;
+            const short z2 = (s16)(q[2] + dz);   /* the streak's other end, as stored below */
             uint32_t k;
             for (k = 0; k < 3; k++) {
                 if (q[k] < lo[k]) lo[k] = q[k];
                 if (q[k] > hi[k]) hi[k] = q[k];
             }
-            {   /* the streak's other end, as stored below */
-                const short z2 = (s16)(q[2] + dz);
-                if (z2 < lo[2]) lo[2] = z2;
-                if (z2 > hi[2]) hi[2] = z2;
-            }
+            if (z2 < lo[2]) lo[2] = z2;
+            if (z2 > hi[2]) hi[2] = z2;
         }
-        if (box_ok) {
-            float bmin[3], bmax[3];
-            for (i = 0; i < 3; i++) {   /* sc > 0 or < 0: the stored values' order */
-                const float a = lo[i] * sc, b = hi[i] * sc;
-                bmin[i] = a < b ? a : b;
-                bmax[i] = a < b ? b : a;
-                if (B.box_verts) {
-                    if (B.box_min[i] < bmin[i]) bmin[i] = B.box_min[i];
-                    if (B.box_max[i] > bmax[i]) bmax[i] = B.box_max[i];
-                }
-                B.box_min[i] = bmin[i];
-                B.box_max[i] = bmax[i];
+        if (clip_rows(r)) {
+            uint32_t c, any = 0, all = 0x1Fu;
+            for (c = 0; c < 8; c++) {
+                float corner[CLIP_MAX_STRIDE / 4], d[CLIP_PLANES];
+                float* x = corner + B.plan.layout.off_pos / 4;
+                uint32_t o;
+                x[0] = (c & 1 ? hi[0] : lo[0]) * sc;
+                x[1] = (c & 2 ? hi[1] : lo[1]) * sc;
+                x[2] = (c & 4 ? hi[2] : lo[2]) * sc;
+                o = clip_dist((const uint8_t*)corner, &B.plan.layout, r, d);
+                any |= o;
+                all &= o;
             }
-            B.box_verts = B.done + 2 * n;
+            if (all) {   /* every line outside one plane: clip_lines would drop them all */
+                s_st_lines += n;
+                s_st_line_drop += n;
+                B.expected -= 2 * n;
+                return 1;
+            }
+            if (!any && B.n_in < IN_RANGES) {
+                if (B.n_in && B.in_hi[B.n_in - 1] == B.done) {
+                    B.in_hi[B.n_in - 1] = B.done + 2 * n;
+                } else {
+                    B.in_lo[B.n_in] = B.done;
+                    B.in_hi[B.n_in] = B.done + 2 * n;
+                    B.n_in++;
+                }
+            }
         }
     }
     /* Position and colour fill the whole vertex (12 + 4 bytes, the rain's

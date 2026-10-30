@@ -29,8 +29,31 @@ little since: retrain before a release. Console rounds and their files:
 `C:\xemu\hw\prime\ROUNDS.md`; older sessions and rounds (hw1-hw9, and the
 night of 2026-10-30): `docs/history.md`.
 
+## FPS plan under way (2026-10-30, afternoon)
+
+The user: "execute the fps plan", unattended. `docs/fps-plan.md` section 0
+lists what landed. In short: milestone 0 (the mixer's share in [PERF] and
+[PROFA], ticks apart from the draw, `ms per tick`, stats at scene ends,
+test hooks), milestone 1 (**Game Timing: Auto is the default**: 30 Hz
+ticks drawn at 60 between the last two when the frame doesn't fit, with
+MetroidPrimePort's interpolation; Auto / Fixed / Flex in Port Options),
+milestone 2's exact part (the mixer's ramps and resampler in 32-bit,
+`test_mixer.py`), and a few M3/M5 pieces (`GXSetArray` no-op on the same
+array, adaptive pushbuffer kick, rain grids tested once against the clip
+planes). Round hw11 is the chain for all of it (below).
+
+What xemu can't tell: whether the 30 Hz blend looks smooth (lockstep
+doesn't hold Prime's tick clock over a screenshot's 25 s stall: each shot
+is a jump), and every number. r11i-l on red answer both.
+
 ## Next session, in order
 
+0. **Round hw11** (`tools/xbox/scenarios/hw11/README.md`): read the
+   mixer's share, `ms per tick` and the GPU-wait share per room into
+   `docs/fps-plan.md` section 1; Auto's fps against Fixed in the same
+   rooms (r11i-l vs r11c, d, b, f); watch r11i's shots and play a fight
+   in `Prime-X` (ship) for the feel. Then M2's depth (reverb, voice
+   count) and M3/M4 from the numbers.
 1. **Audio stuck** (hw10, "Console round hw10"): the old fault, seen in
    the chain from r10c on. Next: what each XBE leaves at exit; a warm
    reset before the cold one. Only a console round can test a change.
