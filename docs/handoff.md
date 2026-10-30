@@ -88,6 +88,20 @@ rounds and their files: `C:\xemu\hw\prime\ROUNDS.md`.
   3.7% here, 8-10% "under" `RecursivelyBuild` in Main Plaza): judge by the
   functions' own samples.
 - `[PERF]`'s "ticks per render" counts the game updates (was always 0).
+- Particles: the last lifetime's reciprocal kept (emulated FRECPE + two
+  fma calls per `PortSetSystemTime`); `SqrtF`/`InvSqrtF`'s max without
+  nxdk's x87 `fmaxf`. `RecursivelyBuild` makes its children's matrix once.
+  `CCubeModel`'s next-surface prefetch takes the header's port line too.
+- PGO profile retrained (all five scenarios gave profiles); LTO + PGO
+  autopad build: room sweep 14/14. Plain build sweep 14/14 too.
+- The pause screen (inventory doll, hw8's 14-17 fps): 30 dynamic lists, 0
+  volatile, 0 index-only, ~40-46 fps in xemu.
+- Profiler: `[PROFT]`, hitch frames only (150 ms+), with their waiting
+  time. In xemu a room's first frame under `MP_BOOT_WORLD` is mostly
+  waiting (`CGameArea::Validate` loads the area synchronously, a boot
+  artifact). The console's free-play hitches (hw9: 250-300 ms "draw"
+  stalls at pickups and some doors) aren't explained yet: a `[PROFT]`
+  profile from the console would say whether they wait or compute.
 - Looked at, left: the landing glow box (the game sets that fog itself;
   needs a Dolphin frame to say what retail draws), the HUD minimap
   (reordering fills and outlines changes overlap), pbkit's kick size
