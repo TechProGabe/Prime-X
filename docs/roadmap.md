@@ -60,7 +60,8 @@ line under it says how far it got.
   pass (per-model workspaces since 2026-10-30); neither measured on red
   (handoff, Next 1).
 - Fixed, not yet seen on red: the pause screen at 14-17 fps (hw8: Samus's
-  lists over the dynamic budget; the extra budget opens at 4 MB free now),
+  lists over the dynamic budget; the extra budget opens at 4 MB free now;
+  xemu 2026-10-30: none volatile or index-only there, ~40-46 fps),
   the charge beam (hw8, `188fb44`), Port Options' value cells off their
   rows (hw6, hw8: a fixed grid now, no dividers).
 - Fixed in xemu, not yet seen on red: everything too bright after Morph
