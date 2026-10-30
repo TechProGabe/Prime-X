@@ -1537,7 +1537,6 @@ typedef struct {
 typedef struct __attribute__((aligned(32))) {
     const uint8_t* dl;
     uint32_t nbytes;
-    int next;                      /* bucket chain, -1: end */
     uint32_t fkey;                 /* fmt_key(fmts) it was made under (part of the key) */
     uint8_t fmts, is_volatile, nrange;
     uint8_t prim1;                 /* a list of one draw (batch NULL): its primitive, */
@@ -1592,6 +1591,12 @@ static DlEntry s_dlc[DLC_MAX];
 static uint32_t s_dlc_lru[DLC_MAX];
 static int s_dlc_n;
 static int s_dlc_bucket[DLC_BUCKETS];
+/* Each entry's list address and bucket chain link, apart from the entries:
+ * a lookup walks its chain through these 16 KB instead of one 224-byte
+ * entry a hop (round hw15: dlc_find's chain walk was ~3.5% of Main Plaza's
+ * CPU, a cache miss per hop), and reads only the entry it finds. */
+static const uint8_t* s_dlc_key[DLC_MAX];
+static int s_dlc_next[DLC_MAX];
 static int s_dlc_ready;
 static uint32_t s_dyn_bytes;
 static uint32_t s_st_dl_hits, s_st_dl_builds, s_st_dl_direct, s_st_dyn_calls, s_st_dyn_fetch, s_st_dyn_builds;
@@ -1687,8 +1692,9 @@ static uint32_t dl_bucket(const void* dl) { return ((uint32_t)(uintptr_t)dl >> 5
 
 static void dlc_unlink(int idx) {
     int* link = &s_dlc_bucket[dl_bucket(s_dlc[idx].dl)];
-    while (*link >= 0 && *link != idx) link = &s_dlc[*link].next;
-    if (*link == idx) *link = s_dlc[idx].next;
+    while (*link >= 0 && *link != idx) link = &s_dlc_next[*link];
+    if (*link == idx) *link = s_dlc_next[idx];
+    s_dlc_key[idx] = NULL;
 }
 
 static void dyn_free(DlEntry* e) {
@@ -1818,7 +1824,7 @@ static void cen_report(void) {
         kb[s_cen_owner[i]] += e->mem_bytes;
         lists[s_cen_owner[i]]++;
         /* the same list under another key: same bucket chain */
-        for (j = s_dlc_bucket[dl_bucket(e->dl)]; j >= 0; j = s_dlc[j].next)
+        for (j = s_dlc_bucket[dl_bucket(e->dl)]; j >= 0; j = s_dlc_next[j])
             if ((uint32_t)j < i && s_dlc[j].dl == e->dl && s_dlc[j].nbytes == e->nbytes && s_dlc[j].mem) {
                 dup++;
                 dup_kb += e->mem_bytes;
@@ -1957,9 +1963,11 @@ static uint32_t fmt_key(uint32_t fmts) {
 static DlEntry* dlc_find(const uint8_t* dl, uint32_t nbytes) {
     uint32_t mask = 0x100, key = 0;   /* fmt_key of the last mask asked for */
     int i;
-    for (i = s_dlc_bucket[dl_bucket(dl)]; i >= 0; i = s_dlc[i].next) {
-        DlEntry* e = &s_dlc[i];
-        if (e->dl != dl || e->nbytes != nbytes) continue;
+    for (i = s_dlc_bucket[dl_bucket(dl)]; i >= 0; i = s_dlc_next[i]) {
+        DlEntry* e;
+        if (s_dlc_key[i] != dl) continue;
+        e = &s_dlc[i];
+        if (e->nbytes != nbytes) continue;
         if (e->fmts != mask) key = fmt_key(mask = e->fmts);
         if (e->fkey == key) return e;
     }
@@ -4143,7 +4151,8 @@ static int dlc_call(const uint8_t* dl, uint32_t nbytes) {
         e->dl = dl;
         e->nbytes = nbytes;
         e->fkey = fmt_key(0);   /* until a build knows the formats */
-        e->next = s_dlc_bucket[dl_bucket(dl)];
+        s_dlc_key[idx] = dl;
+        s_dlc_next[idx] = s_dlc_bucket[dl_bucket(dl)];
         s_dlc_bucket[dl_bucket(dl)] = idx;
         s_dlc_n++;
     }
@@ -4279,8 +4288,8 @@ int gx_dl_culled(const void* list, u32 nbytes, const float mtx[3][4]) {
     const DlEntry* e = NULL;
     int i;
     if (s_dlc_ready)
-        for (i = s_dlc_bucket[dl_bucket((const uint8_t*)list)]; i >= 0; i = s_dlc[i].next)
-            if (s_dlc[i].dl == (const uint8_t*)list && s_dlc[i].nbytes == nbytes) {
+        for (i = s_dlc_bucket[dl_bucket((const uint8_t*)list)]; i >= 0; i = s_dlc_next[i])
+            if (s_dlc_key[i] == (const uint8_t*)list && s_dlc[i].nbytes == nbytes) {
                 e = &s_dlc[i];
                 break;
             }
