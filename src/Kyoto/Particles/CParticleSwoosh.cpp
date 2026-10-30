@@ -170,7 +170,9 @@ const bool CParticleSwoosh::Update(double dt) {
   if (!IsLargeEnough()) {
     return false;
   }
+#ifndef TARGET_XBOX // PORT_XBOX: x1c4_/x1c8_ are never read; two clock reads a swoosh each
   CStopwatch timer;
+#endif
   CParticleGlobals::SetParticleLifetime(x1b4_LENG);
   CParticleGlobals::SetEmitterTime(x28_curFrame);
   CParticleGlobals::UpdateParticleLifetimeTweenValues(0);
@@ -275,7 +277,9 @@ const bool CParticleSwoosh::Update(double dt) {
     evalTime += kFrameTime;
     ++x28_curFrame;
   }
+#ifndef TARGET_XBOX // PORT_XBOX: as above
   x1c4_ = timer.GetElapsedTime();
+#endif
   return false;
 }
 
@@ -574,7 +578,9 @@ void CParticleSwoosh::Render() {
   CPortVarScope portVarScope(&xPortVars);
 #endif
   if (x1b4_LENG >= 2 && x1ac_particleCount > 1) {
+#ifndef TARGET_XBOX // PORT_XBOX: as Update's
     CStopwatch timer;
+#endif
     CParticleGlobals::SetParticleLifetime(x1b4_LENG);
     CGlobalRandom random(x1c0_rand);
     CGraphics::DisableAllLights();
@@ -648,7 +654,9 @@ void CParticleSwoosh::Render() {
       }
     }
     }
+#ifndef TARGET_XBOX // PORT_XBOX: as above
     x1c8_ = timer.GetElapsedTime();
+#endif
     CGraphics::SetCullMode(kCM_Front);
   }
 #ifdef TARGET_PC

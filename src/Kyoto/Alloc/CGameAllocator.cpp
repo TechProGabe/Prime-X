@@ -186,7 +186,14 @@ void* CGameAllocator::Alloc(size_t size, const EHint hint, const EScope scope, c
   if (size > static_cast<size_t>(UINT32_MAX) - 31) {
     return nullptr;
   }
+#ifdef TARGET_XBOX
+  // PORT_XBOX: gAllocatorTime is never read; its two clock reads an
+  // allocation were ~0.5% of a fight's CPU (round hw13)
+#define PX_ALLOC_TIME(e)
+#else
   const OSTick startTick = OSGetTick();
+#define PX_ALLOC_TIME(e) e
+#endif
 
   if (hint & kHI_RoundUpLen) {
     size = T_round_up< size_t, size_t >(size, 32);
@@ -211,7 +218,7 @@ void* CGameAllocator::Alloc(size_t size, const EHint hint, const EScope scope, c
     }
 
     if (buf != nullptr) {
-      gAllocatorTime += (OSGetTick() - startTick);
+      PX_ALLOC_TIME(gAllocatorTime += (OSGetTick() - startTick));
       return buf;
     }
     x70_ = 25;
@@ -238,7 +245,7 @@ void* CGameAllocator::Alloc(size_t size, const EHint hint, const EScope scope, c
     }
 
     if (buf != nullptr) {
-      gAllocatorTime += OSGetTick() - startTick;
+      PX_ALLOC_TIME(gAllocatorTime += OSGetTick() - startTick);
       return buf;
     }
 
@@ -306,7 +313,7 @@ void* CGameAllocator::Alloc(size_t size, const EHint hint, const EScope scope, c
   }
 
   UpdateAllocDebugStats(size, roundedSize, tmp);
-  gAllocatorTime += OSGetTick() - startTick;
+  PX_ALLOC_TIME(gAllocatorTime += OSGetTick() - startTick);
   return ++info;
 }
 

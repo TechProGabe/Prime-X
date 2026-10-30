@@ -844,7 +844,9 @@ const bool CElementGen::Update(double dt) {
 }
 
 bool CElementGen::InternalUpdate(double dt) {
+#ifndef TARGET_XBOX // PORT_XBOX: x2cc/x2d0 are never read; two clock reads a system each
   CStopwatch sw;
+#endif
   CGlobalRandom gr(x27c_randState);
 
   int frameUpdateCount = 0;
@@ -978,7 +980,9 @@ bool CElementGen::InternalUpdate(double dt) {
 
   BuildParticleSystemBounds();
 
+#ifndef TARGET_XBOX // PORT_XBOX: as above
   x2cc = sw.GetElapsedTime();
+#endif
   return false;
 }
 
@@ -2492,7 +2496,9 @@ bool CElementGen::IsSystemDeletable() const {
 }
 
 void CElementGen::Render() {
+#ifndef TARGET_XBOX // PORT_XBOX: as InternalUpdate's
   CStopwatch timer;
+#endif
 #ifdef TARGET_PC
   PortFx::RenderScope fxScope(x28_loadedGenDesc->xPortUnfogged);
   CPortParticleDepthBias portDepthBias(*this, x28_loadedGenDesc->xPortDepthBias);
@@ -2562,7 +2568,9 @@ void CElementGen::Render() {
   }
 #endif
 
+#ifndef TARGET_XBOX // PORT_XBOX: as above
   x2d0 = timer.GetElapsedTime();
+#endif
 }
 
 #ifdef TARGET_PC
