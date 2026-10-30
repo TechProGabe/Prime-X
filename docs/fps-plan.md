@@ -75,6 +75,24 @@ What it says:
   memcpy/memmove 7.7% + BuildBoneRange 1%: what GPU skinning (M4, built
   after this round) removes.
 
+### Round hw12 (red, 2026-10-30): GPU skinning, the mixer
+
+Profiler build of f28c4d8, Game Timing: Auto in every scene.
+
+| scene | hw11 | hw12 | notes |
+|---|---|---|---|
+| pirate fight | 25-26 (Auto) | 30-32.5 | GPU skinning off (r12c, same build): 24-26 |
+| pause screen (inventory) | 46.5 | 58-60 | Samus skinned on the GPU: dlist 5.2 -> 0.9 ms |
+| Lava Lake | 34 | 40-41 | |
+| Main Plaza | 37-39 | 36-37 | the vertex pool ran full (GPU-skin lists took it); fixed after: a 1 MB budget, evicted first |
+| Phendrana visors | 44-59 | 39-60 | |
+| Frigate opening | 50-60 | 50-60 | |
+
+No fault, no stuck audio. GPU skinning's CPU fallbacks: ~5-10% of skins
+in the fight, one a frame in Main Plaza (a model with two texgens from
+position and normal through different matrices: one per-vertex texture
+matrix slot can't serve both).
+
 ## 1. Where the time goes (the model everything below rests on)
 
 Measured on red at 480i, profiler builds (LTO + PGO), `[PERF]` lines of

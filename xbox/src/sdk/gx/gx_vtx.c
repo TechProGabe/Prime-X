@@ -102,6 +102,7 @@ static void plan_kinds(Plan* p, int vtxfmt);
 /* GPU skinning (gs_*, before dlc_call): workspaces whose skin waits there */
 static uint32_t s_gs_n;
 static void gs_cpu_for(const void* array);
+static int gsl_evict_lru(uint32_t frame);   /* a GPU-skin list's vertex memory back (dlc_build) */
 /* bumped whenever s_desc_sum, s_arrs_sum or a s_vat_sum changes (sig_*):
  * fmt_key's and cached_plan's caches (an array base alone, every model's
  * GXSetArray, leaves it) */
@@ -2207,7 +2208,8 @@ static int dlc_build(DlEntry* e, uint32_t frame) {
     ng = merge_plan(batch, nb, merged, first, &mtotal);
     for (i = 0; i < ng; i++) mtotal += merged[i].layout.stride;   /* room to align each draw, below */
     e->mem = mtotal ? (uint8_t*)xgx_vbuf_alloc(mtotal) : NULL;
-    while (mtotal && !e->mem && dlc_evict_one(frame, e)) e->mem = (uint8_t*)xgx_vbuf_alloc(mtotal);
+    while (mtotal && !e->mem && (dlc_evict_one(frame, e) || gsl_evict_lru(frame)))
+        e->mem = (uint8_t*)xgx_vbuf_alloc(mtotal);
     if (!e->mem) {
         s_build_why = "vertex pool full";
         free(tmp);
@@ -3156,6 +3158,42 @@ static void log_uncached(const uint8_t* dl, uint32_t nbytes, const char* why) {
 #define XGX_GPU_SKIN 1
 #endif
 #define GS_MAX 128          /* workspaces with matrices waiting */
+/* the vertex pool GPU-skin lists may hold: the room's own cached lists come
+ * first (round hw12: Main Plaza's pool ran full and its lists decoded every
+ * call); a list past it, or with the pool short, skins on the CPU */
+#ifndef XGX_GPU_SKIN_KB
+#define XGX_GPU_SKIN_KB 1024
+#endif
+static uint32_t s_gs_bytes;
+/* Models whose draws keep needing the CPU (a texgen the slots can't serve:
+ * the arm cannon in Main Plaza, round hw12): their lists were partly drawn
+ * on the GPU and then everything skinned on the CPU anyway, every frame.
+ * After GS_BAD_AFTER such fallbacks a model (its bind-pose array) skins on
+ * the CPU from the start. */
+#define GS_BAD 64
+#define GS_BAD_AFTER 4
+static const void* s_gs_bad[GS_BAD];
+static uint8_t s_gs_bad_n[GS_BAD];
+static uint32_t s_gs_bad_next;
+
+static int gs_is_bad(const void* src_pos) {
+    uint32_t i;
+    for (i = 0; i < GS_BAD; i++)
+        if (s_gs_bad[i] == src_pos) return s_gs_bad_n[i] >= GS_BAD_AFTER;
+    return 0;
+}
+
+static void gs_note_bad(const void* src_pos) {
+    uint32_t i;
+    for (i = 0; i < GS_BAD; i++)
+        if (s_gs_bad[i] == src_pos) {
+            if (s_gs_bad_n[i] < 255) s_gs_bad_n[i]++;
+            return;
+        }
+    i = s_gs_bad_next++ % GS_BAD;
+    s_gs_bad[i] = src_pos;
+    s_gs_bad_n[i] = 1;
+}
 #define GSL_MAX 1024        /* built lists */
 #define GS_SLOTS 8          /* bones a draw: eight of the vertex program's ten matrix slots, the last two
                                left for other texgens' texture matrices (moved there for the draw) */
@@ -3186,6 +3224,7 @@ typedef struct {
     GsDraw* draw;
     uint32_t nd, last_used, bytes;
     int bad;                   /* can't be drawn this way: skin on the CPU */
+    uint32_t retry;            /* no room at the last build: not before this frame (bad stays 0) */
 } GsList;
 static GsList s_gsl[GSL_MAX];
 static uint32_t s_st_gs_calls, s_st_gs_draws, s_st_gs_cpu, s_st_gs_builds, s_st_gs_regs;
@@ -3226,7 +3265,7 @@ int GXPortSkinGpu(const void* verts, const void* normals, const void* src_pos, c
                   unsigned nbones, const int* counts, const float* xf12, const float* rot9, int transient) {
     GsReg* g;
     uint32_t i, at = 0;
-    if (!GXPortSkinGpuOn() || !verts || !src_pos || !nbones) return 0;
+    if (!GXPortSkinGpuOn() || !verts || !src_pos || !nbones || gs_is_bad(src_pos)) return 0;
     if (!(g = gs_find(verts))) {
         for (i = 0; i < GS_MAX && s_gs[i].verts; i++) {}
         if (i == GS_MAX) {
@@ -3334,7 +3373,10 @@ static uint32_t gs_bone(const GsReg* g, uint32_t idx) {
 }
 
 static void gsl_free(GsList* l) {
-    if (l->mem) xgx_vbuf_free(l->mem);
+    if (l->mem) {
+        xgx_vbuf_free(l->mem);
+        s_gs_bytes -= l->bytes;
+    }
     free(l->draw);
     memset(l, 0, sizeof *l);
 }
@@ -3371,6 +3413,7 @@ static int gsl_evict(uint32_t frame) {
         GsList* l = &s_gsl[k];
         if (l->dl && l->mem && frame - l->last_used > 120) {
             xgx_vbuf_free(l->mem);
+            s_gs_bytes -= l->bytes;
             l->mem = NULL;
             l->bad = 0;   /* built again when it comes back */
             free(l->draw);
@@ -3437,6 +3480,26 @@ static int gs_state_ok(GsTexgen* tg) {
             memcpy(tg->m, g_xgx.texmtx[(mtx - GX_TEXMTX0) / 3], sizeof tg->m);
         }
     }
+    return 1;
+}
+
+/* the least recently used list not drawn this frame gives its memory back;
+ * 0: none */
+static int gsl_evict_lru(uint32_t frame) {
+    GsList* old = NULL;
+    uint32_t k;
+    for (k = 0; k < GSL_MAX; k++) {
+        GsList* l = &s_gsl[k];
+        if (l->dl && l->mem && l->last_used != frame && (!old || l->last_used < old->last_used)) old = l;
+    }
+    if (!old) return 0;
+    xgx_vbuf_free(old->mem);
+    s_gs_bytes -= old->bytes;
+    old->mem = NULL;
+    old->bad = 0;
+    free(old->draw);
+    old->draw = NULL;
+    old->nd = 0;
     return 1;
 }
 
@@ -3720,12 +3783,21 @@ static int gsl_build(GsList* l, const GsReg* g, uint32_t frame) {
         }
     }
     /* pass 4: into the vertex pool, each draw at a multiple of its stride */
-    if (ok) {
-        l->mem = (uint8_t*)xgx_vbuf_alloc(bytes);
-        if (!l->mem && gsl_evict(frame)) l->mem = (uint8_t*)xgx_vbuf_alloc(bytes);
-        if (!l->mem) {
-            s_gs_why = "vertex pool full";
+    if (ok) {   /* within the budget, never taking the pool's last 512 KB from the room's lists */
+        while (s_gs_bytes + bytes > XGX_GPU_SKIN_KB * 1024u && gsl_evict_lru(frame)) {}
+        if (s_gs_bytes + bytes > XGX_GPU_SKIN_KB * 1024u || xgx_vbuf_pool_free_kb() < 512 + bytes / 1024) {
+            s_gs_why = s_gs_bytes + bytes > XGX_GPU_SKIN_KB * 1024u ? "over the budget" : "vertex pool short";
+            l->retry = frame + 60;
+            l->bad = 0;   /* room, not the list: try again later */
             ok = 0;
+        } else {
+            l->mem = (uint8_t*)xgx_vbuf_alloc(bytes);
+            if (!l->mem) {
+                s_gs_why = "vertex pool full";
+                l->retry = frame + 60;
+                l->bad = 0;   /* room, not the list: try again later */
+                ok = 0;
+            }
         }
     }
     if (ok) {
@@ -3768,6 +3840,7 @@ static int gsl_build(GsList* l, const GsReg* g, uint32_t frame) {
     l->draw = draws;
     l->nd = nd;
     l->bytes = bytes;
+    s_gs_bytes += bytes;
     l->bad = 0;
     s_st_gs_builds++;
     return 1;
@@ -3816,6 +3889,7 @@ static int gs_call(const uint8_t* dl, uint32_t nbytes, GsReg* g) {
     uint32_t d, k;
     const uint32_t cur = (g_xgx.cur_posmtx / 3) % XGX_NUM_POSMTX;
     if (!gs_state_ok(&tg) || (g_gx.desc[GX_VA_NRM] != GX_NONE && g_gx.array[GX_VA_NRM] != g->nrms)) {
+        gs_note_bad(g->src_pos);
         if (g_gx.desc[GX_VA_NRM] != GX_NONE && g_gx.array[GX_VA_NRM] != g->nrms) s_gs_why = "other normals";
         gs_materialize(g);
         return 0;
@@ -3827,7 +3901,7 @@ static int gs_call(const uint8_t* dl, uint32_t nbytes, GsReg* g) {
         l->src_pos = g->src_pos;
     }
     l->last_used = frame;
-    if (!l->mem && (l->bad || !gsl_build(l, g, frame))) {
+    if (!l->mem && (l->bad || (int32_t)(frame - l->retry) < 0 || !gsl_build(l, g, frame))) {
         gs_materialize(g);
         return 0;
     }
@@ -3856,6 +3930,7 @@ static int gs_call(const uint8_t* dl, uint32_t nbytes, GsReg* g) {
         }
         if (moved > 2 || (moved && to != GS_SLOTS)) {
             s_gs_why = "texture matrices in the bone slots";
+            gs_note_bad(g->src_pos);
             gs_materialize(g);
             return 0;
         }
@@ -4083,8 +4158,9 @@ void gx_vtx_frame_end(void) {
             memset(s_ru_why, 0, sizeof s_ru_why);
 #if XGX_GPU_SKIN
             xhw_logf("[DLC] GPU skin: %u skins handed over, %u list calls (%u draws), %u lists built, %u skinned on "
-                     "the CPU after all (last why: %s); %u waiting",
-                     s_st_gs_regs, s_st_gs_calls, s_st_gs_draws, s_st_gs_builds, s_st_gs_cpu, s_gs_why, s_gs_n);
+                     "the CPU after all (last why: %s); %u waiting, %u KB of lists",
+                     s_st_gs_regs, s_st_gs_calls, s_st_gs_draws, s_st_gs_builds, s_st_gs_cpu, s_gs_why, s_gs_n,
+                     s_gs_bytes / 1024);
             s_st_gs_regs = s_st_gs_calls = s_st_gs_draws = s_st_gs_builds = s_st_gs_cpu = 0;
 #endif
             s_st_lines = s_st_line_drop = s_st_line_clip = s_st_line_box = 0;
