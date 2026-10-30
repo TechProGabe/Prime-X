@@ -9,6 +9,13 @@ static inline float GetPointForSL(ESortedLists list, const CAABox& box) {
   return reinterpret_cast< const float* >(&box)[list];
 }
 
+#ifdef TARGET_XBOX
+// PORT_XBOX: a sorted list's i-th coordinate (xPortKey, CSortedLists.hpp)
+#define SL_KEY(list, i) xPortKey[list][i]
+#else
+#define SL_KEY(list, i) GetPointForSL(list, x0_nodes[xb000_sortedLists[list].x0_ids[i]].x4_box)
+#endif
+
 SNode::SNode()
 : x0_actor(nullptr), x4_box(CAABox::Identity()), x28_next(-1), x2a_populated(false) {}
 
@@ -51,7 +58,7 @@ short CSortedListManager::FindInListLower(ESortedLists list, f32 value) const {
   while (count > 0) {
     half = count / 2;
     const int middle = first + half;
-    if (GetPointForSL(list, x0_nodes[sorted.x0_ids[middle]].x4_box) < value) {
+    if (SL_KEY(list, middle) < value) {
       first = middle + 1;
       count = count - half - 1;
     } else {
@@ -69,7 +76,7 @@ short CSortedListManager::FindInListUpper(ESortedLists list, f32 value) const {
   while (count > 0) {
     half = count / 2;
     const int middle = first + half;
-    if (value < GetPointForSL(list, x0_nodes[sorted.x0_ids[middle]].x4_box)) {
+    if (value < SL_KEY(list, middle)) {
       count = half;
     } else {
       first = middle + 1;
@@ -88,7 +95,7 @@ void CSortedListManager::InsertInList(ESortedLists list, SNode& node) {
   while (count > 0) {
     half = count / 2;
     const int middle = first + half;
-    if (GetPointForSL(list, x0_nodes[sorted.x0_ids[middle]].x4_box) < value) {
+    if (SL_KEY(list, middle) < value) {
       first = middle + 1;
       count = count - half - 1;
     } else {
@@ -99,8 +106,14 @@ void CSortedListManager::InsertInList(ESortedLists list, SNode& node) {
   for (int i = sorted.x800_size; i > first; --i) {
     x0_nodes[sorted.x0_ids[i - 1]].x1c_selfIdxs[list] = i;
     sorted.x0_ids[i] = sorted.x0_ids[i - 1];
+#ifdef TARGET_XBOX
+    xPortKey[list][i] = xPortKey[list][i - 1]; // PORT_XBOX: the keys move with the ids
+#endif
   }
   sorted.x0_ids[first] = node.x0_actor->GetUniqueId().Value();
+#ifdef TARGET_XBOX
+  xPortKey[list][first] = value; // PORT_XBOX
+#endif
   ++sorted.x800_size;
   node.x1c_selfIdxs[list] = first;
 }
@@ -110,6 +123,9 @@ void CSortedListManager::RemoveFromList(ESortedLists list, short idx) {
   for (int i = idx; i < static_cast< int >(sorted.x800_size) - 1; ++i) {
     x0_nodes[sorted.x0_ids[i + 1]].x1c_selfIdxs[list] = i;
     sorted.x0_ids[i] = sorted.x0_ids[i + 1];
+#ifdef TARGET_XBOX
+    xPortKey[list][i] = xPortKey[list][i + 1]; // PORT_XBOX: the keys move with the ids
+#endif
   }
   --sorted.x800_size;
 }
@@ -118,23 +134,27 @@ void CSortedListManager::MoveInList(ESortedLists list, const short index) {
   SSortedList& sorted = xb000_sortedLists[list];
   short idx = index;
   while (true) {
-    if (idx > 0 && GetPointForSL(list, x0_nodes[sorted.x0_ids[idx - 1]].x4_box) >
-                       GetPointForSL(list, x0_nodes[sorted.x0_ids[idx]].x4_box)) {
+    if (idx > 0 && SL_KEY(list, idx - 1) > SL_KEY(list, idx)) {
       x0_nodes[sorted.x0_ids[idx - 1]].x1c_selfIdxs[list] = idx;
       x0_nodes[sorted.x0_ids[idx]].x1c_selfIdxs[list] = idx - 1;
       rstl::swap(sorted.x0_ids[idx - 1], sorted.x0_ids[idx]);
+#ifdef TARGET_XBOX
+      rstl::swap(xPortKey[list][idx - 1], xPortKey[list][idx]); // PORT_XBOX
+#endif
       --idx;
     } else {
       if (idx >= static_cast< int >(sorted.x800_size) - 1) {
         return;
       }
-      if (!(GetPointForSL(list, x0_nodes[sorted.x0_ids[idx + 1]].x4_box) <
-            GetPointForSL(list, x0_nodes[sorted.x0_ids[idx]].x4_box))) {
+      if (!(SL_KEY(list, idx + 1) < SL_KEY(list, idx))) {
         return;
       }
       x0_nodes[sorted.x0_ids[idx + 1]].x1c_selfIdxs[list] = idx;
       x0_nodes[sorted.x0_ids[idx]].x1c_selfIdxs[list] = idx + 1;
       rstl::swap(sorted.x0_ids[idx + 1], sorted.x0_ids[idx]);
+#ifdef TARGET_XBOX
+      rstl::swap(xPortKey[list][idx + 1], xPortKey[list][idx]); // PORT_XBOX
+#endif
       ++idx;
     }
   }
@@ -176,6 +196,12 @@ void CSortedListManager::Remove(const CActor* actor) {
 void CSortedListManager::Move(const CActor* actor, const CAABox& box) {
   SNode& node = x0_nodes[actor->GetUniqueId().Value()];
   node.x4_box = box;
+#ifdef TARGET_XBOX
+  // PORT_XBOX: the node's new coordinates at its places in the six lists
+  for (int list = 0; list < 6; ++list) {
+    xPortKey[list][node.x1c_selfIdxs[list]] = GetPointForSL(static_cast< ESortedLists >(list), box);
+  }
+#endif
   MoveInList(kSL_MinX, node.x1c_selfIdxs[kSL_MinX]);
   MoveInList(kSL_MaxX, node.x1c_selfIdxs[kSL_MaxX]);
   MoveInList(kSL_MinY, node.x1c_selfIdxs[kSL_MinY]);
