@@ -107,7 +107,7 @@ without input).
 | 2026-10-29 | hw7 | red | seven-scene chain r7a-g; r7e froze in audio start-up (fixed `f73d0d7`) |
 | 2026-10-29 | hw8 | red | r8g only (Flex, Landing Site 40.2 fps median); free play: no out of memory, pause screen 14-17 fps, charge beam dead |
 | 2026-10-29 | hw9 | red | chain r9a-e (r9f froze in audio start-up); free play to Parasite Queen: visuals fine, fights 10-20 fps. Hardware testing paused after it (the user) |
-| 2026-10-30 | hw10 | red | staged, not run yet: chain r10a-h (front end, landing glow, Landing Site, pirate fight, Main Plaza, visors, Lava Lake, Frigate) and free play (`tools/xbox/scenarios/hw10`) |
+| 2026-10-30 | hw10 | red | uploaded, not run yet: chain r10a-h (front end, landing glow, Landing Site, pirate fight, Main Plaza, visors, Lava Lake, Frigate) and free play (`tools/xbox/scenarios/hw10`) |
 
 ## Performance per build
 
