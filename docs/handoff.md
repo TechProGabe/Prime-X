@@ -69,9 +69,9 @@ rounds and their files: `C:\xemu\hw\prime\ROUNDS.md`.
    along (two indirect stages over the volume's depth copies): Dolphin's
    Lava Lake shows what it adds (a haze that dims the lava and its flames).
 6. Parity with Dolphin (`tools/xbox/dolphin_ref.py`, docs/testing.md):
-   the 14 sweep rooms match (2026-10-30) but for the fog volumes; the
-   visors: `--visor` holds one through a Gecko write (thermal and scan
-   come out right; X-ray drew with thermal's gun, so don't trust it).
+   the 14 sweep rooms match (2026-10-30) but for the fog volumes; thermal
+   matches since its palette pass works (`--visor thermal`); X-ray can't be
+   held that way (no world pass), scan needs a target to compare.
 7. Gate leftovers: the 128 MB hold needs a 128 MB-aware BIOS in xemu; the
    save round trip on red and Dolphin `.gci` (phase 4); Docker/CI (the
    workflow exists, `gh` isn't logged in here).
@@ -95,6 +95,19 @@ rounds and their files: `C:\xemu\hw\prime\ROUNDS.md`.
   polygon edge; now they fade as in Dolphin. `tests/xbox/vp_ref.c` got
   the same line (its header says so) and `legacy_len`'s spot count went
   13 -> 14; `test_vp_opt.py` 200000 keys, 0 failed.
+- **Thermal and X-ray palettes**: both visors copy the frame as intensity
+  (I4, I8) and draw the copy back as C4/C8 through a TLUT (thermal's heat
+  palette, `TXTR_XRayPalette`); the port sampled the copy as plain
+  intensity, so the thermal gun drew white and the door's outline black,
+  and X-ray drew grey. A CI view of an EFB copy now gets a TLUT texture
+  (`XgxMap.dep`, gx_tex.c `dep_palette_for`) that a DEPENDENT_GB unit looks
+  the copy's intensity up in (nv2a.c `UNIT_DEP`). Intensity copies now use
+  GX's formula (Y = (66 r + 129 g + 25 b) / 256 + 16, Dolphin's
+  TextureConverterShaderGen), since the value is an index now. Thermal
+  matches Dolphin; X-ray's palette is inverted (dark -> pale lavender,
+  bright -> navy), so X-ray now looks pale lavender in dim rooms. Dolphin
+  can't give an X-ray reference with `--visor` (the world pass starts on
+  a real visor change in `CPlayerVisor`).
 - Room sweep 14/14 with both (no FATAL, THROW, out of memory); the shots
   differ from the night's by timing only. Every sweep room matches
   Dolphin's frame of it but Magmoor's fog volumes; Ice Temple's and the

@@ -79,6 +79,9 @@ typedef struct {
     float lod_bias;
     uint32_t pal;                   /* P8: SET_TEXTURE_PALETTE value of the TLUT in use
                                        (xgx_tex_palette); 0: the texture's own */
+    uint32_t dep;                   /* a CI view (C4/C8) of an EFB copy: the TLUT as an
+                                       n x 1 texture the copy's intensity is looked up
+                                       in (DEPENDENT_GB); 0: none */
 } XgxMap;
 
 typedef struct {

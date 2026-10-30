@@ -751,7 +751,7 @@ static uint32_t magenta_tex(void) {
  * call here (-ffreestanding), on every bind. TexObj and XgxMap have no
  * padding, so their bytes are their words. */
 _Static_assert(sizeof(TexObj) == sizeof(void*) + 24, "TexObj: no padding");
-_Static_assert(sizeof(XgxMap) == 36, "XgxMap: 9 words, no padding");
+_Static_assert(sizeof(XgxMap) == 40, "XgxMap: 10 words, no padding");
 static inline int words_same(const void* a, const void* b, uint32_t n) {
     const uint32_t *x = (const uint32_t*)a, *y = (const uint32_t*)b;
     uint32_t i;
@@ -841,6 +841,65 @@ static uint32_t palette_for(const TlutObj* tl) {
     }
     p->last = s_frame;
     return p->tex ? p->pal : 0;
+}
+
+/* A CI texture over an EFB copy: the copy holds intensity (I4/I8 copies,
+ * in every channel), the game reads it as C4/C8 indices through a TLUT.
+ * Prime's thermal visor copies the frame as I4 and draws it back as C4
+ * through its heat palette (CCubeRenderer::DoThermalBlendHot); sampled as
+ * the intensity, the hot gun and creatures came out white. The back end
+ * looks the copy's green up in this n x 1 copy of the TLUT (DEPENDENT_GB:
+ * u = I / 255, nearest texel I * n / 255 = I >> 4 for C4). */
+#define DEP_MAX 4
+typedef struct {
+    const uint8_t* data;
+    uint32_t hash, tex, checked, last;
+    uint16_t entries;
+    uint8_t fmt;
+} DepEntry;
+static DepEntry s_dep[DEP_MAX];
+
+static uint32_t dep_palette_for(const TlutObj* tl, uint32_t entries) {
+    uint32_t i, pal[256];
+    DepEntry* p = NULL;
+    int k;
+    for (k = 0; k < DEP_MAX; k++)
+        if (s_dep[k].tex && s_dep[k].data == tl->data && s_dep[k].fmt == (uint8_t)tl->fmt &&
+            s_dep[k].entries == entries) {
+            p = &s_dep[k];
+            break;
+        }
+    if (p && p->checked != s_frame) {   /* rewritten in place: a new palette */
+        uint32_t h = hash_bytes(tl->data, entries * 2);
+        p->checked = s_frame;
+        if (h != p->hash) {
+            xgx_tex_destroy(p->tex);
+            p->tex = 0;
+        }
+    }
+    if (!p || !p->tex) {
+        if (!p) {   /* a free slot, else the least recently used */
+            p = &s_dep[0];
+            for (k = 0; k < DEP_MAX; k++) {
+                if (!s_dep[k].tex) {
+                    p = &s_dep[k];
+                    break;
+                }
+                if (s_dep[k].last < p->last) p = &s_dep[k];
+            }
+            if (p->tex) xgx_tex_destroy(p->tex);
+        }
+        memset(p, 0, sizeof *p);
+        for (i = 0; i < entries; i++) pal[i] = tlut_color(tl, i);
+        p->data = tl->data;
+        p->fmt = (uint8_t)tl->fmt;
+        p->entries = (uint16_t)entries;
+        p->hash = hash_bytes(tl->data, entries * 2);
+        p->checked = s_frame;
+        p->tex = xgx_tex_create(entries, 1, 1, XGX_TEX_ARGB8, pal);
+    }
+    p->last = s_frame;
+    return p->tex;
 }
 
 /* the same object again, already looked up and validated this frame:
@@ -972,7 +1031,9 @@ static void bind_new(uint32_t map, const TexObj* o, const TlutObj* tl) {
         nm.min_filter = o->min_f;
         nm.mag_filter = o->mag_f;
         nm.lod_bias = o->lod_bias;
-        nm.pal = sep ? palette_for(tl) : 0;
+        nm.pal = sep && !e->efb ? palette_for(tl) : 0;
+        if (e->efb && tl && (o->fmt == GX_TF_C4 || o->fmt == GX_TF_C8))
+            nm.dep = dep_palette_for(tl, o->fmt == GX_TF_C4 ? 16 : 256);
         if (!words_same(m, &nm, sizeof nm / 4)) {
             *m = nm;
             g_xgx.dirty |= XGX_DIRTY_MAPS;
