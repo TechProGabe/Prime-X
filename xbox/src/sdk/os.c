@@ -596,6 +596,10 @@ static int s_lockstep = -1;
 static uint64_t s_lockstep_ticks;   /* the lockstep clock, in OS ticks: a frame is exactly OS_TIMER_CLOCK / 60 */
 
 int xsdk_lockstep(void) {
+    /* not settled before OSInit: the game's static timers (CStopwatch's
+     * global) read the clock before the autopad script is loaded, and the
+     * answer then was always "off" */
+    if (s_lockstep < 0 && !s_ns_base) return 0;
     if (s_lockstep < 0) {
         const char* e = getenv("PX_LOCKSTEP");
         s_lockstep = e && atoi(e);
