@@ -106,6 +106,11 @@ rounds and their files: `C:\xemu\hw\prime\ROUNDS.md`.
   artifact). The console's free-play hitches (hw9: 250-300 ms "draw"
   stalls at pickups and some doors) aren't explained yet: a `[PROFT]`
   profile from the console would say whether they wait or compute.
+- Tried and reverted (no gain xemu can show): the sorted lists' sort keys
+  mirrored beside their ids (the nodes fit the Pentium III's L2, and xemu
+  doesn't model cache misses); an SSE `put_nrm` (bit-identical by a host
+  test over 20M inputs, but no faster in xemu, which runs packed SSE a
+  lane at a time). Both might help on the console; unmeasurable here.
 - Looked at, left: the landing glow box (the game sets that fog itself;
   needs a Dolphin frame to say what retail draws), the HUD minimap
   (reordering fills and outlines changes overlap), pbkit's kick size
