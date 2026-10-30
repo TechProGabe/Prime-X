@@ -209,11 +209,20 @@ double XboxTickPeriod() {
   return Mode() == XSDK_SIM_AUTO && sAuto30 ? 1.0 / 30.0 : 1.0 / 60.0;
 }
 
+// every actor, pose and particle asks while drawing (0.5% of Main Plaza's
+// draw, round hw12): worked out once a frame, px_sim_frame forgets it
+namespace {
+int sBlend = -1;
+}
 bool XboxPresentBlend() {
-  ReadEnv();
-  if (sEnvInterp >= 0)
-    return sEnvInterp != 0;
-  return !SimAdaptive() && XboxTickPeriod() > 1.0 / 50.0;
+  if (sBlend < 0) {
+    ReadEnv();
+    if (sEnvInterp >= 0)
+      sBlend = sEnvInterp != 0;
+    else
+      sBlend = !SimAdaptive() && XboxTickPeriod() > 1.0 / 50.0;
+  }
+  return sBlend != 0;
 }
 
 unsigned XboxRenderTimingSteps(unsigned ticks, double period) {
@@ -401,6 +410,7 @@ void UpdateControllerNav() {}
 extern "C" void px_sim_frame(void) {
   using namespace PortDebug;
   uint32_t us[XHW_PERF_N], ticks;
+  sBlend = -1;
   if (xhw_perf_tag == nullptr)
     xhw_perf_tag = &PerfTag;
   if (Mode() != XSDK_SIM_AUTO || sEnvRate > 0 || xsdk_lockstep()) {
