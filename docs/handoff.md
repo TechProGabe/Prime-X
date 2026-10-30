@@ -57,11 +57,15 @@ there is the limit). No audio fault in 21 chained scenes (hw11, hw12).
 
 ## Next session, in order
 
-0. **Round hw14**, to stage: `env PX_PB_CALL_TEST=1` in a short scene
-   (the pushbuffer CALL test, M6a's first step: `[NV2A] call test: PASS`
-   in xemu; a FAIL or a stall on red ends M6a), and Main Plaza with GPU
-   skinning allowed into the texture pool (hw13: the vertex pool is full
-   there, every skin goes to the CPU; the texture pool has ~4 MB free).
+0. **Round hw15** is on red (`tools/xbox/scenarios/hw15`): texture-only
+   draws (`XGX_MAPS_FAST`), the write-only clock reads gone, and the
+   pushbuffer tests' second version (r15e). hw14: Main Plaza 36.7 -> 38-39
+   (GPU skinning in the texture pool), the CALL test FAILED on red (the
+   segment ran, the RETURN faulted the pusher). If r15e's JUMP round trip
+   passes, M6a can be built on jumps (a JUMP back patched per use); if
+   both fail, M6a is off. hw13's Main Plaza steady reports: `xgx_draw`
+   ~17% and `GXCallDisplayList` ~11% of all samples: the back end is the
+   biggest single cost there.
    Then: the game's own draw (render, 10-14 ms) is the biggest bucket ([PROFR] in
    hw12: the immediate-mode flush and rain in the fight, DrawSurface,
    texture binds and SetCurrent in Main Plaza); the mixer is still 13%

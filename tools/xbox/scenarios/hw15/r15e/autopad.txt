@@ -1,0 +1,6 @@
+# r15e: the pushbuffer tests, second version (a JUMP round trip, the CALL with its error code); the chain ends at the dashboard
+env PX_NEXT_XBE=dashboard
+env PX_PB_CALL_TEST=1
+600 SHOT
+1500 SHOT
+1800 NEXT
