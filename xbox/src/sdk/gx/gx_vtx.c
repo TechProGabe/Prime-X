@@ -4226,6 +4226,35 @@ int GXPortBoxCulled(const float bmin[3], const float bmax[3]) {
                        (const float(*)[4])g_xgx.posmtx[(g_xgx.cur_posmtx / 3) % XGX_NUM_POSMTX]);
 }
 
+/* port_xbox_gx.h: n indexed positions (GXPosition1x8 each) into the open
+ * batch in one call, where every vertex is exactly that: an 8-bit index
+ * into a native F32 XYZ array (the map screens and the HUD minimap,
+ * CMapArea::CMapAreaSurface::Draw: 5.8% of a fight's draw time on the
+ * console in those calls, round hw12). */
+int GXPortPositions1x8(const unsigned char* idx, unsigned n) {
+    const Slot* ps;
+    const uint8_t* base;
+    uint32_t i, s, stride;
+    if (!B.open || !B.base || B.cursor != 0 || B.plan.n != 1 || B.done > B.expected || B.expected - B.done < n)
+        return 0;
+    ps = &B.plan.slot[0];
+    if (ps->attr != GX_VA_POS || ps->type != GX_INDEX8 || ps->kind != SK_F32_3 || ps->dst < 0 ||
+        !g_gx.array_le[GX_VA_POS] || !(base = g_gx.array[GX_VA_POS]))
+        return 0;
+    if (s_gs_n) gs_cpu_for(base);
+    s = B.plan.layout.stride;
+    stride = g_gx.array_stride[GX_VA_POS];
+    for (i = 0; i < n; i++) {
+        uint8_t* v = B.cur + i * s;
+        if (i && s > 12) memset(v, 0, s);   /* the first was cleared already */
+        memcpy(v + ps->dst, base + idx[i] * stride, 12);
+    }
+    B.cur += n * s;
+    B.done += n;
+    if (n && B.done < B.expected) memset(B.cur, 0, s);   /* after_attr's clear of the next vertex */
+    return 1;
+}
+
 /* port_xbox_gx.h: the rain's streaks in one call, where the open batch is
  * exactly a direct S16 position then a direct RGBA4 colour (vertex format
  * 6 as CEnvFxManagerGrid::RenderRainParticles sets it): what its two

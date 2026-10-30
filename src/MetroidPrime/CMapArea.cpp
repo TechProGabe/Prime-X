@@ -1,4 +1,7 @@
 #include "MetroidPrime/CMapArea.hpp"
+#ifdef TARGET_XBOX
+#include "port_xbox_gx.h" // PORT_XBOX: GXPortPositions1x8
+#endif
 
 #include "MetroidPrime/CMemoryDrawEnum.hpp"
 
@@ -213,6 +216,10 @@ void CMapArea::CMapAreaSurface::Draw(const CVector3f* verts, uint vertexCount, c
       surface += ((numVertices + 3) & ~3) / 4;
 
       CGX::Begin(primType, GX_VTXFMT0, numVertices);
+#ifdef TARGET_XBOX
+      // PORT_XBOX: the indices in one call (GXPortPositions1x8), the calls as the fallback
+      if (!GXPortPositions1x8(data, static_cast< unsigned >(numVertices)))
+#endif
       for (int v = 0; v < numVertices; ++v) {
         GXPosition1x8(data[v]);
       }
@@ -236,6 +243,10 @@ void CMapArea::CMapAreaSurface::Draw(const CVector3f* verts, uint vertexCount, c
         outline += ((numVertices + 3) & ~3) / 4;
 
         CGX::Begin(GX_LINESTRIP, GX_VTXFMT0, numVertices);
+#ifdef TARGET_XBOX
+        // PORT_XBOX: as above
+        if (!GXPortPositions1x8(data, static_cast< unsigned >(numVertices)))
+#endif
         for (int v = 0; v < numVertices; ++v) {
           GXPosition1x8(data[v]);
         }

@@ -15,6 +15,11 @@ int GXPortBoxCulled(const float bmin[3], const float bmax[3]);
 // from its position, colour c0, to z + dz, colour c1 (RGBA4), as two
 // GXPosition3s16 + GXTexCoord1s16 pairs would. 0: the batch isn't that
 // layout and nothing was written (make the calls).
+// n vertices of one 8-bit position index each (idx[]) into the open batch,
+// as n GXPosition1x8 calls would. 0: the batch isn't exactly that (make the
+// calls).
+int GXPortPositions1x8(const unsigned char* idx, unsigned n);
+
 int GXPortRainLines(const short* xyz, unsigned n, short dz, unsigned short c0, unsigned short c1);
 
 // The snow's (or the underwater flakes') n quads into the open GX_QUADS
