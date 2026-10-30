@@ -38,14 +38,18 @@ landed and the rounds' numbers (hw11, hw12). Built and on red:
   the ticks ("render", `ms per tick`, [PROFR]), stats at scene ends.
 - M1: **Game Timing: Auto is the default** (30 Hz ticks drawn at 60 with
   MetroidPrimePort's interpolation when the frame doesn't fit; particles
-  blended over two-frame steps). Auto / Fixed / Flex in Port Options.
+  blended over two-frame steps). Since 2026-10-30 the only mode (the
+  user removed the Port Options row; Fixed/Flex as test hooks only).
 - M2: the mixer's ramps, resampler, ADPCM and reverb, bit-exact
   (`tools/xbox/test_mixer.py`).
 - M4: **GPU skinning** (gx_vtx.c `gs_*`, `GXPortSkinGpu`): characters
   drawn from their bind pose with a matrix per bone, reflections through
   per-bone texture matrices, a 1 MB vertex-pool budget, CPU fallback.
 - M3/M5 pieces: draw merging, `GXSetArray` no-op, adaptive pushbuffer
-  kick, rain grids tested once, the minimap's positions in one call.
+  kick, rain grids tested once, the minimap's positions in one call,
+  `XboxPresentBlend` once a frame, the sorted lists' coordinates in list
+  order (`BuildNearList`).
+- Compiler: **`-O3` by default** (hw13: 1-4% ahead of -O2 in every scene).
 
 Red, Auto: fight 17-18 (hw10, Fixed) -> 30-32 fps (hw12), pause screen
 46.5 -> 58-60, Lava Lake 28 -> 40, Main Plaza 35 -> 36-37 (the draw work
@@ -53,9 +57,12 @@ there is the limit). No audio fault in 21 chained scenes (hw11, hw12).
 
 ## Next session, in order
 
-0. **Round hw13** (`tools/xbox/scenarios/hw13`): -O2 (image A) against
-   -O3 (image B) in four rooms; keep -O3 only if B wins. Then: the
-   game's own draw (render, 10-14 ms) is the biggest bucket ([PROFR] in
+0. **Round hw14**, to stage: `env PX_PB_CALL_TEST=1` in a short scene
+   (the pushbuffer CALL test, M6a's first step: `[NV2A] call test: PASS`
+   in xemu; a FAIL or a stall on red ends M6a), and Main Plaza with GPU
+   skinning allowed into the texture pool (hw13: the vertex pool is full
+   there, every skin goes to the CPU; the texture pool has ~4 MB free).
+   Then: the game's own draw (render, 10-14 ms) is the biggest bucket ([PROFR] in
    hw12: the immediate-mode flush and rain in the fight, DrawSurface,
    texture binds and SetCurrent in Main Plaza); the mixer is still 13%
    of a fight; GPU rain (a vertex program with EXPP's fraction; the CPU

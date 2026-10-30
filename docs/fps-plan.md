@@ -93,6 +93,37 @@ in the fight, one a frame in Main Plaza (a model with two texgens from
 position and normal through different matrices: one per-vertex texture
 matrix slot can't serve both).
 
+### Round hw13 (red, 2026-10-30): -O2 against -O3
+
+Two profiler images of 5c3084e, each scene once per image back to back
+(A: `-O2`, B: `-O3`), Auto throughout. Medians of the steady stretch:
+
+| scene | A (-O2) | B (-O3) | |
+|---|---|---|---|
+| pirate fight | 32.2 | 33.4 | +3.7% |
+| Main Plaza | 36.3 | 36.7 | +1% |
+| Lava Lake | 40.9 | 41.6 | +1.7% |
+| Landing Site (rain) | 35.8 | 36.7 | +2.5% |
+
+No fault, no stuck audio in either image: `-O3` is the default from here on
+(`PX_OPT_LEVEL`). Findings for what comes next:
+- Main Plaza never skins on the GPU: the room's cached lists fill the
+  4 MB vertex pool, so the budget (never the pool's last 512 KB) turns
+  every skin away ("vertex pool short", ~5 skins a frame on the CPU),
+  while the texture pool has ~4 MB free there.
+- Draw merging: almost every unchanged draw that isn't joined follows a
+  draw of another primitive (95713 of 96271 in the fight), as in xemu.
+- Main Plaza's game draw ([PROFR], hw12): the game's own traversal ~63%,
+  the GX layer ~28% (texture binds ~7%: `bind_new`, `GXLoadTexObj`,
+  `quick_hash`; `GXSetArray` 3%), pbkit and the back end ~4%. Recorded
+  pushbuffers (M6a) would take the GX share, ~3 ms, unless they also skip
+  the traversal; the pushbuffer CALL test (`PX_PB_CALL_TEST=1`) passes in
+  xemu and goes into the next round.
+- Transcendentals are ~0.5% now (pdclib's `fsin`/`fpatan` x87): M3.8 is
+  not worth its risk. M5.4 (particles at the tick period) is dropped: a
+  particle system's time is whole frames (emission, lifetimes, every
+  keyframe), so a 1/30 step is a rewrite of `CElementGen`, visible, for ~1%.
+
 ## 1. Where the time goes (the model everything below rests on)
 
 Measured on red at 480i, profiler builds (LTO + PGO), `[PERF]` lines of
