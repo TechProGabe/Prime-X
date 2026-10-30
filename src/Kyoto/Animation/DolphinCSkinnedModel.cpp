@@ -221,6 +221,7 @@ void CSkinnedModel::Construct() {
   xPortSkinHash = 0;
   xPortSkinVerts = nullptr;
   xPortKeptBytes = 0;
+  xPortKeepEpoch = 0;
   xPortKeepTried = false;
 #endif
   if (!x38_owned) {
@@ -327,6 +328,17 @@ void CSkinnedModel::Calculate(const CPoseAsTransforms& pose,
       x10_skinRules->BuildAccumulatedTransforms(pose, **x1c_layoutInfo);
       return;
     }
+#ifdef TARGET_XBOX
+    // PORT_XBOX: memory ran short since the workspace was kept: back to the
+    // shared ring for good (GXPortSkinKeepEpoch)
+    if (xPortKeptBytes != 0 && xPortKeepEpoch != GXPortSkinKeepEpoch()) {
+      GXPortSkinUnkeep(x28_vertWorkspace.get(), x30_normalWorkspace.get(), xPortKeptBytes);
+      xPortKeptBytes = 0;
+      xPortSkinHash = 0;
+      x28_vertWorkspace = rstl::auto_ptr< float[] >();
+      x30_normalWorkspace = rstl::auto_ptr< float[] >();
+    }
+#endif
     AllocateStorage();
     verts = x28_vertWorkspace.get();
   }
@@ -543,6 +555,7 @@ void CSkinnedModel::AllocateStorage() {
       xPortKeepTried = true;
       if (void* kept = GXPortSkinKeep(totalSize)) {
         xPortKeptBytes = totalSize;
+        xPortKeepEpoch = GXPortSkinKeepEpoch();
         x28_vertWorkspace = rstl::auto_ptr< float[] >(static_cast< float* >(kept));
         x30_normalWorkspace =
             rstl::auto_ptr< float[] >(reinterpret_cast< float* >(static_cast< char* >(kept) + vertSize));

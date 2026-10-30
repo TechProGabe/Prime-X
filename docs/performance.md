@@ -240,13 +240,19 @@ of it measured on a console (no console round after hw9, the user's call):
   An owned model can ask once for a workspace of its own
   (`GXPortSkinKeep`: `XGX_SKIN_KEEP_KB` in all, and only while 6 MB stays
   free; else the ring as before) and keep it; the skin skip and the list
-  reuse then work for it (xemu: pirate room 1011 reused calls a run). **Off
-  by default** (`XGX_SKIN_KEEP_KB=0`): with 3072, the pirate room's verify
-  build found 2-8 reused calls a run whose ring vertices no longer matched
-  their arrays (a few normals, low bits; Main Plaza 0 of 9600); with the
-  reuse off (`-DXGX_DYN_REUSE=0`) the same scene verified clean. Not found
-  why (handoff, Next 1). The ring's buffers count for their frame only
-  (`GXPortSkinWrittenThisFrame`); the skin registry holds 1024 buffers.
+  reuse then work for it (xemu: pirate room 1011 reused calls a run). On
+  since 2026-10-30 with 1 MB in all (`XGX_SKIN_KEEP_KB`, 0: off). Memory
+  running short (a reclaimer, asked first) gives every kept workspace back
+  at its model's next skin (`GXPortSkinKeepEpoch`) and keeps none for 30 s;
+  test builds force it with `env PX_SKIN_REVOKE_AT=<frame>`.
+  The verify build's few reused calls a run one bit off in a packed normal
+  (2026-10-29's reason to leave it off) are xemu's: with the workspace's
+  bytes unchanged (checksummed after each skin and at every draw) and the
+  same MXCSR, two references made back to back from the same array bytes
+  differ in the same way ("arrays changed during the call", now logged
+  with the array bytes hashed). The ring's buffers count for their frame
+  only (`GXPortSkinWrittenThisFrame`); the skin registry holds 1024
+  buffers.
 - Found, not changed: the HUD minimap (`CMapWorld::Draw`) is 150-300
   immediate draws every frame of play (each surface's fill and outline,
   alternating triangles and lines, a `GXSetTevKColor` between each).

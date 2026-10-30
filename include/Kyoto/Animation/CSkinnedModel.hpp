@@ -88,6 +88,7 @@ private:
   uint xPortSkinHash;
   const float* xPortSkinVerts;
   uint xPortKeptBytes;   // an owned model's own workspace (GXPortSkinKeep); 0: the ring's
+  uint xPortKeepEpoch;   // GXPortSkinKeepEpoch when it was kept
   bool xPortKeepTried;
 #endif
 };

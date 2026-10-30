@@ -56,8 +56,9 @@ line under it says how far it got.
   an eye on longer sessions.
 - Fights are slow on red (hw9 free play, Frigate pirates to Parasite
   Queen: 10-20 fps): skinned lists over the dynamic budget were decoded
-  every call (index-only now, not measured on red) and every character is
-  skinned again per pass (handoff, Next 1).
+  every call (index-only now) and every character was skinned again per
+  pass (per-model workspaces since 2026-10-30); neither measured on red
+  (handoff, Next 1).
 - Fixed, not yet seen on red: the pause screen at 14-17 fps (hw8: Samus's
   lists over the dynamic budget; the extra budget opens at 4 MB free now),
   the charge beam (hw8, `188fb44`), Port Options' value cells off their

@@ -23,22 +23,18 @@ rounds and their files: `C:\xemu\hw\prime\ROUNDS.md`.
 ## Next session, in order
 
 1. **Fights** (the user's complaint after hw9: "fps got really bad
-   fighting the pirates" on the Frigate). What's in: skinned lists over the
-   dynamic budget go index-only instead of being decoded every call;
-   same-frame reuse of skinned vertices (arm cannon, swarms). What's not:
-   characters skin into the shared ring, so a pirate drawn twice a frame is
-   skinned twice. `GXPortSkinKeep` (a workspace per model) is written but
-   **off** (`XGX_SKIN_KEEP_KB=0`): with it on, xemu's pirate room
-   (`39F2DE28:B9ABCD56`, lockstep, verify build) showed 2-8 reused calls a
-   run whose ring vertices no longer matched the arrays (a few normals,
-   low bits); the same image without the reuse verified clean, so
-   something writes kept workspaces without going through `Calculate`, or
-   the reuse's checks miss a case. The verify build now logs whether a
-   mismatch was a reused call and counts reused calls whose ring bytes
-   changed since kept (`[DLC] dyn verify` line): run it with
-   `-DXGX_SKIN_KEEP_KB=3072` in the pirate room to tell the two apart.
+   fighting the pirates" on the Frigate). In: skinned lists over the
+   dynamic budget go index-only; same-frame reuse of skinned vertices;
+   per-model skin workspaces (`GXPortSkinKeep`, on since 2026-10-30, 1 MB,
+   given back when memory runs short); `TriBoxOverlap` rejects on the
+   bounds first. xemu pirate room profile (`39F2DE28:B9ABCD56`, 6 reports):
+   `BuildBoneRange` 5.2 -> 3.4% of the samples, `dyn_fetch_batch` 6.7 ->
+   5.4, `TriBoxOverlap` 2.2 -> 1.1. Most repeat calls left are other
+   instances of the same model (other pose): nothing to reuse. Next lever:
    GPU skinning (a matrix palette: Prime's virtual bones are one matrix a
-   vertex) is the bigger lever.
+   vertex; the constant budget allows ~13 bones a draw, so lists split by
+   bone set). Big: the dl cache, the VP generator and the game's skinned
+   draw all change.
 2. The HUD minimap is 150-300 draws a frame (fill and outline alternate per
    surface, `GXSetTevKColor` between): only a different draw method would
    join them; only if it keeps the retail look exactly.
@@ -54,6 +50,19 @@ rounds and their files: `C:\xemu\hw\prime\ROUNDS.md`.
 7. Gate leftovers: the 128 MB hold needs a 128 MB-aware BIOS in xemu; the
    save round trip on red and Dolphin `.gci` (phase 4); Docker/CI (the
    workflow exists, `gh` isn't logged in here).
+
+## Session 2026-10-30 (night, unattended): fights, xemu only
+
+- The kept-workspace mismatch (why `GXPortSkinKeep` was off) is xemu's:
+  the verify build checksummed each kept workspace after its skin and at
+  every draw (never changed), hashed the fetched arrays around each call
+  and logged MXCSR: the same array bytes and MXCSR gave two references a
+  bit apart in a packed normal, back to back ("arrays changed during the
+  call ... array bytes the same"). On since; a reclaimer gives the
+  workspaces back when memory runs short (`GXPortSkinKeepEpoch`; test
+  hook `env PX_SKIN_REVOKE_AT=<frame>`: pirate room renders the same
+  before and after, verify clean).
+- `TriBoxOverlap`: the triangle's bounds tested before the edge axes.
 
 ## Session 2026-10-29 (evening): hw9 read, FPS from the logs, xemu only
 
@@ -106,7 +115,8 @@ commits `70a4294` .. the session's last):
   frame from unwritten buffers reuses the vertices already in the ring.
   xemu Main Plaza: 9600 of 11400 repeat calls reused, verify 0 differ;
   pirate room 0 differ.
-- Per-model skin workspaces (`GXPortSkinKeep`): written, off (Next, 1).
+- Per-model skin workspaces (`GXPortSkinKeep`): written, off (on since
+  2026-10-30).
 - The audio codec is no longer read on the console (r9f's freeze).
 
 The room sweep (plain and LTO + PGO) passed 14/14 on `7bd3b85`; later
