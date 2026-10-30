@@ -8,10 +8,10 @@ what's broken, anything the next agent would otherwise rediscover.
 The game plays through every world in xemu (room sweep: 14 rooms, no
 failure, plain and LTO + PGO) and on the red console (~35-45 fps in most
 rooms at 480i at hw9, fights 10-20). Everything is committed and pushed on
-`dev`. **Round hw10 is staged** (below, "Console round hw10"): the first
+`dev`. **Round hw10 is on red** (below, "Console round hw10"): the first
 console test of everything since hw9 (fights, the pause screen budget,
-the audio start-up reads, today's rendering fixes). Not uploaded: the
-user deploys or says to.
+the audio start-up reads, today's rendering fixes), waiting for the user
+to run it.
 
 Every sweep room matches Dolphin (`tools/xbox/dolphin_ref.py`) except
 Magmoor's fog volumes, which the port doesn't draw (Next 3). Verify builds
@@ -92,7 +92,7 @@ little since: retrain before a release. Console rounds and their files:
    save round trip on red and Dolphin `.gci` (phase 4); Docker/CI (the
    workflow exists, `gh` isn't logged in here).
 
-## Console round hw10 (staged 2026-10-30, not run)
+## Console round hw10 (uploaded to red 2026-10-30, not run yet)
 
 `tools/xbox/scenarios/hw10/README.md` says what each scene is for. On this
 PC: `C:\xemu\hw\prime\stage-hw10` (`prof/`, `ship/`, and `console/`, the
@@ -101,7 +101,12 @@ tree to upload as it lies: `F/Applications/Prime-X-r10a..h` with their
 `E/UDATA/50580001` title files). Maps `prime_x.hw10.map` (profiler) and
 `prime_x.hw10ship.map` (ship). Built from `912d3ba`'s code (the
 scenarios and docs came after); r10d and r10f were run once in xemu on
-the staged profiler image. Back up `E:\UDATA\50580001` before uploading.
+the staged profiler image. Uploaded and read back byte for byte on
+2026-10-30 (the console's save folder backed up first to `logs-hw10pre`:
+the card file, settings.ini, disc.ini, the old logs). The console keeps
+each scene's log as `boot_Prime-X-r10x.log` and its shots as
+`shot_Prime-X-r10x_NN.bmp`; `console.py pull` only takes the plain
+names, so pull the folder whole (hw9's way). Back up `E:\UDATA\50580001` before uploading.
 
 ## Session 2026-10-30 (day): Dolphin references, rendering fixes, hw10 staged
 
