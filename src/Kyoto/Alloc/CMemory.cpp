@@ -10,6 +10,21 @@
 #ifdef TARGET_PC
 #include <mutex>
 
+#ifdef TARGET_XBOX
+// PORT_XBOX: the heap takes only HeapMutex, not OSDisableInterrupts as well.
+// On the Xbox OSDisableInterrupts is a real lock (os.c), and with both the
+// heap ordered heap -> interrupts against CDSPStreamManager's interrupts ->
+// MusyX lock and the mixer's MusyX lock -> heap (CDSPStream::StopStream frees
+// a one-shot stream's buffer from UpdateStream): the three threads' cycle
+// deadlocked red when a Map Station's jingle ended (free play, 2026-10-30).
+// HeapMutex alone serialises the heap; on PC OSDisableInterrupts was a no-op.
+#define PX_HEAP_INTS(e) ((void)0)
+#define PX_HEAP_RESTORE(e) ((void)0)
+#else
+#define PX_HEAP_INTS(e) (e = OSDisableInterrupts())
+#define PX_HEAP_RESTORE(e) OSRestoreInterrupts(e)
+#endif
+
 // The guest serialised the heap with OSDisableInterrupts, which is a no-op on PC,
 // and the heap is not only touched by the game thread here: Aurora's DVD worker
 // (CDSPStream::ReadCompleted) and the MusyX mixer thread (CDSPStream::UpdateStream)
@@ -91,30 +106,44 @@ void* CMemory::Alloc(size_t len, IAllocator::EHint hint, IAllocator::EScope scop
                      IAllocator::EType type, const CCallStack& callstack) {
 #ifdef TARGET_PC
   std::lock_guard< std::recursive_mutex > heapLock(HeapMutex());
-#endif
+  volatile bool enabled = false;
+  PX_HEAP_INTS(enabled);
+#else
   volatile bool enabled = OSDisableInterrupts();
+#endif
   void* ret = mpAllocator->Alloc(len, hint, scope, type, callstack);
   if (ret == nullptr) {
     rs_debugger_printf("Alloc failed - Size: %zu", len);
 #ifdef TARGET_PC
-    OSRestoreInterrupts(enabled);
+    PX_HEAP_RESTORE(enabled);
     throw std::bad_alloc();
 #endif
   }
 
+#ifdef TARGET_PC
+  PX_HEAP_RESTORE(enabled);
+#else
   OSRestoreInterrupts(enabled);
+#endif
   return ret;
 }
 
 void CMemory::Free(const void* ptr) {
 #ifdef TARGET_PC
   std::lock_guard< std::recursive_mutex > heapLock(HeapMutex());
-#endif
+  volatile bool enabled = false;
+  PX_HEAP_INTS(enabled);
+#else
   volatile bool enabled = OSDisableInterrupts();
+#endif
   if (ptr != nullptr) {
     mpAllocator->Free(ptr);
   }
+#ifdef TARGET_PC
+  PX_HEAP_RESTORE(enabled);
+#else
   OSRestoreInterrupts(enabled);
+#endif
 }
 
 #ifdef TARGET_PC
