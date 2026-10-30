@@ -28,7 +28,7 @@ little since: retrain before a release. Console rounds and their files:
 
 ## Next session, in order
 
-1. **Read hw10** when the user has run it (`console.py pull hw10`;
+1. **Read hw10** when the user has run it (pull the save folder whole;
    `prof_report.py` with `prime_x.hw10.map`, `prime_x.hw10ship.map` for
    free play): fights (r10d) against hw9's 10-20 fps; [PERF]'s ticks per
    render there (Fixed's catch-up); the landing glow box (r10b; the user
