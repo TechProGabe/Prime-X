@@ -271,6 +271,13 @@ profiler builds, six 1 ms-sample reports):
   (`dyn_fetch_pos_nrm`, also for index-only lists): the fetch 6.1 -> 5.4%.
   Verify: pirate room, Main Plaza, Frigate, and both again with the
   budget forced down (`-DDLC_DYN_BUDGET=196608u -DDLC_DYN_EXTRA=0u`).
+- `CHierarchyPoseBuilder::BuildTransform` (every locator query: weapons,
+  head tracking, effects) walked the segment's chain from the root each
+  time; each link's running state is now kept by builder, tree version
+  and segment, and a walk resumes from the deepest one kept (same
+  operations, same order, same bits; a check build recomputing every
+  call agreed but for one call in 24576, xemu's float noise). Its callees
+  3.7 -> 0.1% of the samples.
 - `[PERF]`'s "ticks per render" now counts the game updates: Game Timing
   Fixed runs 3.4 a drawn frame there at ~17 fps; most of a slow fight
   frame is catch-up. Flex runs one.
