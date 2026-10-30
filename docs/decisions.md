@@ -103,22 +103,26 @@ own GX on the NV2A with generated vertex programs and TEV on the register
 combiners; ThinLTO + PGO for releases.
 
 - **Game Timing: Auto** (2026-10-30, the user's policy in
-  `docs/fps-plan.md`): the default. 60 game updates a second while the
+  `docs/fps-plan.md`): the only mode. 60 game updates a second while the
   frame's CPU time fits in 16 ms; when 3 of 4 frames don't, 30 a second,
   drawn at 60 between the last two (MetroidPrimePort's frame interpolation:
   actors, skinned poses, particles, swooshes, beams, the camera); back to 60
   when a 60 Hz frame (a tick's measured cost plus the frame's draw work)
   has been under 14 ms for 30 frames, after at least a second at 30
   (`port_debug.cpp`, `px_sim_frame` from vi.c's frame boundary). At 60 Hz it
-  is Fixed exactly. Fixed (retail: 60 a second, a slow frame runs more) and
-  Flex (one update a frame, dt = the frame) stay as choices. Under Auto at
+  is Fixed exactly. The Port Options row (Auto / Fixed / Flex) was removed
+  the same day, the user's call: "Auto approved, make it default and remove
+  options from settings". Fixed (retail: 60 a second, a slow frame runs
+  more) stutters in fights; Flex (one update a frame, dt = the frame) moves
+  physics and timers off retail. Both remain only as test-build hooks for
+  A/B rounds (below). Under Auto at
   30 Hz the world is drawn up to a tick (33 ms) behind the simulation and the
   pad is read at 30 Hz; `pad.c` latches presses seen at a frame boundary
   no read followed, so a tap isn't lost between two reads. `SimRate`/
   `SimPeriod` stay 60: the projectile weapons step in 1/60 s substeps at
   any tick. `CStateManager::xf80_hudMessageFrameCount` (the plan's HUD memo
   worry) counts unpauses, not ticks: nothing to scale. settings.ini's
-  `timing = auto|fixed|flex` (the old `game_timing = 1` reads as Flex).
+  `timing` and the older `game_timing` are ignored (and no longer written).
   Test builds: `env PX_SIM_AUTO=0|1`, `PX_SIM_RATE=30|60` (held),
   `PX_INTERP=0|1`, `PX_SIM_ADAPTIVE=0|1`; lockstep runs hold 60 Hz unless
   `PX_SIM_RATE` says otherwise.
@@ -144,6 +148,10 @@ combiners; ThinLTO + PGO for releases.
     (3% of all); most of the rest follow a draw of another primitive
     (`[NV2A] unchanged draws not joined:`). Turning strips into lists would
     join more but triples their vertex memory.
+  - `-O3` for the game, the SDK and the LTO backends (`PX_OPT_LEVEL`,
+    default 3 since round hw13): A/B on red, same code, same scenes:
+    pirates 32.2 -> 33.4 fps, Main Plaza 36.3 -> 36.7, Lava Lake 40.9 ->
+    41.6, Landing Site 35.8 -> 36.7; no fault in either image.
   - The rain's lines (M5): `GXPortRainLines` keeps its batch's box, and
     `clip_lines` tests the box's corners once; a batch wholly inside skips
     the per-line test (`-DXGX_LINE_BOX=0`). Same vertices drawn.
@@ -220,7 +228,7 @@ One line per edit to `src/`, `include/`, `extern/musyx` or
 | `src/Kyoto/Alloc/CGameAllocator.cpp` | no OOM callback or dump while operator new asks (`gPortXboxQuietOom`); a freed block decommits the whole 64 KB chunks inside it (`xhw_lazy_decommit`) | operator new falls back to malloc; freed load buffers stop costing Xbox RAM (round hw5's out of memory) |
 | `src/MetroidPrime/main.cpp` | the GX FIFO 32 bytes (128 KB claimed for `InitGraphicsFifo`'s arithmetic), not 384 KB | our GX never reads or writes it; image memory (.bss is committed at load) |
 | `include/Kyoto/Graphics/CGX.hpp` | `SGXState::x4c_flags`' bitfields in reverse order | x86 fills bitfields from the low bit: `CGX::SetNumChans` set bit 7 while `FlushState` tests bit 0, so the channel count never reached GX (the white arm cannon in Chozo and Magmoor: its shadow pass lost COLOR1; the scene's look changing after Morph Ball, whose shadow sets the count directly) |
-| `src/MetroidPrime/CPauseScreenFrame.cpp` | a Game Timing row (Auto / Fixed / Flex; Fixed / Flex until 2026-10-30) in the pause Display rows and the title's Port Options Gameplay rows | `PortDebug::SimAdaptive` (MetroidPrimePort's adaptive ticks): at ~40 fps the fixed 60 Hz ticks ran ~1.5 game updates a drawn frame on a CPU-bound console; Auto the default since 2026-10-30 ("Game Timing: Auto" above) |
+| `src/MetroidPrime/CPauseScreenFrame.cpp` | a Game Timing row in the pause Display rows and the title's Port Options Gameplay rows (Fixed / Flex, then Auto / Fixed / Flex; removed 2026-10-30, Auto always) | `PortDebug::SimAdaptive` (MetroidPrimePort's adaptive ticks): at ~40 fps the fixed 60 Hz ticks ran ~1.5 game updates a drawn frame on a CPU-bound console; Auto the default since 2026-10-30 ("Game Timing: Auto" above) |
 | `extern/musyx/src/musyx/runtime/hw_pc.c` | `salAudioThreadFunc` brackets each mixed frame with `px_mixer_frame_begin`/`end` (`px_sdl3.cpp`) | [PERF]'s "audio" share was a hook nothing called; the mixer's own time, waits on the hw lock taken out (docs/fps-plan.md M0.1) |
 | `extern/musyx/src/musyx/runtime/hw_pc.c` | the voice mix (`renderVoiceSegment`'s nine ramps) and the polyphase resampler's tap sum through `px_mixer.h` (32-bit arithmetic where the operands' bounds allow it, the envelope once a subframe; `-DPX_MIXER_FAST=0` for the old loops); no per-voice RMS (it fed `MP_LOG_VOICES`' trace only) | speed: two 64-bit products and clamps a sample a buffer on the CPU the GameCube's DSP did this on (M2); bit-exact, `tools/xbox/test_mixer.py` |
 | `src/MetroidPrime/main.cpp` | the game's draw (`CIOWinManager::Draw`) in [PERF]'s render bucket (`xsdk_perf_draw_begin`, vi.c) | "sim" held the ticks and the world's traversal together; now "sim" / ticks is a tick's cost, and [PROFS] a tick-only profile (M0.3) |
@@ -246,6 +254,7 @@ One line per edit to `src/`, `include/`, `extern/musyx` or
 | `src/Kyoto/Particles/CElementGen.cpp` | `UpdateExistingParticles` prefetches the particle two ahead | speed: a fight's effects walk thousands of particles a tick, a miss per line; a hint only |
 | `src/MetaRender/CCubeRenderer.cpp` | `DrawUnsortedGeometry` prefetches the box and flags of the model four ahead | speed: the loop over every world model waits on each model's lines (~3% of Main Plaza's CPU, round hw9); a hint only |
 | `include/MetroidPrime/CObjectList.hpp`, `src/MetroidPrime/CStateManager.cpp` | `CObjectList::PortPrefetchAhead`: the walks in `PreThinkObjects`, `Think`, `UpdateSortedLists`, `PreRender` and `DrawWorld` prefetch the entity three links ahead | speed: each walk waits on every entity's lines in turn (~4% of Main Plaza's CPU, round hw9); a hint only |
+| `include/MetroidPrime/CSortedLists.hpp`, `src/MetroidPrime/CSortedLists.cpp` | `CSortedListManager` keeps each sorted list's coordinates in list order (`xPortKey`, 24 KB), moved with the ids; the binary searches and `MoveInList` read them | speed: every near-list query runs twelve binary searches over 44-byte nodes scattered through 45 KB (`BuildNearList` ~3% of a fight's ticks, round hw12); the same comparisons on the same values |
 
 Imported unchanged but added to the game build (MetroidPrimePort compiles
 them as game code): `src/platform/port_raster_font.cpp`,

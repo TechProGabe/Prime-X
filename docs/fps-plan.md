@@ -27,7 +27,7 @@ The user's policy for this plan (asked 2026-10-30):
 | M0.4 statistics per scene | built: `xgx_stats_now` at NEXT; prof_report.py: `pb_busy` fold (COLD), GPU-wait share |
 | M0.5 test hooks | built: `PX_SIM_AUTO`, `PX_SIM_RATE`, `PX_INTERP` (and `PX_SIM_ADAPTIVE`) |
 | round hw11 | ran on red 2026-10-30: numbers below |
-| M1.1 Game Timing: Auto | built, default; Auto / Fixed / Flex row; `[TIMING]` lines, [PERF]'s auto share. xemu: holds 30 Hz in the pirate room (xemu is slow), no fault |
+| M1.1 Game Timing: Auto | built; the only mode since 2026-10-30 (the Port Options row removed, the user's call; Fixed/Flex as test hooks); `[TIMING]` lines, [PERF]'s auto share. xemu: holds 30 Hz in the pirate room (xemu is slow), no fault |
 | M1.2 interpolated presentation | on at 30 Hz ticks (`XboxPresentBlend`); `FrameLimitEnabled` stays true for the clock's cadence leeway |
 | M1.3 60 Hz assumptions | render clock steps scaled (`XboxRenderTimingSteps`), its present lag a tick's period; pad presses latched between 30 Hz reads (`pad.c`); HUD memo counter: counts unpauses, nothing to do |
 | M2.1 RMS and trace | the RMS is gone from the Xbox build |

@@ -123,8 +123,6 @@ const wchar_t* Title(int option) {
     return L"Fusion Suit";
   case kXO_SkipCutscenes:
     return L"Skip Cutscenes";
-  case kXO_GameTiming:
-    return L"Game Timing";
   default:
     return IsBind(option) ? kButtonNames[option - kXO_BindFirst] : L"";
   }
@@ -157,8 +155,6 @@ const wchar_t* Description(int option) {
     return L"BACK saves a screenshot to the save folder.";
   case kXO_SkipCutscenes:
     return L"START skips any cutscene, from the next room.";
-  case kXO_GameTiming:
-    return L"Auto: 60 updates a second, a smooth 30 in heavy scenes. Fixed: always 60. Flex: one a frame.";
   case kXO_FusionSuit:
     return L"The Fusion Suit, a GBA-link bonus on the GameCube.";
   default:
@@ -242,7 +238,6 @@ const wchar_t* ValueLabel(int option, int cell) {
   static const wchar_t* const kFps[] = {L"Hide", L"Show"};
   static const wchar_t* const kHud[] = {L"Inner", L"Edges"};
   static const wchar_t* const kDisc[] = {L"No", L"Yes"};
-  static const wchar_t* const kTiming[] = {L"Auto", L"Fixed", L"Flex"};   // short: the title's cells fit "Off"
   if (cell < 2) {
     if (option == kXO_FpsCounter) {
       return kFps[cell];
@@ -253,9 +248,6 @@ const wchar_t* ValueLabel(int option, int cell) {
     if (option == kXO_VerifyDisc) {
       return kDisc[cell];
     }
-  }
-  if (option == kXO_GameTiming) {
-    return kTiming[cell];
   }
   if (option == kXO_VideoOutput) {
     return kVideo[cell];
@@ -300,8 +292,6 @@ int Get(int option) {
     return gpGameState != nullptr && gpGameState->SystemState().GetHasFusion() ? 1 : 0;
   case kXO_SkipCutscenes:
     return st.skip_cutscenes ? 1 : 0;
-  case kXO_GameTiming:
-    return st.sim_mode;   // cells Auto, Fixed, Flex: XSDK_SIM_*
   default:
     return 0;
   }
@@ -371,9 +361,6 @@ void Set(int option, int value) {
     st.skip_cutscenes = value > 0;
     PortDebug::SetSkippableCutscenes(st.skip_cutscenes != 0);
     break;
-  case kXO_GameTiming:
-    st.sim_mode = value <= 0 ? XSDK_SIM_AUTO : value == 1 ? XSDK_SIM_FIXED : XSDK_SIM_FLEX;   // read every frame
-    break;
   case kXO_FusionSuit:
     // What the Fusion bonuses screen does once a GBA has linked: the
     // system state (saved with the game's options) and the game about to
@@ -403,7 +390,6 @@ void RestoreDefaults(int category) {
     Set(kXO_WidescreenHud, 0);
     Set(kXO_Fov, 0);
     Set(kXO_FpsCounter, 0);
-    Set(kXO_GameTiming, 0);
     break;
   case 3:
     for (int b = 0; b <= kXO_BindLast - kXO_BindFirst; ++b) {
