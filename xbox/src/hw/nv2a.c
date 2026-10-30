@@ -1360,6 +1360,58 @@ static uint32_t* push_screen_target(uint32_t* p) {
     return p;
 }
 
+/* M6a's first step (docs/fps-plan.md): does red's DMA pusher take a
+ * subroutine call (address | 2) and its return (0x00020000)? pbkit only
+ * jumps. With PX_PB_CALL_TEST=1 (test builds) the first frame calls a
+ * three-word segment that sets the depth clear value, then sets the colour
+ * clear value itself, waits for the GPU and logs what PGRAPH holds (xemu's
+ * NV_PGRAPH_ZSTENCILCLEARVALUE 0x1A88, COLORCLEARVALUE 0x186C), the pusher's
+ * state and the fault count. A pusher without calls faults on the call word
+ * or stalls (wait_idle reports it after 2 s). The clears set both values
+ * again before they use them. */
+#define CALL_TEST_Z 0x00A5C3E1u
+#define CALL_TEST_C 0x5A3C1E0Fu
+static void pb_call_test(void) {
+#if XHW_TEST_BUILD
+    static int s_done;
+    volatile uint32_t* seg;
+    volatile const uint32_t* r = (volatile const uint32_t*)0xFD000000u;
+    uint32_t phys, faults, *p;
+    const char* e;
+    if (s_done) return;
+    s_done = 1;
+    e = getenv("PX_PB_CALL_TEST");
+    if (!e || atoi(e) != 1) return;
+    seg = (volatile uint32_t*)MmAllocateContiguousMemoryEx(4096, 0, MAXRAM, 0, PAGE_READWRITE | PAGE_WRITECOMBINE);
+    if (!seg) {
+        xhw_logf("[NV2A] call test: no memory");
+        return;
+    }
+    phys = (uint32_t)MmGetPhysicalAddress((PVOID)seg) & 0x03FFFFFFu;
+    seg[0] = (1u << 18) | (SUBCH_3D << 13) | NV097_SET_ZSTENCIL_CLEAR_VALUE;
+    seg[1] = CALL_TEST_Z;
+    seg[2] = 0x00020000u;   /* return */
+    __asm__ __volatile__("sfence" ::: "memory");
+    wait_idle();
+    faults = s_gf_count;
+    p = pb_begin();
+    *p++ = phys | 2u;       /* call */
+    p = pb_push1(p, NV097_SET_COLOR_CLEAR_VALUE, CALL_TEST_C);
+    pb_end(p);
+    wait_idle();
+    {
+        volatile const uint32_t* g = (volatile const uint32_t*)0xFD400000u;
+        uint32_t z = g[0x1A88 / 4], c = g[0x186C / 4];
+        xhw_logf("[NV2A] call test: %s | segment at %08x; depth clear %08x (want %08x), colour clear %08x (want "
+                 "%08x); get %08x put %08x dma_state %08x; faults %u new",
+                 z == CALL_TEST_Z && c == CALL_TEST_C && s_gf_count == faults ? "PASS" : "FAIL", (unsigned)phys,
+                 (unsigned)z, (unsigned)CALL_TEST_Z, (unsigned)c, (unsigned)CALL_TEST_C, (unsigned)r[0x3244 / 4],
+                 (unsigned)r[0x3240 / 4], (unsigned)r[0x3228 / 4], (unsigned)(s_gf_count - faults));
+    }
+    /* left allocated: four KB, once */
+#endif
+}
+
 static void frame_open(void) {
     int i;
     if (s_frame_open) return;
@@ -1401,6 +1453,7 @@ static void frame_open(void) {
         p = pb_push1(p, NV097_SET_CONTROL0, CONTROL0);
         pb_end(p);
     }
+    pb_call_test();
     s_ring_pos = 0;
     s_ring_gen++;
     s_frame_open = 1;
