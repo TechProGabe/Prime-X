@@ -525,6 +525,12 @@ CGameArchitectureSupport::~CGameArchitectureSupport() {
   CDSPStreamManager::Shutdown();
 }
 
+#ifdef TARGET_XBOX
+// PORT_XBOX: [PERF]'s "ticks per render" (xhw_perf.c): the game updates run
+// this frame
+extern "C" void xhw_perf_ticks(uint32_t n);
+#endif
+
 bool CGameArchitectureSupport::UpdateTicks() {
   bool terminate = false;
   const BOOL interrupts = OSDisableInterrupts();
@@ -593,6 +599,9 @@ bool CGameArchitectureSupport::UpdateTicks() {
     x58_ioWinMgr.PumpMessages(x4_archQueue);
     ++sTicksAdvanced;
   }
+#ifdef TARGET_XBOX
+  xhw_perf_ticks(sTicksAdvanced);
+#endif
 
   x58_ioWinMgr.PumpMessages(x4_archQueue);
   return !terminate;
