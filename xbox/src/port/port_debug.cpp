@@ -14,11 +14,14 @@
 #include "port_env.h"
 
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 
 #include "xhw.h"
 extern "C" {
 #include "xsdk_settings.h"
+int xsdk_lockstep(void);
+unsigned xsdk_frame_count(void);
 }
 
 namespace PortDebug {
@@ -116,28 +119,128 @@ bool ConsumeResetRequest() {
 }
 bool ConsumeShowHintRequest() { return false; }
 
-// ---- simulation timing: the GameCube's 60 Hz tick ----
+// ---- simulation timing ----
+// SimRate/SimPeriod stay the GameCube's 60 Hz: the projectile weapons step in
+// 1/60 s substeps whatever the tick (CProjectileWeapon::GetTickPeriod).
 unsigned SimRate() { return 60u; }
 float SimPeriod() { return 1.f / 60.f; }
+
+namespace {
+// test builds: env PX_SIM_ADAPTIVE=0|1 (Flex), PX_SIM_AUTO=0|1 (Auto or
+// Fixed), PX_SIM_RATE=30|60 (the step, held), PX_INTERP=0|1 (draw between
+// ticks or not, at any step); -1 where not set
+int EnvInt(const char* name) {
+  const char* v = XHW_TEST_BUILD ? getenv(name) : nullptr;
+  return v != nullptr && *v ? atoi(v) : -1;
+}
+int sEnvAdaptive = -2, sEnvAuto, sEnvRate, sEnvInterp;
+void ReadEnv() {
+  if (sEnvAdaptive != -2)
+    return;
+  sEnvAdaptive = EnvInt("PX_SIM_ADAPTIVE");
+  sEnvAuto = EnvInt("PX_SIM_AUTO");
+  sEnvRate = EnvInt("PX_SIM_RATE");
+  sEnvInterp = EnvInt("PX_INTERP");
+  if (sEnvAdaptive >= 0 || sEnvAuto >= 0 || sEnvRate >= 0 || sEnvInterp >= 0)
+    xhw_logf("[TIMING] test: PX_SIM_ADAPTIVE %d PX_SIM_AUTO %d PX_SIM_RATE %d PX_INTERP %d", sEnvAdaptive,
+             sEnvAuto, sEnvRate, sEnvInterp);
+}
+
+int Mode() {
+  ReadEnv();
+  if (sEnvAdaptive > 0)
+    return XSDK_SIM_FLEX;
+  if (sEnvAuto >= 0)
+    return sEnvAuto ? XSDK_SIM_AUTO : XSDK_SIM_FIXED;
+  if (sEnvAdaptive == 0 && g_xsdk_settings.sim_mode == XSDK_SIM_FLEX)
+    return XSDK_SIM_FIXED;
+  return g_xsdk_settings.sim_mode;
+}
+
+// Game Timing: Auto. Each presented frame (px_sim_frame, from vi.c) looks at
+// the frame's CPU time ([PERF]'s buckets but the GPU and vsync waits):
+//   - at 60 Hz ticks, 3 of the last 4 frames over 16.0 ms: the frame doesn't
+//     fit, and Fixed would run more ticks the next frame (the catch-up
+//     spiral): go to 30 Hz ticks, drawn at 60 blended between the last two;
+//   - at 30 Hz, the cost of a 60 Hz frame (ms per tick, from frames that ran
+//     one, plus the frame's draw work) under 14 ms for 30 frames running,
+//     and at least a second at 30: back to 60.
+// At 60 Hz it is Fixed exactly. Lockstep test runs (PX_LOCKSTEP) hold 60 Hz,
+// so their frames don't depend on the host's speed; PX_SIM_RATE holds a step.
+constexpr uint32_t kOverUs = 16000, kUnderUs = 14000;
+constexpr int kUnderFrames = 30, kDwellFrames = 60;
+bool sAuto30 = false;
+unsigned sOverBits = 0;   // the last 4 frames: over 16 ms
+int sUnderRun = 0, sDwell = 0;
+uint32_t sTickUs = 0;     // a tick's cost, smoothed (frames that ran ticks)
+uint32_t sFrames = 0, sFrames30 = 0, sSwitches = 0;   // since the last [PERF] line
+char sTag[64];
+
+const char* PerfTag() {
+  if (Mode() != XSDK_SIM_AUTO || sFrames == 0)
+    return "";
+  snprintf(sTag, sizeof sTag, " | auto: 30 Hz %u%% of frames, %u switches", sFrames30 * 100u / sFrames, sSwitches);
+  sFrames = sFrames30 = sSwitches = 0;
+  return sTag;
+}
+
+void SetAuto30(bool on, uint32_t cpuUs, uint32_t estUs) {
+  if (on == sAuto30)
+    return;
+  sAuto30 = on;
+  ++sSwitches;
+  sUnderRun = 0;
+  sOverBits = 0;
+  sDwell = on ? kDwellFrames : 0;
+  static unsigned sLogged;
+  if (sLogged < 40) {   // the first ones as they come; [PERF] counts the rest
+    ++sLogged;
+    xhw_logf("[TIMING] auto: %s at frame %u (frame %u us, a 60 Hz frame ~%u us)", on ? "30 Hz" : "60 Hz",
+             xsdk_frame_count(), (unsigned)cpuUs, (unsigned)estUs);
+  }
+}
+} // namespace
+
+// UpdateTicks asks once a frame
+double XboxTickPeriod() {
+  ReadEnv();
+  if (sEnvRate == 30 || sEnvRate == 60)
+    return 1.0 / sEnvRate;
+  return Mode() == XSDK_SIM_AUTO && sAuto30 ? 1.0 / 30.0 : 1.0 / 60.0;
+}
+
+bool XboxPresentBlend() {
+  ReadEnv();
+  if (sEnvInterp >= 0)
+    return sEnvInterp != 0;
+  return !SimAdaptive() && XboxTickPeriod() > 1.0 / 50.0;
+}
+
+unsigned XboxRenderTimingSteps(unsigned ticks, double period) {
+  static double sCarry = 0.0;
+  if (period > 0.99 / 60.0 && period < 1.01 / 60.0)
+    return ticks;   // 60 Hz: one step a tick, as retail
+  const double steps = sCarry + ticks * period * 60.0;
+  const unsigned whole = static_cast< unsigned >(steps + 1e-6);
+  sCarry = steps - whole;
+  if (sCarry < 0.0)
+    sCarry = 0.0;
+  return whole;
+}
+
 // One game update per frame with dt = the frame's time (MetroidPrimePort's
 // adaptive mode, clamped to 1/30 s) instead of 60 a second with catch-up:
-// on a console that draws ~40 fps every frame carried ~1.5 updates. The
-// Port Options' "Game Timing" row (xsdk_settings sim_adaptive); test builds
-// also take env PX_SIM_ADAPTIVE=0|1.
-bool SimAdaptive() {
-  static int sEnv = -2;
-  if (sEnv == -2) {
-    const char* v = XHW_TEST_BUILD ? getenv("PX_SIM_ADAPTIVE") : nullptr;
-    sEnv = v != nullptr ? atoi(v) != 0 : -1;
-  }
-  return sEnv >= 0 ? sEnv != 0 : g_xsdk_settings.sim_adaptive != 0;
-}
+// Game Timing: Flex. Test builds also take env PX_SIM_ADAPTIVE=0|1.
+bool SimAdaptive() { return Mode() == XSDK_SIM_FLEX; }
 float TickPeriod() { return sTickPeriod; }
 void SetTickPeriod(float dt) {
   if (dt > 0.f)
     sTickPeriod = dt;
 }
 float TickFrames() { return sTickPeriod * 60.f; }
+// vi.c paces every frame to 60 Hz: the clock keeps its cadence leeway
+// (FixedStepClock::Advance); main.cpp draws between ticks when
+// XboxPresentBlend says so.
 bool FrameLimitEnabled() { return true; }
 void SetFrameLimitEnabled(bool) {}
 int FrameRateCap() { return 60; }
@@ -145,9 +248,12 @@ bool Turbo() { return false; }
 unsigned TurboTicks() { return 1; }
 bool TickHold() { return false; }
 unsigned TakeHeldTicks() { return 0; }
-bool ActorInterpolation() { return false; }
-bool PoseInterpolation() { return false; }
-bool ParticleInterpolation() { return false; }
+// MetroidPrimePort's frame interpolation (docs/fps-plan.md milestone 1):
+// actors, skinned poses, particles, swooshes, beams and the camera blend
+// between the last two ticks while Auto runs 30 Hz ticks
+bool ActorInterpolation() { return XboxPresentBlend(); }
+bool PoseInterpolation() { return XboxPresentBlend(); }
+bool ParticleInterpolation() { return XboxPresentBlend(); }
 bool PresentOverride(float&) { return false; }
 void RecordFrame(unsigned long long, unsigned, bool) {}
 
@@ -289,3 +395,40 @@ void PollGyro() {}
 void UpdateControllerNav() {}
 
 } // namespace PortDebug
+
+// Game Timing: Auto's controller (PortDebug, above), once a presented frame
+// from vi.c's frame boundary
+extern "C" void px_sim_frame(void) {
+  using namespace PortDebug;
+  uint32_t us[XHW_PERF_N], ticks;
+  if (xhw_perf_tag == nullptr)
+    xhw_perf_tag = &PerfTag;
+  if (Mode() != XSDK_SIM_AUTO || sEnvRate > 0 || xsdk_lockstep()) {
+    sAuto30 = false;
+    return;
+  }
+  xhw_perf_last_frame(us, &ticks);
+  // the frame's own work: the GPU and vsync waits are what's left over
+  const uint32_t draw = us[XHW_PERF_RENDER] + us[XHW_PERF_DLIST] + us[XHW_PERF_DRAW] + us[XHW_PERF_TEX] +
+                        us[XHW_PERF_EFB];
+  const uint32_t cpu = us[XHW_PERF_LOGIC] + draw;
+  if (ticks > 0) {
+    const uint32_t perTick = us[XHW_PERF_LOGIC] / ticks;
+    sTickUs = sTickUs ? (sTickUs * 3 + perTick) / 4 : perTick;
+  }
+  const uint32_t est = sTickUs + draw;   // a frame of one 60 Hz tick
+  ++sFrames;
+  if (sAuto30)
+    ++sFrames30;
+  if (!sAuto30) {
+    sOverBits = ((sOverBits << 1) | (cpu > kOverUs ? 1u : 0u)) & 0xFu;
+    if (__builtin_popcount(sOverBits) >= 3)
+      SetAuto30(true, cpu, est);
+    return;
+  }
+  if (sDwell > 0)
+    --sDwell;
+  sUnderRun = est < kUnderUs ? sUnderRun + 1 : 0;
+  if (sUnderRun >= kUnderFrames && sDwell == 0)
+    SetAuto30(false, cpu, est);
+}

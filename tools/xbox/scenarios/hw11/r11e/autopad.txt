@@ -1,0 +1,15 @@
+# r11e: Phendrana, every item: combat, X-ray, thermal, scan, combat; Game Timing: Fixed (hw10's r10f); profiler build
+env PX_NEXT_XBE=F:\Applications\Prime-X-r11f\default.xbe
+env PX_SIM_AUTO=0
+env MP_BOOT_WORLD=A8BE6291
+env PX_ALL_ITEMS=1
+2000 SHOT
+2050 RIGHT for 10
+2400 SHOT
+2450 DOWN for 10
+2800 SHOT
+2850 LEFT for 10
+3200 SHOT
+3250 UP for 10
+3600 SHOT
+4000 NEXT

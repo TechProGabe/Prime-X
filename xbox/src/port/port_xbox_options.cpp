@@ -158,7 +158,7 @@ const wchar_t* Description(int option) {
   case kXO_SkipCutscenes:
     return L"START skips any cutscene, from the next room.";
   case kXO_GameTiming:
-    return L"Flex updates the game once a frame, for more frames a second. Fixed: 60 a second.";
+    return L"Auto: 60 updates a second, a smooth 30 in heavy scenes. Fixed: always 60. Flex: one a frame.";
   case kXO_FusionSuit:
     return L"The Fusion Suit, a GBA-link bonus on the GameCube.";
   default:
@@ -242,7 +242,7 @@ const wchar_t* ValueLabel(int option, int cell) {
   static const wchar_t* const kFps[] = {L"Hide", L"Show"};
   static const wchar_t* const kHud[] = {L"Inner", L"Edges"};
   static const wchar_t* const kDisc[] = {L"No", L"Yes"};
-  static const wchar_t* const kTiming[] = {L"Fixed", L"Flex"};   // short: the title's cells fit "Off"
+  static const wchar_t* const kTiming[] = {L"Auto", L"Fixed", L"Flex"};   // short: the title's cells fit "Off"
   if (cell < 2) {
     if (option == kXO_FpsCounter) {
       return kFps[cell];
@@ -253,9 +253,9 @@ const wchar_t* ValueLabel(int option, int cell) {
     if (option == kXO_VerifyDisc) {
       return kDisc[cell];
     }
-    if (option == kXO_GameTiming) {
-      return kTiming[cell];
-    }
+  }
+  if (option == kXO_GameTiming) {
+    return kTiming[cell];
   }
   if (option == kXO_VideoOutput) {
     return kVideo[cell];
@@ -301,7 +301,7 @@ int Get(int option) {
   case kXO_SkipCutscenes:
     return st.skip_cutscenes ? 1 : 0;
   case kXO_GameTiming:
-    return st.sim_adaptive ? 1 : 0;
+    return st.sim_mode;   // cells Auto, Fixed, Flex: XSDK_SIM_*
   default:
     return 0;
   }
@@ -372,7 +372,7 @@ void Set(int option, int value) {
     PortDebug::SetSkippableCutscenes(st.skip_cutscenes != 0);
     break;
   case kXO_GameTiming:
-    st.sim_adaptive = value > 0;   // PortDebug::SimAdaptive reads it every frame
+    st.sim_mode = value <= 0 ? XSDK_SIM_AUTO : value == 1 ? XSDK_SIM_FIXED : XSDK_SIM_FLEX;   // read every frame
     break;
   case kXO_FusionSuit:
     // What the Fusion bonuses screen does once a GBA has linked: the

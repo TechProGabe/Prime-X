@@ -76,7 +76,14 @@ bool CElementGen::PortBeginPresent(CVector3f& savedGlobal) {
     }
   }
   if (xPortStepGeneration == gen && x80_timeDeltaScale == 1.f) {
+#ifdef TARGET_XBOX
+    // PORT_XBOX: a step of two frames (a 30 Hz tick) keeps the middle frame's
+    // positions as the previous ones: draw back along that last frame's
+    // motion, t = 0 at the tick's start (one frame before the middle)
+    x80_timeDeltaScale = 1.f - static_cast< float >(xPortStepFrames) * (1.f - t);
+#else
     x80_timeDeltaScale = t;
+#endif
     presenting = true;
   }
   return presenting;

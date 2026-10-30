@@ -376,11 +376,22 @@ static uint32_t* s_pb_mark;
 static uint32_t* s_pb_base;
 /* words per kick: each one runs pbkit's pb_start, which flushes the NV2A's
  * write-combine cache and spins until it's done (pb_cache_flush, ~2% of the
- * console's CPU in a match at 4096). -DXGX_PB_KICK=4096 restores v25's. */
+ * console's CPU in a match at 4096, 1.0-1.6% of Prime's frame at 8192).
+ * -DXGX_PB_KICK=4096 restores v25's. Where the GPU keeps up (it was idle at
+ * the frame's start in the last 16 frames: most rooms) a kick waits for
+ * XGX_PB_KICK_IDLE words instead: the GPU starts later, still finishing
+ * within the next frame's CPU time (XGX_OVERLAP); a GPU-bound frame (the
+ * visor passes) goes back to XGX_PB_KICK at once (docs/fps-plan.md M3.5).
+ * -DXGX_PB_KICK_IDLE=8192 turns that off. */
 #ifndef XGX_PB_KICK
 #define XGX_PB_KICK 8192
 #endif
-#define PB_KICK XGX_PB_KICK
+#ifndef XGX_PB_KICK_IDLE
+#define XGX_PB_KICK_IDLE 32768
+#endif
+static uint32_t s_pb_kick = XGX_PB_KICK;   /* words: XGX_PB_KICK, or _IDLE while the GPU keeps up */
+static uint32_t s_gpu_late_bits;           /* the last 32 frame starts: 1 = the GPU was still busy */
+#define PB_KICK s_pb_kick
 /* -DXGX_VB_CACHE_BREAK=0 drops the vertex cache break at each batch start
  * (pb_open), -DXGX_VBUF_FREE_NOW=0 sends evicted display-list buffers
  * through the deferred free like any other (xgx_vbuf_free_now): with
@@ -1354,7 +1365,10 @@ static void frame_open(void) {
     if (s_frame_open) return;
     if (XGX_OVERLAP) {
         uint64_t t = xhw_time_ns();
-        if (gpu_busy()) {   /* still on the last frame: how long, and how long after its present */
+        int late = gpu_busy();
+        s_gpu_late_bits = s_gpu_late_bits << 1 | (uint32_t)late;
+        s_pb_kick = (s_gpu_late_bits & 0xFFFFu) ? XGX_PB_KICK : XGX_PB_KICK_IDLE;
+        if (late) {   /* still on the last frame: how long, and how long after its present */
             wait_idle();
             s_st_late++;
             s_pp_late++;
@@ -1609,6 +1623,55 @@ static int notice_due(void) {
     return 0;
 }
 
+/* The draw statistics since the last report: every XGX_STATS_EVERY frames,
+ * and at a chained scene's end (xhw_autopad.c's NEXT: xgx_stats_now) so a
+ * scene's tail isn't lost. "per n frames" counts the frames since the last. */
+static uint32_t s_st_frame0;
+
+static void stats_report(void) {
+    unsigned n = s_frame - s_st_frame0;
+    if (!n) return;
+    s_st_frame0 = s_frame;
+    /* draws/approximated: the last frame; the rest summed over the interval */
+    xhw_logf("[NV2A] frame %u: %u draws (%u approximated), tex pool %u KB free (largest %u KB) | per %u: %u idle "
+             "waits, %u EFB copies, %u KB textures, %u pool allocations failed, %u verts, pushbuffer peak %u of %u KB "
+             "(%u restarts)",
+             s_frame, s_draws, s_approx, xgx_tex_pool_free_kb(), xgx_tex_pool_largest_kb(), n,
+             s_st_waits, s_st_efb, s_st_tex_kb, s_st_tex_fail, s_st_verts, s_st_pb_peak / 1024, PB_BYTES / 1024,
+             s_st_pb_resets);
+    xhw_logf("[NV2A] per %u draws by primitive: quads %u, triangles %u, strips %u, fans %u, lines %u, line strips "
+             "%u, points %u", n, s_st_prim[0], s_st_prim[2], s_st_prim[3], s_st_prim[4], s_st_prim[5],
+             s_st_prim[6], s_st_prim[7]);
+    memset(s_st_prim, 0, sizeof s_st_prim);
+    if (s_st_swz || s_st_ind || s_st_ind_approx)
+        xhw_logf("[NV2A] per %u frames: %u draws through swap tables (%u combiner stages added), %u indirect "
+                 "(%u more drawn direct)", n, s_st_swz, s_st_swz_stages, s_st_ind, s_st_ind_approx);
+    s_st_swz = s_st_swz_stages = s_st_ind = s_st_ind_approx = 0;
+    xhw_logf("[NV2A] per %u frames: %u vertex programs loaded (%u instructions), %u program switches",
+             n, s_st_vp_loads, s_st_vp_ins, s_st_vp_sel);
+    s_st_vp_loads = s_st_vp_ins = s_st_vp_sel = 0;
+    xhw_logf("[NV2A] per %u draws: %u changed nothing, %u only a position matrix | proj %u view %u posmtx %u texmtx "
+             "%u lights %u chans %u texgen %u tev %u tevreg %u pixel %u fog %u maps %u scissor %u",
+             s_st_draws, s_st_dirty_none, s_st_dirty_mtx, s_st_dirty[0], s_st_dirty[1], s_st_dirty[2], s_st_dirty[3],
+             s_st_dirty[4], s_st_dirty[5], s_st_dirty[6], s_st_dirty[7], s_st_dirty[8], s_st_dirty[9],
+             s_st_dirty[10], s_st_dirty[11], s_st_dirty[12]);
+    memset(s_st_dirty, 0, sizeof s_st_dirty);
+    s_st_draws = s_st_dirty_none = s_st_dirty_mtx = 0;
+#if XGX_CENSUS
+    census_report();
+#endif
+    xhw_logf("[NV2A] per %u frames: GPU still busy at %u frame starts, %u us a frame waiting there (done %u us "
+             "after the present on average), flip %u us a frame",
+             n, (unsigned)s_st_late, (unsigned)(s_st_open_ns / 1000 / n),
+             (unsigned)(s_st_late ? s_st_lag_ns / 1000 / s_st_late : 0),
+             (unsigned)(s_st_flip_ns / 1000 / n));
+    s_st_late = 0;
+    s_st_open_ns = s_st_lag_ns = s_st_flip_ns = 0;
+    s_st_waits = s_st_efb = s_st_tex_kb = s_st_verts = s_st_tex_fail = s_st_pb_peak = s_st_pb_resets = 0;
+}
+
+void xgx_stats_now(void) { stats_report(); }
+
 static void z16_frame_end(void);
 
 void xgx_present(int black) {
@@ -1711,44 +1774,7 @@ void xgx_present(int black) {
                  "the Z clear",
                  (unsigned)s_zguard_checks, (unsigned)s_zguard_bad[0], (unsigned)s_zguard_bad[1],
                  (unsigned)s_zguard_bad[2]);
-    if (s_frame % XGX_STATS_EVERY == 0) {
-        /* draws/approximated: the last frame; the rest summed over the interval */
-        xhw_logf("[NV2A] frame %u: %u draws (%u approximated), tex pool %u KB free (largest %u KB) | per %u: %u idle "
-                 "waits, %u EFB copies, %u KB textures, %u pool allocations failed, %u verts, pushbuffer peak %u of %u KB "
-                 "(%u restarts)",
-                 s_frame, s_draws, s_approx, xgx_tex_pool_free_kb(), xgx_tex_pool_largest_kb(), XGX_STATS_EVERY,
-                 s_st_waits, s_st_efb, s_st_tex_kb, s_st_tex_fail, s_st_verts, s_st_pb_peak / 1024, PB_BYTES / 1024,
-                 s_st_pb_resets);
-        xhw_logf("[NV2A] per %u draws by primitive: quads %u, triangles %u, strips %u, fans %u, lines %u, line strips "
-                 "%u, points %u", XGX_STATS_EVERY, s_st_prim[0], s_st_prim[2], s_st_prim[3], s_st_prim[4], s_st_prim[5],
-                 s_st_prim[6], s_st_prim[7]);
-        memset(s_st_prim, 0, sizeof s_st_prim);
-        if (s_st_swz || s_st_ind || s_st_ind_approx)
-            xhw_logf("[NV2A] per %u frames: %u draws through swap tables (%u combiner stages added), %u indirect "
-                     "(%u more drawn direct)", XGX_STATS_EVERY, s_st_swz, s_st_swz_stages, s_st_ind, s_st_ind_approx);
-        s_st_swz = s_st_swz_stages = s_st_ind = s_st_ind_approx = 0;
-        xhw_logf("[NV2A] per %u frames: %u vertex programs loaded (%u instructions), %u program switches",
-                 XGX_STATS_EVERY, s_st_vp_loads, s_st_vp_ins, s_st_vp_sel);
-        s_st_vp_loads = s_st_vp_ins = s_st_vp_sel = 0;
-        xhw_logf("[NV2A] per %u draws: %u changed nothing, %u only a position matrix | proj %u view %u posmtx %u texmtx "
-                 "%u lights %u chans %u texgen %u tev %u tevreg %u pixel %u fog %u maps %u scissor %u",
-                 s_st_draws, s_st_dirty_none, s_st_dirty_mtx, s_st_dirty[0], s_st_dirty[1], s_st_dirty[2], s_st_dirty[3],
-                 s_st_dirty[4], s_st_dirty[5], s_st_dirty[6], s_st_dirty[7], s_st_dirty[8], s_st_dirty[9],
-                 s_st_dirty[10], s_st_dirty[11], s_st_dirty[12]);
-        memset(s_st_dirty, 0, sizeof s_st_dirty);
-        s_st_draws = s_st_dirty_none = s_st_dirty_mtx = 0;
-#if XGX_CENSUS
-        census_report();
-#endif
-        xhw_logf("[NV2A] per %u frames: GPU still busy at %u frame starts, %u us a frame waiting there (done %u us "
-                 "after the present on average), flip %u us a frame",
-                 XGX_STATS_EVERY, (unsigned)s_st_late, (unsigned)(s_st_open_ns / 1000 / XGX_STATS_EVERY),
-                 (unsigned)(s_st_late ? s_st_lag_ns / 1000 / s_st_late : 0),
-                 (unsigned)(s_st_flip_ns / 1000 / XGX_STATS_EVERY));
-        s_st_late = 0;
-        s_st_open_ns = s_st_lag_ns = s_st_flip_ns = 0;
-        s_st_waits = s_st_efb = s_st_tex_kb = s_st_verts = s_st_tex_fail = s_st_pb_peak = s_st_pb_resets = 0;
-    }
+    if (s_frame % XGX_STATS_EVERY == 0) stats_report();
     s_draws = s_approx = 0;
     s_frame_open = 0;
     if (!XGX_OVERLAP) frame_open();

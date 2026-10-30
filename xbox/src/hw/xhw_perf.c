@@ -36,6 +36,7 @@ static int s_cur;
 static uint64_t s_mark;
 static uint64_t s_acc[XHW_PERF_N];
 #endif
+const char* (*xhw_perf_tag)(void);
 static volatile uint64_t s_audio;
 static uint64_t s_t0, s_ns0;
 
@@ -115,6 +116,43 @@ static void worst_frame(uint64_t now) {
 }
 #endif
 
+/* The last presented frame's buckets, for Game Timing: Auto
+ * (port_debug.cpp picks the tick rate from them each frame) */
+static uint64_t s_lf_prev[XHW_PERF_N], s_lf[XHW_PERF_N];
+static uint32_t s_lf_prev_ticks, s_lf_ticks;
+
+static void last_frame(void) {
+    int i;
+    charge();
+    for (i = 0; i < XHW_PERF_N; i++) {
+        s_lf[i] = s_acc[i] - s_lf_prev[i];
+        s_lf_prev[i] = s_acc[i];
+    }
+    s_lf_ticks = s_ticks - s_lf_prev_ticks;
+    s_lf_prev_ticks = s_ticks;
+}
+
+void xhw_perf_last_frame(uint32_t us[XHW_PERF_N], uint32_t* ticks) {
+    /* rdtsc ticks per microsecond: measured against the kernel's clock over
+     * the first second (733 until then: a stock console) */
+    static uint64_t per_us = 733, tsc0, ns0;
+    static int measured;
+    int i;
+    if (!measured) {
+        uint64_t t = rdtsc(), ns = xhw_time_ns();
+        if (!tsc0) {
+            tsc0 = t;
+            ns0 = ns;
+        } else if (ns - ns0 >= 1000000000ull) {
+            per_us = (t - tsc0) * 1000u / (ns - ns0);
+            if (!per_us) per_us = 1;
+            measured = 1;
+        }
+    }
+    for (i = 0; i < XHW_PERF_N; i++) us[i] = (uint32_t)(s_lf[i] / per_us);
+    *ticks = s_lf_ticks;
+}
+
 void xhw_perf_frame(uint32_t draws, uint32_t verts) {
     static const char* const k_names[XHW_PERF_N] = { "sim", "render", "dlist", "draw", "tex", "efb", "gpu", "vsync" };
     uint64_t now = rdtsc(), ns = xhw_time_ns(), span, span_ns, audio, per_ms;
@@ -123,6 +161,7 @@ void xhw_perf_frame(uint32_t draws, uint32_t verts) {
     s_frames++;
     s_draws += draws;
     s_verts += verts;
+    last_frame();
 #if XHW_TEST_BUILD
     worst_frame(now);
 #endif
@@ -145,9 +184,14 @@ void xhw_perf_frame(uint32_t draws, uint32_t verts) {
             n += snprintf(line + n, sizeof line - (size_t)n, " %s %u.%u", k_names[i], t / 10, t % 10);
         }
         unsigned tk = tenths(s_ticks, s_renders);
+        /* "sim" over the ticks run: on Prime the game's draw has its own
+         * bucket (render), so this is the tick's cost plus the loop's
+         * per-frame bookkeeping (loader, audio streams) */
+        unsigned mt = tenths(s_acc[XHW_PERF_LOGIC], per_ms * (s_ticks ? s_ticks : 1));
         snprintf(line + n, sizeof line - (size_t)n,
-                 " | %u.%u ticks per render | audio %u%% | %u draws %u verts per frame | cpu %u MHz", tk / 10, tk % 10,
-                 (unsigned)(audio * 100 / span), s_draws / s_frames, s_verts / s_frames, (unsigned)(per_ms / 1000));
+                 " | %u.%u ticks per render %u.%u ms per tick | audio %u%% | %u draws %u verts per frame | cpu %u MHz%s",
+                 tk / 10, tk % 10, mt / 10, mt % 10, (unsigned)(audio * 100 / span), s_draws / s_frames,
+                 s_verts / s_frames, (unsigned)(per_ms / 1000), xhw_perf_tag ? xhw_perf_tag() : "");
     }
     xhw_log(line);
 #if XHW_TEST_BUILD
@@ -184,8 +228,9 @@ void xhw_perf_frame(uint32_t draws, uint32_t verts) {
 #if XHW_PMC
     xhw_pmc_period();
 #endif
-    for (i = 0; i < XHW_PERF_N; i++) s_acc[i] = 0;
+    for (i = 0; i < XHW_PERF_N; i++) s_acc[i] = s_lf_prev[i] = 0;
     s_frames = s_draws = s_verts = s_ticks = s_renders = 0;
+    s_lf_prev_ticks = 0;
 #if XHW_TEST_BUILD
     for (i = 0; i < XHW_PERF_N; i++) s_snap[i] = 0;
     s_snap_ticks = 0;

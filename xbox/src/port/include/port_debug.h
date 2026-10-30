@@ -140,6 +140,16 @@ void SetTickPeriod(float dt);
 // The same step expressed in 60 Hz frames (1.0 at 60 Hz). Per-tick counters and
 // cadences add this instead of 1 so their real-time timing is unchanged.
 float TickFrames();
+#ifdef TARGET_XBOX
+// Game Timing (Port Options, port_debug.cpp): the fixed step UpdateTicks uses
+// this frame: 1/60, or 1/30 while Auto finds the frame doesn't fit.
+double XboxTickPeriod();
+// This frame draws between the last two ticks (Auto at 30 Hz; env PX_INTERP).
+bool XboxPresentBlend();
+// The render clock's 1/60 s steps for `ticks` ticks of `period` seconds, the
+// fraction carried (TickRenderTimings counts 1/60 s steps).
+unsigned XboxRenderTimingSteps(unsigned ticks, double period);
+#endif
 
 // Presentation
 bool FrameLimitEnabled();

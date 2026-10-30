@@ -48,6 +48,7 @@ void xsdk_aram_log(void);      /* [AR] disc, swap file, swap-outs and fills */
 /* pad.c: a controller as PADRead last read it (NULL: not connected) */
 struct xhw_pad;
 const struct xhw_pad* xsdk_pad_raw(int port);
+void xsdk_pad_frame(void);   /* each frame boundary (vi.c): presses between two reads */
 
 /* vi.c: frame boundary; the game side keeps the camera aspect current (port) */
 void xsdk_widescreen_update(void);

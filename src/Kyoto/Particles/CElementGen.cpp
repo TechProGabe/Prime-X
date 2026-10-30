@@ -197,6 +197,9 @@ CElementGen::CElementGen(TToken< CGenDescription > gen, EModelOrientationType or
 , x338_moduColor(0xFFFFFFFF)
 #ifdef TARGET_PC
 , xPortStepGeneration(0)
+#ifdef TARGET_XBOX
+, xPortStepFrames(1)
+#endif
 , xPortGlobalGeneration(0)
 , xPortPrevGlobalTranslation(CVector3f::Zero())
 , xPortPresenting(false)
@@ -951,9 +954,18 @@ bool CElementGen::InternalUpdate(double dt) {
   }
   // Only a system that stepped exactly one frame this tick can be drawn
   // between its last two frames; anything else keeps the retail draw.
+#ifdef TARGET_XBOX
+  // PORT_XBOX: a 30 Hz tick (Game Timing: Auto) steps two frames; drawn
+  // between its states too (port_element_gen.cpp, PortBeginPresent)
+  if ((frameUpdateCount == 1 || frameUpdateCount == 2) && x80_timeDeltaScale == 1.0f) {
+    xPortStepGeneration = CActor::PortTickGeneration();
+    xPortStepFrames = static_cast< uchar >(frameUpdateCount);
+  } else if (frameUpdateCount != 0 || x80_timeDeltaScale != 1.0f) {
+#else
   if (frameUpdateCount == 1 && x80_timeDeltaScale == 1.0f) {
     xPortStepGeneration = CActor::PortTickGeneration();
   } else if (frameUpdateCount != 0 || x80_timeDeltaScale != 1.0f) {
+#endif
     xPortStepGeneration = 0;
   }
   if (frameUpdateCount != 0) {

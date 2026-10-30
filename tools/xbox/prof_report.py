@@ -18,9 +18,19 @@ Newer builds also log callers (return addresses, one frame up): [PROFL] for
 samples inside memcpy/memset/memcmp/memmove, [PROFC] for every sample. Those
 are folded into the calling functions and listed after the functions.
 [PROFS] buckets (v33 on) count only the samples taken during the simulation
-ticks; they are listed last, as the simulation's own profile. [PROFT] buckets
+ticks; they are listed last, as the simulation's own profile (Prime-X: since
+the game's draw has its own [PERF] bucket, the ticks alone). [PROFT] buckets
 count only the samples of frames that took 150 ms or more (hitches: a room's
-first frame, a pickup).
+first frame, a pickup). [PROFA] buckets are the MusyX mixer thread's samples
+(it preempts the game every 5 ms; before it had its own histogram they landed
+on whatever game code it interrupted).
+
+Each report also prints the GPU-wait share: the samples in the spin that
+waits for the NV2A (wait_idle, gpu_busy, pb_busy). pb_busy is 16 bytes at
+the end of a bucket it shares with pb_create_gr_instance, which runs only at
+boot; the density estimate handed that bucket's thousands of spin samples to
+pb_create_gr_instance. Functions in COLD (boot-only) get no share of a
+bucket they share with others.
 
 --full reads the whole-match profile instead: the [PROFH] lines an autopad
 build logs at a match's end, or the prof.bin a profiler build writes to
@@ -34,6 +44,16 @@ sys.path.insert(0, str(pathlib.Path(__file__).parent))
 import sym  # noqa: E402
 
 BUCKET = 64
+
+# functions that run only at boot: a shared bucket's samples go to the others
+COLD = {'_pb_create_gr_instance', 'pb_create_gr_instance'}
+# the GPU-wait spin: wait_idle (nv2a.c) polls gpu_busy -> pb_busy
+GPU_WAIT = ('wait_idle', 'gpu_busy', 'gpu_quiet', 'pb_busy', 'irq_recover')
+
+
+def gpu_wait_share(counts):
+    """samples in the GPU-wait spin, from a Counter of 'name (object)'"""
+    return sum(c for name, c in counts.items() if name.split(' (')[0].lstrip('_') in GPU_WAIT)
 
 
 class Funcs:
@@ -70,6 +90,9 @@ class Funcs:
                 if hi > lo:
                     parts.append((i, hi - lo))
                 i += 1
+            warm = [p for p in parts if p[0] < 0 or self.syms[p[0]][1] not in COLD]
+            if warm and len(warm) < len(parts):
+                parts = warm
             if first or len(parts) <= 1:
                 out[parts[0][0] if parts else -1] += n
             else:
@@ -226,17 +249,18 @@ def periodic(a, funcs):
         if m:
             cur = {'total': int(m[1]), 'placed': int(m[2]), 'buckets': collections.Counter(),
                    'libc': collections.Counter(), 'callers': collections.Counter(), 'libc_n': 0, 'callers_n': 0,
-                   'sim': collections.Counter(), 'sim_n': 0, 'stall': collections.Counter(), 'stall_n': 0}
+                   'sim': collections.Counter(), 'sim_n': 0, 'stall': collections.Counter(), 'stall_n': 0,
+                   'mix': collections.Counter(), 'mix_n': 0}
             reports.append(cur)
             continue
         if cur is None:
             continue
-        m = re.search(r'\[PROF([LCST])\] (\d+) samples', line)
+        m = re.search(r'\[PROF([LCSTA])\] (\d+) samples', line)
         if m:
-            cur[{'L': 'libc_n', 'C': 'callers_n', 'S': 'sim_n', 'T': 'stall_n'}[m[1]]] += int(m[2])
+            cur[{'L': 'libc_n', 'C': 'callers_n', 'S': 'sim_n', 'T': 'stall_n', 'A': 'mix_n'}[m[1]]] += int(m[2])
             continue
         for tag, key in (('[PROFL]', 'libc'), ('[PROFC]', 'callers'), ('[PROFS]', 'sim'), ('[PROFT]', 'stall'),
-                         ('[PROF]', 'buckets')):
+                         ('[PROFA]', 'mix'), ('[PROF]', 'buckets')):
             if tag in line:
                 for addr, n in re.findall(r'([0-9a-f]{8}):(\d+)', line):
                     cur[key][int(addr, 16)] += int(n)
@@ -252,6 +276,8 @@ def periodic(a, funcs):
     funcs_n = funcs.fold(buckets, a.first)
     listed = sum(funcs_n.values())
     print(f'{len(use)} report(s): {total} samples, {placed} in the image, {round(listed)} in the listed buckets')
+    print(f'GPU wait (the spin in wait_idle): {100.0 * gpu_wait_share(funcs_n) / max(1, placed):.1f}% of the '
+          f"image's samples")
     table(funcs_n, placed, a.n)
 
     def callers(key, title):
@@ -261,13 +287,18 @@ def periodic(a, funcs):
         hist = collections.Counter()
         for r in use:
             hist.update(r[key])
-        by = funcs.fold(hist, a.first) if key in ('sim', 'stall') else funcs.fold_exact(hist)
-        print(f'\n{title}: {n_all} samples ({100.0 * n_all / placed:.1f}% of the image\'s)')
+        by = funcs.fold(hist, a.first) if key in ('sim', 'stall', 'mix') else funcs.fold_exact(hist)
+        if key == 'mix':   # not the game thread's samples: a share of every sample taken
+            print(f'\n{title}: {n_all} samples ({100.0 * n_all / max(1, total + n_all):.1f}% of all samples, '
+                  f'game and mixer)')
+        else:
+            print(f'\n{title}: {n_all} samples ({100.0 * n_all / placed:.1f}% of the image\'s)')
         table(by, n_all, a.n)
 
     callers('libc', 'memcpy/memset/memcmp/memmove, by calling function')
     callers('sim', 'simulation ticks only, by function')
     callers('stall', "frames of 150 ms or more only ([PROFT]: a room's first frame, a pickup), by function")
+    callers('mix', 'the MusyX mixer thread ([PROFA]), by function')
     callers('callers', 'all samples, by calling function (one frame up)')
 
 
