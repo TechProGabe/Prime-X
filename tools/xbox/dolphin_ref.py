@@ -111,12 +111,13 @@ VISORS = {'combat': 0, 'xray': 1, 'scan': 2, 'thermal': 3}
 
 def visor_code(visor):
     """Every frame: CPlayerState's current and transitioning visor (x14, x18)
-    = visor, through gpGameState -> x98_playerState (an rc_ptr: its CRefData,
+    = visor and the transition done, through gpGameState -> x98_playerState (an rc_ptr: its CRefData,
     then the object). Pointer codes, each step checked to be in MEM1."""
     return ['48000000 %08X' % GP_GAME_STATE, 'DE000000 80008180',
             '58010000 00000098', 'DE000000 80008180',
             '58010000 00000000', 'DE000000 80008180',
             '14000014 %08X' % visor, '14000018 %08X' % visor,
+            '1400001C 3F800000',   # x1c_visorTransitionFactor: done
             'E0000000 80008000']
 
 

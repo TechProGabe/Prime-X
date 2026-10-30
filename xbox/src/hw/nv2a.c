@@ -2117,7 +2117,7 @@ static void build_texmtx(const XgxState* st) {
 /* rows for unit u: texgen tg; the post matrix is folded in unless the
  * texgen normalizes first */
 static int s_d_unit_map[4];   /* (defined with the other derived state below) */
-enum { UNIT_PLAIN, UNIT_IND, UNIT_BUMP };
+enum { UNIT_PLAIN, UNIT_IND, UNIT_BUMP, UNIT_DEP };
 static int s_d_unit_kind[4];
 static float s_d_unit_off[4][2];
 
@@ -2400,7 +2400,7 @@ static void tex_shadow_reset(void) {
 static uint32_t s_tex_in = 0xFFFFFFFFu;     /* NV097_SET_SHADER_OTHER_STAGE_INPUT sent last */
 static uint32_t s_bump_shadow[4][4];        /* SET_TEXTURE_SET_BUMP_ENV_MAT per unit, as sent */
 static uint32_t s_d_unit_tex[4];            /* derive_units: a unit's texture when not its map's (an indirect map) */
-static int s_d_unit_in[4], s_d_nbump;       /* a bump unit's input unit; bump units this draw */
+static int s_d_unit_in[4], s_d_nbump;       /* a bump or dependent unit's input unit; such units this draw */
 static float s_d_unit_bump[4][4];           /* a bump unit's matrix: 00 01 10 11 */
 
 static uint32_t wrap_mode(uint32_t gx) {
@@ -2464,7 +2464,8 @@ static void emit_textures(const XgxState* st, const int unit_map[4], int nunits)
             /* DMA A: bit 0 clear. A CI texture's palette is the TLUT the
              * game loaded last (XgxMap.pal), not the one it was made with */
             v[6] = t->pal && key.pal ? key.pal : t->pal;
-            s_unit_prog[u] = (s_d_unit_kind[u] == UNIT_BUMP ? 6u : 1u) << (u * 5);   /* BUMPENVMAP, 2D_PROJECTIVE */
+            /* BUMPENVMAP, DEPENDENT_GB, 2D_PROJECTIVE */
+            s_unit_prog[u] = (s_d_unit_kind[u] == UNIT_BUMP ? 6u : s_d_unit_kind[u] == UNIT_DEP ? 0x10u : 1u) << (u * 5);
             prog |= s_unit_prog[u];
         }
         if (!words_same(v, s_tex_shadow[u], sizeof v)) {
@@ -2494,8 +2495,9 @@ static void emit_textures(const XgxState* st, const int unit_map[4], int nunits)
         uint32_t in = 0;
         for (u = 1; u < nunits; u++) {
             uint32_t w[4];
-            if (s_d_unit_kind[u] != UNIT_BUMP) continue;
+            if (s_d_unit_kind[u] != UNIT_BUMP && s_d_unit_kind[u] != UNIT_DEP) continue;
             if (u >= 2) in |= (uint32_t)s_d_unit_in[u] << (16 + (u - 2) * 4);   /* unit 1 reads unit 0 */
+            if (s_d_unit_kind[u] == UNIT_DEP) continue;   /* no matrix */
             /* the method takes 00 01 11 10 (xemu's swizzle; 00 01 10 11 are s from du, t from du,
              * s from dv, t from dv) */
             memcpy(&w[0], &s_d_unit_bump[u][0], 8);
@@ -3199,7 +3201,7 @@ static void derive_units(const XgxState* st) {
         r->ras_swz = r->ras == 2 ? RC_SWZ_ID : swap_bits(st->swap[t->ras_swap & 3]);
         if (!(emboss >> s & 1) && t->texmap != GX_NULL && t->texmap < XGX_MAX_MAPS && t->texcoord != GX_NULL &&
             st->map[t->texmap].tex && !(ind_use >> s & 1) && !(st->ztex && s == rc->nstages - 1) &&
-            tex_uniform(st->map[t->texmap].tex)) {
+            !st->map[t->texmap].dep && tex_uniform(st->map[t->texmap].tex)) {
             /* every texel the same colour: a constant, no texture unit */
             r->tconst = 1;
             s_d_tconst[s] = swap_color(s_tex[st->map[t->texmap].tex].avg, st->swap[t->tex_swap & 3]);
@@ -3224,6 +3226,26 @@ static void derive_units(const XgxState* st) {
                 u = nunits++;
                 s_d_unit_map[u] = (int)t->texmap;
                 s_d_unit_tc[u] = (int)t->texcoord;
+            }
+            if (u >= 0 && s_d_unit_kind[u] == UNIT_PLAIN && st->map[t->texmap].dep) {
+                /* a CI view of an EFB copy (gx_tex.c dep_palette_for): the
+                 * stage reads a unit that looks unit u's green and blue
+                 * (the copy's intensity) up in the TLUT; without a unit
+                 * left it reads the intensity */
+                int d = -1;
+                for (i = u + 1; i < nunits; i++)
+                    if (s_d_unit_kind[i] == UNIT_DEP && s_d_unit_in[i] == u) { d = i; break; }
+                if (d < 0 && nunits < 4) {
+                    d = nunits++;
+                    s_d_unit_map[d] = (int)t->texmap;
+                    s_d_unit_tc[d] = (int)t->texcoord;
+                    s_d_unit_kind[d] = UNIT_DEP;
+                    s_d_unit_tex[d] = st->map[t->texmap].dep;
+                    s_d_unit_in[d] = u;
+                    s_d_nbump++;
+                }
+                if (d >= 0) u = d;
+                else s_d_unit_miss++;
             }
             if (u < 0) {
                 /* more textures than units: the texture's average colour,
@@ -3432,7 +3454,7 @@ void xgx_draw(uint32_t prim, uint32_t count, const XgxLayout* layout, XgxState* 
         s_st_swz++;
         s_st_swz_stages += (uint32_t)s_d_rp->swizzled;
     }
-    if (s_d_nbump) s_st_ind++;
+    if (s_d_nbump && st->nind) s_st_ind++;
     else if (st->nind && s_d_unit_miss) s_st_ind_approx++;
 #ifdef XGX_DEBUG_TRACE
     if (s_fbdump_once || s_shot_once) trace_draw(prim, count, st, s_d_rp->approximated, layout);   /* autopad SHOT or BACK */
@@ -3583,7 +3605,7 @@ static void read_rect(const int32_t src[4], uint32_t dw, uint32_t dh, uint32_t* 
  * alpha 1: the I/R copies HSD makes (shadow maps) are read for colour only, alpha comes from APREV
  * (tobj.c, TObjSetupTevModulateShadow). At 720p this was the CPU readback,
  * ~60 ms a match frame on the console (v38). */
-enum { CR_ZERO = 0, CR_C0 = 1, CR_T0 = 8, CR_R0 = 12 };
+enum { CR_ZERO = 0, CR_C0 = 1, CR_C1 = 2, CR_T0 = 8, CR_R0 = 12 };
 #define CR_IN(reg, alpha, inv) ((uint32_t)(reg) | (uint32_t)(alpha) << 4 | (uint32_t)(inv) << 5)
 #define CR_ONE CR_IN(CR_ZERO, 0, 1)
 #define CR_AB_TO(reg) ((uint32_t)(reg) << 4)   /* output control word: AB -> reg */
@@ -3593,7 +3615,10 @@ static void copy_combiners(int mode) {
     uint32_t cicw[2] = { 0, 0 }, cocw[2] = { 0, 0 }, aicw[2] = { 0, 0 }, aocw[2] = { 0, 0 }, k = 0;
     int n = 1, i;
     switch (mode) {
-        case XGX_COPY_LUMA: case XGX_COPY_LUMA_ALPHA: k = 0x004D961Du; break;   /* 77, 150, 29 / 255 */
+        /* GX's intensity: Y = (66 r + 129 g + 25 b) / 256 + 16 (16..235;
+         * Dolphin's TextureConverterShaderGen, from hardware tests). The
+         * offset matters where the copy indexes a palette (thermal, X-ray) */
+        case XGX_COPY_LUMA: case XGX_COPY_LUMA_ALPHA: k = 0x00428119u; break;   /* 66, 129, 25 / 255 */
         case XGX_COPY_RED: case XGX_COPY_RED_ALPHA: k = 0x00FF0000u; break;
         case XGX_COPY_GREEN: k = 0x0000FF00u; break;
         case XGX_COPY_BLUE: k = 0x000000FFu; break;
@@ -3607,9 +3632,14 @@ static void copy_combiners(int mode) {
             aicw[0] = CR_ONE << 24 | CR_ONE << 16;   /* the EFB's alpha: 1 */
             aocw[0] = CR_AB_TO(CR_R0);
         } else {
-            /* alpha = the same value: R0's blue, in a second stage */
+            /* alpha = the same value: R0's blue (plus the intensity
+             * offset, C1's alpha), in a second stage */
             aicw[1] = CR_IN(CR_R0, 0, 0) << 24 | CR_ONE << 16;
             aocw[1] = CR_AB_TO(CR_R0);
+            if (mode == XGX_COPY_LUMA) {
+                aicw[1] |= CR_IN(CR_C1, 1, 0) << 8 | CR_ONE;
+                aocw[1] = CR_R0;   /* AB + CD -> R0 */
+            }
             n = 2;
         }
     } else {
@@ -3627,7 +3657,10 @@ static void copy_combiners(int mode) {
         put1(NV097_SET_COMBINER_ALPHA_OCW + i * 4, aocw[i]);
     }
     put1(NV097_SET_COMBINER_FACTOR0, k);
-    put1(NV097_SET_COMBINER_SPECULAR_FOG_CW0, (uint32_t)CR_R0 << 8);   /* out = R0 */
+    put1(NV097_SET_COMBINER_FACTOR1, 0x10101010u);   /* GX's intensity offset, 16 / 255 */
+    /* out = R0, plus the offset (D) for intensity */
+    put1(NV097_SET_COMBINER_SPECULAR_FOG_CW0,
+         (uint32_t)CR_R0 << 8 | (mode == XGX_COPY_LUMA || mode == XGX_COPY_LUMA_ALPHA ? (uint32_t)CR_C1 : 0u));
     put1(NV097_SET_COMBINER_SPECULAR_FOG_CW1, (uint32_t)(CR_R0 | 1 << 4) << 8 | 0x80);
 }
 
@@ -4060,7 +4093,10 @@ uint32_t xgx_tex_from_efb(const int32_t src[4], uint32_t dst_w, uint32_t dst_h, 
         for (i = 0; i < n; i++) {
             uint32_t c = buf[i], a = 0xFF, r = (c >> 16) & 0xFF, g = (c >> 8) & 0xFF, b = c & 0xFF, v;
             switch (mode) {
-                case XGX_COPY_LUMA: case XGX_COPY_LUMA_ALPHA: v = (r * 77 + g * 150 + b * 29) >> 8; break;
+                case XGX_COPY_LUMA: case XGX_COPY_LUMA_ALPHA:   /* GX's, as copy_combiners */
+                    v = r * 66 + g * 129 + b * 25 + 16 * 256;
+                    v = (v >> 8) + ((v >> 7) & 1);
+                    break;
                 case XGX_COPY_RED: case XGX_COPY_RED_ALPHA: v = r; break;
                 case XGX_COPY_GREEN: v = g; break;
                 case XGX_COPY_BLUE: v = b; break;

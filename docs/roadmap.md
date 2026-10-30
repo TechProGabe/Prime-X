@@ -91,8 +91,10 @@ line under it says how far it got.
   black box is still there on red, it is something else.
 - Compared with Dolphin 2026-10-30 (`tools/xbox/dolphin_ref.py`): the 14
   sweep rooms match, the arm cannon included, except Magmoor's fog
-  volumes (above). Not compared yet: the visors (Dolphin needs input to
-  switch them), Phendrana's elevator steam.
+  volumes (above). Thermal now matches too (its heat palette pass was
+  drawn as plain intensity: a white gun); X-ray uses its palette now
+  (pale lavender), not compared (Dolphin can't hold X-ray without input).
+  Not compared yet: Phendrana's elevator steam.
 
 ## Console history
 
