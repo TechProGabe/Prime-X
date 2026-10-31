@@ -1,5 +1,5 @@
-# r16d: Landing Site (rain), Auto: against r15d (35-37); the chain ends at the dashboard; profiler build
-env PX_NEXT_XBE=dashboard
+# r16d: Landing Site (rain on the GPU), Auto: against r15d (35-37); profiler image P
+env PX_NEXT_XBE=F:\Applications\Prime-X-r16e\default.xbe
 env MP_BOOT_WORLD=39F2DE28
 500 SHOT
 600 SHOT

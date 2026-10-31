@@ -1,4 +1,4 @@
-# r16a: pirates, Auto: against r15a (34-35); profiler build
+# r16a: pirates, Auto: against r15a (34-35); profiler image P
 env PX_NEXT_XBE=F:\Applications\Prime-X-r16b\default.xbe
 env MP_BOOT_WORLD=39F2DE28:B9ABCD56
 env MP_INVULNERABLE=1

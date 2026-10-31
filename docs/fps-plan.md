@@ -46,7 +46,7 @@ The user's policy for this plan (asked 2026-10-30):
 | M5.2 snow | drawn between ticks in one call too (`GXPortSnowQuads` with stepped copies) |
 | M5.3 particle quads | built: `GXPortVertices3fC2f` for the textured quads, `GXPortVertices3fC1s16` for the untextured ones |
 | M5.4 particles at the tick period | dropped: frame-keyed elements, a visible rewrite |
-| M5.6 visor passes | measuring first: `env PX_GPU_TIME=1` (test builds) waits for the GPU at each EFB copy and the present, `[GPUT]` per segment (round hw16's r16g) |
+| M5.6 visor passes | measuring first: `env PX_GPU_TIME=1` (test builds) waits for the GPU at each EFB copy and the present, `[GPUT]` per segment (round hw16's r16g). Also seen: thermal fills the texture pool (MetroidPrimePort's 8 cached noise frames, ~2.5 MB): ~75 MB of uploads and ~50 failed allocations per 600 frames, on red too (hw14 r14e, `tex` 1.3-1.7 ms); fewer or smaller noise frames would change the look (the user's call) |
 | M6a recorded pushbuffers | JUMP/CALL proven on red (hw15); its shape is the user's call (M6a below) |
 | compiler | `-O3` (hw13), full LTO ready as an A/B (`PX_LTO_MODE=full`), PGO retrained (98d6793) |
 

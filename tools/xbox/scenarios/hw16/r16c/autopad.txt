@@ -1,4 +1,4 @@
-# r16c: Lava Lake, Auto: against r15c (44-45); profiler build
+# r16c: Lava Lake, Auto: against r15c (44-45); profiler image P
 env PX_NEXT_XBE=F:\Applications\Prime-X-r16d\default.xbe
 env MP_BOOT_WORLD=3EF8237C:A4719C6A
 1500 SHOT

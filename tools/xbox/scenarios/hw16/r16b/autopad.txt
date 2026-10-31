@@ -1,4 +1,4 @@
-# r16b: Main Plaza, Auto: against r15b (43-44); profiler build
+# r16b: Main Plaza, Auto: against r15b (43-44); profiler image P
 env PX_NEXT_XBE=F:\Applications\Prime-X-r16c\default.xbe
 env MP_BOOT_WORLD=83F6FF6F:D5CDB809
 1500 SHOT
