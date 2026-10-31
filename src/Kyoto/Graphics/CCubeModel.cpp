@@ -1352,15 +1352,34 @@ bool CCubeModel::TryLockTextures() const {
 // console's CPU in Main Plaza, round hw9). A prefetch is only a hint. Also
 // the header's line holding the port's index bases and visor word
 // (CCubeSurface::PortBaseIndices at +0x60, PortVisorWord at +0x78).
-static inline void PortPrefetchNextSurface(const CCubeSurface& surface) {
+// Also the next surface's material (its header arrived with the last
+// prefetch; the offset table is small and stays cached): DrawSurface and
+// SetCurrent waited on the material's first lines (~13% of Main Plaza's
+// draw between them, round hw15), and the header two surfaces ahead.
+static inline void PortPrefetchNextSurface(const CCubeSurface& surface, const void* materials,
+                                           size_t textureCount) {
   const CCubeSurface next = surface.GetNextSurface();
   if (next.IsValid()) {
     const char* header = reinterpret_cast< const char* >(&next.GetCenter());
     __builtin_prefetch(header);
     __builtin_prefetch(header + 0x60);
+    const uchar* table = static_cast< const uchar* >(materials) + (textureCount + 1) * 4;
+    const uint count = CBasics::SwapBytes(*reinterpret_cast< const uint* >(table));
+    const uint idx = next.GetMaterialIndex();
+    if (idx < count) {
+      table += 4;
+      const uchar* material = table + count * 4 + (idx != 0 ? GetMaterialOffset(table, static_cast< int >(idx)) : 0);
+      __builtin_prefetch(material);
+      __builtin_prefetch(material + 32);
+      __builtin_prefetch(material + 64);
+    }
+    const CCubeSurface after = next.GetNextSurface();
+    if (after.IsValid()) {
+      __builtin_prefetch(&after.GetCenter());
+    }
   }
 }
-#define PORT_PREFETCH_NEXT_SURFACE(s) PortPrefetchNextSurface(s)
+#define PORT_PREFETCH_NEXT_SURFACE(s) PortPrefetchNextSurface(s, x0_instance.GetMaterialPointer(), x1c_textures->size())
 #else
 #define PORT_PREFETCH_NEXT_SURFACE(s)
 #endif
