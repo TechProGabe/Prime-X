@@ -99,7 +99,11 @@ there is the limit). No audio fault in 21 chained scenes (hw11, hw12).
    (boot and before pb_init) now logs the PTE of 0x80000000 and claims
    physical page 0 if it is free (a contiguous allocation, highest
    0xFFF), so the store lands in memory of ours; a `[MEM] page 0 ... not
-   mapped` line says which case it was.
+   mapped` line says which case it was. Round hw18c (724adc5): r18d and
+   g18e crashed again, each the launch after Lava Lake, page 0 mapped but
+   read-only and uncached (PTE 655/659, 663 on every other boot). The
+   guard now also gives a read-only page 0 its write bit (claim first,
+   then the PTE; checked in xemu with `env PX_PAGE0_RO=1`).
 0b. **Stock drives** (2026-10-31, the user: gold's drive is what most
    players have, little free space, "we should address it"). No hardware
    tests until truly needed (the user turned the consoles off). Done,
