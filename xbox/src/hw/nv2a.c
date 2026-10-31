@@ -557,6 +557,7 @@ static uint32_t s_st_waits, s_st_efb, s_st_tex_kb, s_st_verts, s_st_tex_fail, s_
 static uint32_t s_st_draws, s_st_dirty_none, s_st_dirty_mtx, s_st_dirty[13], s_st_merged, s_st_nomrg[5];
 static uint32_t s_st_prim[8];   /* by GX primitive, (prim >> 3) & 7 */
 static uint32_t s_st_vp_sel, s_st_vp_loads, s_st_vp_ins;   /* program switches, loads, instructions loaded */
+static uint32_t s_st_vp_cover;   /* selects a resident program with more texture units served (vk_covers) */
 
 /* GPU faults, recorded by the patched pbkit (ocx_pb_gpu_fault below) */
 static volatile uint32_t s_gf_count, s_gf_storms, s_gf_last[5];
@@ -1728,9 +1729,10 @@ static void stats_report(void) {
         xhw_logf("[NV2A] per %u frames: %u draws through swap tables (%u combiner stages added), %u indirect "
                  "(%u more drawn direct)", n, s_st_swz, s_st_swz_stages, s_st_ind, s_st_ind_approx);
     s_st_swz = s_st_swz_stages = s_st_ind = s_st_ind_approx = 0;
-    xhw_logf("[NV2A] per %u frames: %u vertex programs loaded (%u instructions), %u program switches",
-             n, s_st_vp_loads, s_st_vp_ins, s_st_vp_sel);
-    s_st_vp_loads = s_st_vp_ins = s_st_vp_sel = 0;
+    xhw_logf("[NV2A] per %u frames: %u vertex programs loaded (%u instructions), %u program switches, %u served "
+             "by a program with more texture units",
+             n, s_st_vp_loads, s_st_vp_ins, s_st_vp_sel, s_st_vp_cover);
+    s_st_vp_loads = s_st_vp_ins = s_st_vp_sel = s_st_vp_cover = 0;
     xhw_logf("[NV2A] per %u draws: %u changed nothing (%u joined the draw before), %u only a position matrix | proj "
              "%u view %u posmtx %u texmtx %u lights %u chans %u texgen %u tev %u tevreg %u pixel %u fog %u maps %u "
              "scissor %u",
@@ -1999,15 +2001,50 @@ static inline int words_same(const void* a, const void* b, unsigned n) {
 _Static_assert(sizeof(VpKey) % 4 == 0, "VpKey compares as words");
 static inline int vk_same(const VpKey* a, const VpKey* b) { return words_same(a, b, sizeof(VpKey)); }
 
+/* A program covers a key when it is that key's program with more texture
+ * units fed: the same key in every field but ntex and the units past the
+ * key's (vp_canon zeroes those). Each texgen writes only its own oT and
+ * reads only its own constant rows, and the draw samples only its own
+ * units, so the extra outputs go nowhere. Round hw15's fight loaded ~60
+ * programs a frame: the lit ones are 71-86 instructions, one fits in the
+ * 136 of program memory, and their variants by texgen count evicted each
+ * other. -DXGX_VP_COVER=0 turns it off. */
+#ifndef XGX_VP_COVER
+#define XGX_VP_COVER 1
+#endif
+static int vk_covers(const VpKey* have, const VpKey* want) {
+    VpKey t;
+    int i;
+    if (have->ntex < want->ntex) return 0;
+    if (have->ntex == want->ntex) return vk_same(have, want);
+    t = *have;
+    t.ntex = want->ntex;
+    for (i = want->ntex; i < 4; i++) memset(&t.tex[i], 0, sizeof t.tex[i]);
+    return vk_same(&t, want);
+}
+
 static void vp_select(const VpKey* k) {
     int i, pick = -1, start, loaded;
     uint32_t h = vp_hash(k);
     VpEntry* e;
     if (s_vp_cur >= 0 && s_vp[s_vp_cur].hash == h && vk_same(&s_vp[s_vp_cur].key, k)) return;
+    /* the current program does it with units to spare: no switch at all */
+    if (XGX_VP_COVER && s_vp_cur >= 0 && k->ntex < s_vp[s_vp_cur].key.ntex && vk_covers(&s_vp[s_vp_cur].key, k)) {
+        s_st_vp_cover++;
+        return;
+    }
     s_vp_now++;
     s_st_vp_sel++;
     for (i = 0; i < VP_CACHE; i++)
         if (s_vp_hash[i] == h && s_vp_valid[i] && vk_same(&s_vp[i].key, k)) { pick = i; break; }
+    /* not resident: a resident program that covers it, rather than a load */
+    if (XGX_VP_COVER && (pick < 0 || s_vpm.start[pick] < 0))
+        for (i = 0; i < VP_CACHE; i++)
+            if (s_vp_valid[i] && s_vpm.start[i] >= 0 && s_vp[i].key.ntex > k->ntex && vk_covers(&s_vp[i].key, k)) {
+                pick = i;
+                s_st_vp_cover++;
+                break;
+            }
     if (pick < 0) {
         /* a free entry, or the least recently used (its memory is freed) */
         for (i = 0; i < VP_CACHE; i++)
