@@ -52,8 +52,8 @@ void xhw_yield(void);
 enum {
     XHW_PERF_LOGIC,   /* the game's simulation ticks (and anything preempting it) */
     XHW_PERF_RENDER,  /* the game's render pass: HSD walking the scene, GX state */
-    XHW_PERF_DLIST,   /* GX display lists -> canonical vertices */
-    XHW_PERF_DRAW,    /* back end: state diff, pushbuffer */
+    XHW_PERF_DLIST,   /* GX display lists -> canonical vertices, and their draws' back end */
+    XHW_PERF_DRAW,    /* back end of the immediate-mode draws: state diff, pushbuffer */
     XHW_PERF_TEX,     /* texture conversion and upload */
     XHW_PERF_EFB,     /* EFB copies read back on the CPU */
     XHW_PERF_GPU,     /* waiting for the GPU to go idle */
