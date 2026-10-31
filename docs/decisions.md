@@ -192,7 +192,8 @@ combiners; ThinLTO + PGO for releases.
     and at the present and logs `[GPUT]` per segment of the frame (the
     wait, the CPU time before it). It serializes the frame, so only its
     per-segment waits mean anything; off unless asked for.
-  - Ship builds read no clock around a display-list call
+  - Ship builds read no clock around a display-list call or an
+    immediate draw (`xgx_draw`'s "draw" bucket the same way)
     (`GXCallDisplayList`): test builds keep "dlist" in [PERF] (two `rdtsc`
     a call, ~1500 calls a frame in Main Plaza); a ship build only tags the
     bucket so the list's draws stay unbracketed, and the list's time lands
