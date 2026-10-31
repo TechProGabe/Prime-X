@@ -646,6 +646,25 @@ the world (Main Plaza peaks at 164 KB a frame), kept per visor mode.
 Effort 1-2 weeks; payoff: world draw CPU in every room to ~0.1 ms, the
 last piece of R. Switch `-DXGX_RECORD=0`.
 
+*Where it stands (2026-10-30, after hw15):* the pusher takes JUMPs (and
+CALLs) on red (hw15 r15e); JUMPs, which keep no state, are the way. What
+the 1-2 weeks were hiding, found reading the draw path: inside one world
+model's draw the per-frame inputs are not only the view: scrolled texture
+matrices (UV animation), texgens from the view (reflections), material
+colour animations and fog all reach vertex constants and combiner
+factors between the model's draws, interleaved. So either (1) the game's
+traversal still runs every frame (SetCurrent, the GX calls), and the
+record replaces only the back end (Main Plaza: dlist 3.5 + draw 5.6 ms in
+hw15) after checking that each draw's state matches the record's, a check
+that is most of what the back end's dirty tracking already does; or (2)
+the traversal is skipped too, and those per-frame values are worked out
+again for the record outside the game, a second implementation of
+CCubeMaterial's animations that has to match it everywhere (the retail
+look is the first priority). Since hw15 the back end's own costs went
+down instead (texture-only draws, static lists, compact chains, the
+texture memo, covering vertex programs): measure hw16 first, then decide
+between (1), (2) and stopping here. The user's call.
+
 **(b) Hardware voices on the MCPX APU.** Only if hw13 says the SSE mixer
 still costs over 10%. The Xbox's audio processor has 256 hardware voices
 with pitch, volume envelopes and 32 mix bins (what DirectSound used) and
