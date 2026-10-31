@@ -18,6 +18,10 @@ void xhw_log_com1_line(const char* line);
 void xhw_mem_log(const char* where);
 void xhw_flush_handle(HANDLE h);
 void xhw_flush_volume(char drive);
+/* pbkit's pb_init starts the pushbuffer engine with a store to 0x80000000
+ * (physical page 0 through the kernel's contiguous window): page 0 mapped
+ * there, claimed if it was free (xhw_sys.c) */
+void xhw_page0_guard(const char* when);
 void xhw_log_sync(void);               /* flush pending boot.log lines if the lock is free */
 int xhw_log_try(const char* line);     /* log + flush without blocking on the lock for long */
 int xhw_log_try_file(const char* text);

@@ -94,7 +94,12 @@ there is the limit). No audio fault in 21 chained scenes (hw11, hw12).
    queue). One more gold start crashed in `pb_init` (the write to
    0x80000000 that starts pbkit's pushbuffer, an access violation): the
    first in every round so far; the watchdog sent it to the dashboard.
-   Watch for it again.
+   Round hw18b (c1e4fff): it hit red too (r18d) and gold again (g18e):
+   3 in ~13 chained launches since hw18, none before. `xhw_page0_guard`
+   (boot and before pb_init) now logs the PTE of 0x80000000 and claims
+   physical page 0 if it is free (a contiguous allocation, highest
+   0xFFF), so the store lands in memory of ours; a `[MEM] page 0 ... not
+   mapped` line says which case it was.
 0b. **Stock drives** (2026-10-31, the user: gold's drive is what most
    players have, little free space, "we should address it"). No hardware
    tests until truly needed (the user turned the consoles off). Done,

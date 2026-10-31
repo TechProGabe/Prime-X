@@ -489,6 +489,25 @@ void xhw_vlog_raw(const char* fmt, va_list ap) {
     log_write(buf, (size_t)n, 0);
 }
 
+/* Round hw18: three chained launches (red at 480, gold at 720p) crashed in
+ * pb_init on that store, an access violation, the page not mapped; never
+ * before in any round. A page-0 allocation (lowest 0, highest 0xFFF) maps
+ * it there when it is free, and it stays ours. Logged either way: the PTE
+ * through the kernel's self-map at 0xC0000000. */
+void xhw_page0_guard(const char* when) {
+    const uint32_t* pte = (const uint32_t*)0xC0200000u;   /* 0xC0000000 + (0x80000000 >> 12) * 4 */
+    const uint32_t before = MmIsAddressValid((PVOID)pte) ? *pte : 0xFFFFFFFFu;
+    void* got;
+    if (MmIsAddressValid((PVOID)0x80000000u)) {
+        if (when[0] == 'b') xhw_logf("[MEM] page 0 at 0x80000000 mapped (%s, pte %08x)", when, (unsigned)before);
+        return;
+    }
+    got = MmAllocateContiguousMemoryEx(4096, 0, 0xFFF, 0, PAGE_READWRITE);
+    xhw_logf("[MEM] page 0 at 0x80000000 not mapped (%s, pte %08x): %s", when, (unsigned)before,
+             got == (void*)0x80000000u && MmIsAddressValid((PVOID)0x80000000u) ? "claimed, mapped now"
+             : got ? "claimed elsewhere?" : "in use elsewhere, not claimed");
+}
+
 /* ======================================================================
  * Time
  * ====================================================================== */
