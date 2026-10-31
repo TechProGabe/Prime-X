@@ -57,7 +57,21 @@ there is the limit). No audio fault in 21 chained scenes (hw11, hw12).
 
 ## Next session, in order
 
-0. **M6a on JUMPs** (hw15: both pushbuffer tests passed on red; hw14's
+0. **Round hw16, waiting for the user** (no hardware tests until they say;
+   2026-10-30 evening). Staged in `tools/xbox/scenarios/hw16` and
+   `C:\xemu\hw\prime\stage-hw16` but NOT uploaded; rebuild before the round,
+   since more landed after it was staged, all checked in xemu only:
+   - a room's geometry as static memory (no content checks on its lists),
+   - the list cache's chains in compact arrays,
+   - texture binds remembered per GXTexObj (`XGX_TEX_MEMO`, verify mode),
+   - the next surface's material prefetched,
+   - the mixer's resampler loop with its state in locals (bit-exact),
+   - covering vertex programs (`XGX_VP_COVER`: fight loads 25 -> 12/frame),
+   - the rain's line clip test in SSE (`XGX_LINE_SSE`, verified),
+   - the audio deadlock fix (`CMemory` without the interrupt lock), on red
+     and gold already as the free-play build.
+   Measure all against hw15 in the same four scenes.
+1. **M6a on JUMPs** (hw15: both pushbuffer tests passed on red; hw14's
    CALL failure fell on the boot's one context switch). hw15: Main Plaza
    38-39 -> 43-44, pirates 33 -> 34-35, Lava Lake 42 -> 44-45 with
    texture-only draws (`XGX_MAPS_FAST`). The back end (`xgx_draw`,
