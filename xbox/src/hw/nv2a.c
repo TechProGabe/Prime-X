@@ -3634,6 +3634,28 @@ static uint32_t s_mrg_last, s_mrg_have;   /* strips: the last vertex index, the 
 static const uint8_t* s_mrg_base;
 static XgxLayout s_mrg_layout;
 
+/* rel / s and whether it divides exactly, without a divide (~40 cycles on
+ * the Pentium III, once a draw): the quotient from s's reciprocal (a table
+ * by stride, strides being whole words), put right by one either way when
+ * it is off. rel is under 2^26 (the ring and the pools), so d * s can't
+ * wrap. Others divide. */
+#define DIV_STRIDES 129
+static uint32_t s_stride_inv[DIV_STRIDES];
+static inline int div_exact(uint32_t rel, uint32_t s, uint32_t* q) {
+    uint32_t d, inv;
+    if ((s & 3) || s / 4 >= DIV_STRIDES || !s) {
+        *q = rel / s;
+        return rel % s == 0;
+    }
+    inv = s_stride_inv[s >> 2];
+    if (!inv) inv = s_stride_inv[s >> 2] = 0xFFFFFFFFu / s + 1u;
+    d = (uint32_t)(((uint64_t)rel * inv) >> 32);
+    if (d * s > rel) d--;
+    else if ((d + 1) * s <= rel) d++;
+    *q = d;
+    return d * s == rel;
+}
+
 /* the vertex window a draw's arrays point at (see xgx_draw) and its first index there */
 static const uint8_t* draw_window(const XgxLayout* layout, uint32_t count, uint32_t* first) {
     const uint8_t* base = s_draw_base;
@@ -3641,9 +3663,10 @@ static const uint8_t* draw_window(const XgxLayout* layout, uint32_t count, uint3
                             : pool_owns(&s_vb, s_draw_base)                             ? s_vb.base
                                                                                         : NULL;
     uint32_t rel = region ? (uint32_t)(s_draw_base - region) : 0;
+    uint32_t idx;
     *first = 0;
-    if (region && rel % layout->stride == 0) {
-        uint32_t idx = rel / layout->stride, win = idx & ~(VTX_WINDOW - 1);
+    if (region && div_exact(rel, layout->stride, &idx)) {
+        uint32_t win = idx & ~(VTX_WINDOW - 1);
         if (idx - win + count <= 0x10000u) {
             base = region + win * layout->stride;
             *first = idx - win;
