@@ -2,12 +2,10 @@
  *
  * ARAM is a host buffer at a fixed VA; ARAM "addresses" are offsets into it,
  * which is what PC_IS_ARAM_ADDR (below 16 MB) relies on. It is committed on
- * demand (xhw_reserve_lazy): only the parts the game fills cost Xbox RAM. ARQ transfers are
- * plain copies done at post time; their callbacks are queued and delivered by
- * a worker thread holding the interrupt lock, the way the ARAM interrupt ran:
- * as soon as the poster re-enables interrupts, whatever the game thread is
- * doing. Loaders spin on flags those callbacks set (HSD_SynthSFXWaitForLoad-
- * Completion), so waiting for the game thread's next frame would deadlock.
+ * demand (xhw_reserve_lazy): only the parts the game fills cost Xbox RAM. ARQ transfers
+ * with a callback are copied by a worker thread and their callbacks run on
+ * the game thread (below, "ARQ"); loaders spin on flags those callbacks
+ * set, delivering them as they spin (ARQPoll, interrupts re-enabled).
  *
  * Disc-backed pages. Melee fills ARAM with files it preloads, and with the
  * 24 MB MEM1 that is more than the Xbox has once the game has been running
@@ -31,6 +29,7 @@
 #include <dolphin/ar.h>
 #include <dolphin/os.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "xhw.h"
@@ -210,18 +209,11 @@ static int swap_out(u32 c) {
 /* xhw_mem reclaimer: whole chunks back to the kernel, round robin from
  * where the last call stopped; those all on the disc or in the swap file
  * cost nothing, the rest a 64 KB write each. */
-static u32 aram_reclaim(u32 want_kb, int urgent) {
-    u32 got = 0, pass, i, start, now = xsdk_frame_count();
-    if (!s_aram) return 0;
-    if (urgent) {
-        if (!xhw_mutex_trylock(s_lock)) return 0;
-    } else {
-        xhw_mutex_lock(s_lock);
-    }
-    start = s_cursor;
-    /* passes: chunks on the disc, then cold ones through the swap file,
-     * then (urgent, or still short) hot ones too */
-    for (pass = 0; pass < 3 && got < want_kb; pass++)
+/* passes [0, npass): chunks on the disc, then cold ones through the swap
+ * file, then (urgent, or still short) hot ones too. s_lock held. */
+static u32 reclaim_passes(u32 want_kb, int urgent, u32 npass) {
+    u32 got = 0, pass, i, start = s_cursor, now = xsdk_frame_count();
+    for (pass = 0; pass < npass && got < want_kb; pass++)
         for (i = 0; i < NCHUNKS && got < want_kb; i++) {
             u32 c = (start + i) % NCHUNKS;
             u8* chunk = s_aram + c * CHUNK;
@@ -233,14 +225,34 @@ static u32 aram_reclaim(u32 want_kb, int urgent) {
             got += CHUNK / 1024;
             s_cursor = (c + 1) % NCHUNKS;
         }
+    return got;
+}
+
+static int arq_reclaim_ask(u32 kb);   /* the ARQ worker's swap-outs (below) */
+
+static u32 aram_reclaim(u32 want_kb, int urgent) {
+    u32 got;
+    if (!s_aram) return 0;
+    /* never waited for, urgent or not: the ARQ worker holds it through an
+     * image read (seconds on a full stock drive), and xhw_mem_tick runs on
+     * the game thread; the next frame tries again */
+    if (!xhw_mutex_trylock(s_lock)) return 0;
+    /* xhw_mem_tick (the game thread): what costs no I/O here, the swap
+     * file's 64 KB writes on the ARQ worker (each a stall on a stock drive:
+     * up to 16 a frame) */
+    got = reclaim_passes(want_kb, urgent, urgent ? 3 : 1);
+    if (!urgent && got < want_kb && !arq_reclaim_ask(want_kb - got)) got += reclaim_passes(want_kb - got, 0, 3);
     xhw_mutex_unlock(s_lock);
     return got;
 }
+
+static void xsdk_arq_log(void);
 
 void xsdk_aram_log(void) {
     xhw_logf("[AR] %u KB on the disc, %u KB in the swap file (%u slots); %u chunks swapped out, %u filled back",
              (unsigned)xsdk_aram_disc_kb(), (unsigned)xsdk_aram_swap_kb(), (unsigned)s_slots,
              (unsigned)s_swapped_out, (unsigned)s_swap_fills);
+    xsdk_arq_log();
 }
 
 /* main memory -> ARAM; disc: the image offset of src's bytes, or NO_DISC */
@@ -334,8 +346,11 @@ ARQCallback ARRegisterDMACallback(ARQCallback cb) {
 
 u32 ARGetDMAStatus(void) { return 0; }
 
-/* type 0: main memory -> ARAM; 1: ARAM -> main memory */
-static void copy(u32 type, uintptr_t mram, uintptr_t aram, u32 length) {
+/* type 0: main memory -> ARAM; 1: ARAM -> main memory. disc (type 0): the
+ * image offset of mram's bytes (xsdk_dvd_disc_source, looked up where the
+ * request is posted: it holds only inside the DVD read's callback), or
+ * NO_DISC */
+static void copy_from(u32 type, uintptr_t mram, uintptr_t aram, u32 length, u32 disc) {
     aram_map();
     if (aram + length > ARAM_SIZE) {
         xhw_logf("[AR] DMA out of range: %08x + %u", (unsigned)aram, length);
@@ -344,8 +359,6 @@ static void copy(u32 type, uintptr_t mram, uintptr_t aram, u32 length) {
     xhw_commit((const void*)mram, length);
     xhw_mutex_lock(s_lock);
     if (type == 0) {
-        u32 disc;
-        if (!xsdk_dvd_disc_source((const void*)mram, length, &disc)) disc = NO_DISC;
 #ifdef XSDK_ARAM_VERIFY
         {
             static u8 tmp[0x80000];
@@ -364,36 +377,157 @@ static void copy(u32 type, uintptr_t mram, uintptr_t aram, u32 length) {
     xhw_mutex_unlock(s_lock);
 }
 
+static u32 disc_source(u32 type, uintptr_t mram, u32 length) {
+    u32 disc;
+    if (type != 0 || !xsdk_dvd_disc_source((const void*)mram, length, &disc)) return NO_DISC;
+    return disc;
+}
+
+static void arq_drain(void);
+
 void ARStartDMA(u32 type, u32 mainmem_addr, u32 aram_addr, u32 length) {
-    copy(type, (uintptr_t)mainmem_addr, aram_addr, length);
+    arq_drain();
+    copy_from(type, (uintptr_t)mainmem_addr, aram_addr, length, disc_source(type, mainmem_addr, length));
     if (s_dma_cb) s_dma_cb(0);
 }
 
 u16 __ARGetInterruptStatus(void) { return 0; }
 void __ARClearInterrupt(void) {}
 
-/* ---- ARQ ---- */
-#define QMAX 128
-static ARQRequest* s_done[QMAX];
-static int s_done_head, s_done_n;
-static int s_arq_init;
-static xhw_event* s_arq_event;
+/* ---- ARQ ----
+ * Requests with a callback are copied by a worker thread, in the order
+ * posted (one FIFO, both priorities: stricter than the GameCube's), and
+ * their callbacks delivered on the game thread as before (ARQPoll, the
+ * frame boundary, OSYieldThread, interrupts re-enabled). A copy out of
+ * ARAM whose pages live on the disc image or in the swap file reads the
+ * drive: done at post time on the game thread, round hw17's gold console
+ * (a stock drive, its partition nearly full) froze ~6 s at room loads and
+ * stalled past a second ~18 times a scene in CDvdFile::AsyncSeekRead ->
+ * CARAMManager::DMAToMRAM. On the GameCube those copies run in the
+ * background too. Requests without a callback wait for the queue, then
+ * copy at once. The worker never takes the interrupt lock (a poster may
+ * hold it while it waits for the queue): its queues have s_jlock.
+ * OFF by default (2026-10-31): with it on, xemu's title-screen Port
+ * Options frame came up without its text (with it off, the same run drew
+ * it), so some reader of ARAM still counts on the copy being done when
+ * ARQPostRequest returns; not found yet. -DXSDK_ARQ_ASYNC=1, or test
+ * builds' env PX_ARQ_ASYNC=1, turn it on. The worker runs either way: the
+ * reclaimer's swap-file writes go there (aram_reclaim). */
+#ifndef XSDK_ARQ_ASYNC
+#define XSDK_ARQ_ASYNC 0
+#endif
+#define QMAX 512   /* copies waiting for the worker; more: at post time, after them */
+typedef struct {
+    ARQRequest* r;   /* NULL once removed (ARQRemoveRequest): copied, no callback */
+    u32 type, length, disc;
+    uintptr_t mram, aram;
+} ArqJob;
+static ArqJob s_job[QMAX];
+static int s_job_head, s_job_n;
+static ARQRequest* s_job_cur;      /* being copied */
+static int s_job_cur_removed;
+static volatile int s_job_busy;    /* posted, not yet copied */
+/* copied, callbacks not yet run: a list through the requests' own next
+ * (no bound: a room load posts hundreds of CDvdFile reads at once, and the
+ * GameCube's queue has no limit either; a 128-entry array overflowed in
+ * xemu with slowed image reads) */
+static ARQRequest *s_done_first, *s_done_last;
+static int s_done_n;
+static volatile u32 s_reclaim_ask;   /* KB aram_reclaim left to the worker's swap-outs */
+static u32 s_st_reclaim_kb;
+static xhw_mutex* s_jlock;         /* s_job*, s_done* */
+static xhw_event* s_job_event;
+static int s_arq_init, s_async = -1, s_worker;
+static u32 s_st_jobs, s_st_job_max, s_st_sync;
 
-/* Prime's ARQ callbacks (CDvdFile, CARAMToken) take the game's own locks:
- * run on another thread they deadlock against the game thread (one holds
- * the interrupt lock and waits for CDvdFile's mutex, the other the reverse).
- * MetroidPrimePort delivers them on the main thread at ARQPoll; so does
- * this, plus the frame boundary and OSYieldThread (prime_sdk.c). No worker. */
-void ARQInit(void) { s_arq_init = 1; }
+/* s_jlock held */
+static void done_push(ARQRequest* r) {
+    r->next = NULL;
+    if (s_done_last) s_done_last->next = r;
+    else s_done_first = r;
+    s_done_last = r;
+    s_done_n++;
+}
+
+static void arq_worker(void* arg) {
+    (void)arg;
+    for (;;) {
+        ArqJob j;
+        xhw_mutex_lock(s_jlock);
+        while (s_job_n == 0) {
+            const u32 ask = __atomic_exchange_n(&s_reclaim_ask, 0, __ATOMIC_SEQ_CST);
+            xhw_mutex_unlock(s_jlock);
+            if (ask) {   /* between copies: the cold chunks through the swap file */
+                xhw_mutex_lock(s_lock);
+                s_st_reclaim_kb += reclaim_passes(ask, 0, 3);
+                xhw_mutex_unlock(s_lock);
+            } else {
+                xhw_event_wait(s_job_event, 100);
+            }
+            xhw_mutex_lock(s_jlock);
+        }
+        j = s_job[s_job_head];
+        s_job_head = (s_job_head + 1) % QMAX;
+        s_job_n--;
+        s_job_cur = j.r;
+        s_job_cur_removed = 0;
+        xhw_mutex_unlock(s_jlock);
+        copy_from(j.type, j.mram, j.aram, j.length, j.disc);
+        xhw_mutex_lock(s_jlock);
+        if (j.r && !s_job_cur_removed) done_push(j.r);
+        s_job_cur = NULL;
+        __atomic_fetch_sub(&s_job_busy, 1, __ATOMIC_SEQ_CST);
+        xhw_mutex_unlock(s_jlock);
+    }
+}
+
+static void arq_start(void) {
+    if (s_jlock) return;
+    s_jlock = xhw_mutex_create();
+    s_job_event = xhw_event_create();
+    {
+        const char* e = XHW_TEST_BUILD ? getenv("PX_ARQ_ASYNC") : NULL;
+        s_async = e ? atoi(e) != 0 : XSDK_ARQ_ASYNC;
+    }
+    s_worker = xhw_thread_start(arq_worker, NULL, 1, 64 * 1024);
+    if (!s_worker) s_async = 0;
+    xhw_logf("[AR] ARQ copies %s", s_async ? "on a worker thread" : "at post time");
+}
+
+static int arq_reclaim_ask(u32 kb) {
+    if (!s_worker) return 0;
+    __atomic_store_n(&s_reclaim_ask, kb, __ATOMIC_SEQ_CST);
+    xhw_event_signal(s_job_event);
+    return 1;
+}
+
+/* until every posted copy is done (the worker never needs the interrupt
+ * lock, so the caller may hold it) */
+static void arq_drain(void) {
+    while (s_job_busy) xhw_sleep_ms(1);
+}
+
+void ARQInit(void) {
+    arq_start();
+    s_arq_init = 1;
+}
 void ARQReset(void) {}
 BOOL ARQCheckInit(void) { return s_arq_init; }
 void ARQSetChunkSize(u32 size) { (void)size; }
 u32 ARQGetChunkSize(void) { return 4096; }
-int aurora_arq_inflight(void) { return s_done_n; }
+int aurora_arq_inflight(void) { return s_done_n + (int)s_job_busy; }
+
+static void xsdk_arq_log(void) {
+    if (s_st_jobs || s_st_sync || s_st_reclaim_kb)
+        xhw_logf("[AR] ARQ: %u copies on the worker (at most %u waiting), %u at post time; %u KB reclaimed there",
+                 (unsigned)s_st_jobs, (unsigned)s_st_job_max, (unsigned)s_st_sync, (unsigned)s_st_reclaim_kb);
+    s_st_jobs = s_st_job_max = s_st_sync = s_st_reclaim_kb = 0;
+}
 
 void ARQPostRequest(ARQRequest* r, u32 owner, u32 type, u32 priority, uintptr_t source, uintptr_t dest,
                     u32 length, ARQCallback callback) {
-    BOOL intr;
+    const uintptr_t mram = type == 0 ? source : dest, aram = type == 0 ? dest : source;
+    const u32 disc = disc_source(type, mram, length);
     r->next = NULL;
     r->owner = owner;
     r->type = type;
@@ -402,47 +536,90 @@ void ARQPostRequest(ARQRequest* r, u32 owner, u32 type, u32 priority, uintptr_t 
     r->dest = dest;
     r->length = length;
     r->callback = callback;
-    if ((type == 0 ? dest : source) + length > ARAM_SIZE)
+    if (aram + length > ARAM_SIZE)
         xhw_logf("[AR] ARQ type %u %08x -> %08x + %u from %p", (unsigned)type, (unsigned)source, (unsigned)dest,
                  (unsigned)length, __builtin_return_address(0));
-    if (type == 0) copy(0, source, dest, length);
-    else copy(1, dest, source, length);
-    if (!callback) return;
-    intr = OSDisableInterrupts();
-    if (s_done_n == QMAX) OSPanic(__FILE__, __LINE__, "ARQ completion queue overflow");
-    s_done[(s_done_head + s_done_n++) % QMAX] = r;
-    OSRestoreInterrupts(intr);
-    if (s_arq_event) xhw_event_signal(s_arq_event);
-}
-
-void ARQRemoveRequest(ARQRequest* r) {
-    int i;
-    BOOL intr = OSDisableInterrupts();
-    for (i = 0; i < s_done_n; i++)
-        if (s_done[(s_done_head + i) % QMAX] == r) s_done[(s_done_head + i) % QMAX] = NULL;
-    OSRestoreInterrupts(intr);
-}
-
-void ARQRemoveOwnerRequest(u32 owner) {
-    int i;
-    BOOL intr = OSDisableInterrupts();
-    for (i = 0; i < s_done_n; i++) {
-        ARQRequest* r = s_done[(s_done_head + i) % QMAX];
-        if (r && r->owner == owner) s_done[(s_done_head + i) % QMAX] = NULL;
+    arq_start();
+    if (s_async && callback) {
+        xhw_mutex_lock(s_jlock);
+        if (s_job_n < QMAX) {
+            ArqJob* j = &s_job[(s_job_head + s_job_n++) % QMAX];
+            j->r = r;
+            j->type = type;
+            j->mram = mram;
+            j->aram = aram;
+            j->length = length;
+            j->disc = disc;
+            __atomic_fetch_add(&s_job_busy, 1, __ATOMIC_SEQ_CST);
+            s_st_jobs++;
+            if ((u32)s_job_n > s_st_job_max) s_st_job_max = (u32)s_job_n;
+            xhw_mutex_unlock(s_jlock);
+            xhw_event_signal(s_job_event);
+            return;
+        }
+        xhw_mutex_unlock(s_jlock);   /* full: at post time, after the rest */
     }
-    OSRestoreInterrupts(intr);
+    arq_drain();
+    copy_from(type, mram, aram, length, disc);
+    s_st_sync++;
+    if (!callback) return;
+    xhw_mutex_lock(s_jlock);
+    done_push(r);
+    xhw_mutex_unlock(s_jlock);
 }
+
+/* the request's callback won't run; its copy still happens (as before,
+ * when every copy was done as it was posted) */
+static void arq_remove(ARQRequest* r, int by_owner, u32 owner) {
+    int i;
+    if (!s_jlock) return;
+    xhw_mutex_lock(s_jlock);
+    {   /* out of the list */
+        ARQRequest *d = s_done_first, *prev = NULL;
+        while (d) {
+            ARQRequest* next = d->next;
+            if (by_owner ? d->owner == owner : d == r) {
+                if (prev) prev->next = next;
+                else s_done_first = next;
+                if (s_done_last == d) s_done_last = prev;
+                s_done_n--;
+            } else {
+                prev = d;
+            }
+            d = next;
+        }
+    }
+    for (i = 0; i < s_job_n; i++) {
+        ArqJob* j = &s_job[(s_job_head + i) % QMAX];
+        if (j->r && (by_owner ? j->r->owner == owner : j->r == r)) j->r = NULL;
+    }
+    if (s_job_cur && (by_owner ? s_job_cur->owner == owner : s_job_cur == r)) s_job_cur_removed = 1;
+    xhw_mutex_unlock(s_jlock);
+}
+
+void ARQRemoveRequest(ARQRequest* r) { arq_remove(r, 0, 0); }
+void ARQRemoveOwnerRequest(u32 owner) { arq_remove(NULL, 1, owner); }
 
 void ARQFlushQueue(void) { xsdk_arq_deliver(); }
 
-/* Callbacks run with interrupts disabled, as in the interrupt handler, so
- * the worker and the game thread's frame-boundary delivery never overlap. */
+/* Callbacks run on the game thread with interrupts disabled, as in the
+ * interrupt handler (Prime's take the game's own locks). */
 void xsdk_arq_deliver(void) {
-    BOOL intr = OSDisableInterrupts();
-    while (s_done_n > 0) {
-        ARQRequest* r = s_done[s_done_head];
-        s_done_head = (s_done_head + 1) % QMAX;
+    BOOL intr;
+    if (!s_jlock) return;
+    intr = OSDisableInterrupts();
+    for (;;) {
+        ARQRequest* r;
+        xhw_mutex_lock(s_jlock);
+        r = s_done_first;
+        if (!r) {
+            xhw_mutex_unlock(s_jlock);
+            break;
+        }
+        s_done_first = r->next;
+        if (!s_done_first) s_done_last = NULL;
         s_done_n--;
+        xhw_mutex_unlock(s_jlock);
         if (r && r->callback) r->callback(r);
     }
     OSRestoreInterrupts(intr);

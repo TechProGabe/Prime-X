@@ -123,6 +123,8 @@ const wchar_t* Title(int option) {
     return L"Fusion Suit";
   case kXO_SkipCutscenes:
     return L"Skip Cutscenes";
+  case kXO_LogFile:
+    return L"Log File";
   default:
     return IsBind(option) ? kButtonNames[option - kXO_BindFirst] : L"";
   }
@@ -157,6 +159,8 @@ const wchar_t* Description(int option) {
     return L"START skips any cutscene, from the next room.";
   case kXO_FusionSuit:
     return L"The Fusion Suit, a GBA-link bonus on the GameCube.";
+  case kXO_LogFile:
+    return L"Writes boot.log to the save folder, for bug reports.";
   default:
     return nullptr;
   }
@@ -292,6 +296,8 @@ int Get(int option) {
     return gpGameState != nullptr && gpGameState->SystemState().GetHasFusion() ? 1 : 0;
   case kXO_SkipCutscenes:
     return st.skip_cutscenes ? 1 : 0;
+  case kXO_LogFile:
+    return st.log ? 1 : 0;
   default:
     return 0;
   }
@@ -360,6 +366,11 @@ void Set(int option, int value) {
   case kXO_SkipCutscenes:
     st.skip_cutscenes = value > 0;
     PortDebug::SetSkippableCutscenes(st.skip_cutscenes != 0);
+    break;
+  case kXO_LogFile:
+    // at once: on opens boot.log (a new one), off closes it
+    st.log = value > 0;
+    xhw_log_set_file(st.log);
     break;
   case kXO_FusionSuit:
     // What the Fusion bonuses screen does once a GBA has linked: the

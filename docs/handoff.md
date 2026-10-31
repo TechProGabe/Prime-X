@@ -80,6 +80,20 @@ there is the limit). No audio fault in 21 chained scenes (hw11, hw12).
    (F:, 3.6 GB free on E:) has ~1 such stall a scene. Other 720p scenes:
    pirates 27-30, Landing Site 31-49, Lava Lake 35-41, Phendrana 30-34
    (GPU 12-14 ms a frame: fill).
+0b. **Stock drives** (2026-10-31, the user: gold's drive is what most
+   players have, little free space, "we should address it"). No hardware
+   tests until truly needed (the user turned the consoles off). Done,
+   xemu only: boot.log through a writer thread, and off in release builds
+   unless Port Options > System > Log File is on (the user); the
+   reclaimer's swap writes on the ARQ worker (decisions.md "The hard
+   drive stays off the game thread", "No boot.log in release builds").
+   xemu with every boot.log write slowed to 300 ms: the same stalls and
+   frame rates as without; room sweep clean. ARQ copies on the worker
+   are written but off: with them on the title's Port Options frame had
+   no text (some ARAM reader expects the copy done at post time; find it
+   with `env PX_ARQ_ASYNC=1`, then they would take the room loads' image
+   reads off the game thread). hw17b (staged, not uploaded) predates all
+   this: restage before the next gold round.
 1. **Round hw16 ran on red** (2026-10-31, `logs-hw16`, all 11 scenes and
    their shots, no fault). Against hw15: pirates 34-35 -> 37-38, Main
    Plaza 43-44 -> 47-48, Lava Lake 44-45 (same), Landing Site 35-37 ->

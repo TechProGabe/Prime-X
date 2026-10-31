@@ -26,6 +26,7 @@ enum EOption {
   kXO_FusionSuit,                // Off / On: the GBA-link bonus, unlocked here (title screen)
   kXO_SkipCutscenes,             // Off / On: every cutscene skippable (from the next room)
   kXO_GameTiming,                // removed 2026-10-30: Game Timing is always Auto (port_debug.cpp)
+  kXO_LogFile,                   // Off / On: boot.log in the save folder (release builds; test builds always)
   // Buttons: what each Xbox button does, a carousel of the game's actions
   // (IsList): A, B, X, Y, White, Black, Start, Back, the stick clicks
   kXO_BindFirst,

@@ -84,6 +84,11 @@ void xhw_flush_handle(HANDLE h) {
     NtFlushBuffersFile(h, &iosb);
 }
 
+static void logq_writer(void* arg);
+static void log_lock_init(void);
+static xhw_event* s_logq_event;
+static volatile int s_logq_thread;
+
 /* The folder boot.log is in: the save folder, or D:\ (next to default.xbe)
  * when the save folder can't be written, so a console whose saves, settings
  * and screenshots never appear still leaves a log (xhw_log_fallback). */
@@ -98,8 +103,13 @@ static int e_has_room(void) {
 
 unsigned xhw_log_fallback(void) { return s_log_fallback; }
 
+/* boot.log at all: 1 yes, 0 no, -1 not known yet (release builds until
+ * settings.ini is read: the lines wait in the queue) */
+static int s_log_mode = XHW_TEST_BUILD ? 1 : -1;
+
 void xhw_log_open_file(void) {
     char path[MAX_PATH], prev[MAX_PATH];
+    if (s_log_mode != 1) return;   /* release builds: xhw_log_set_file opens it */
     s_log_dir = xhw_save_dir();
     snprintf(path, sizeof path, "%sboot.log", s_log_dir);
     /* the previous boot's log stays as boot_prev.log: a "Save and restart"
@@ -124,6 +134,9 @@ void xhw_log_open_file(void) {
     DeleteFileA(path);
     snprintf(path, sizeof path, "%strace.log", s_log_dir);
     DeleteFileA(path);
+    log_lock_init();
+    if (s_bootlog != INVALID_HANDLE_VALUE && !s_logq_thread && (s_logq_event = xhw_event_create()) != NULL)
+        s_logq_thread = xhw_thread_start(logq_writer, NULL, -1, 16 * 1024);
 }
 
 /* Under the log lock: boot.log (or the current part) is full, go on in the
@@ -171,7 +184,65 @@ static int log_line_urgent(const char* s, size_t n) {
     return 0;
 }
 
-static void log_flush_locked(void) {
+/* Lines a crash, a hang or an exit follows at once: on disk before the
+ * caller goes on (the writer thread may not get to run again). */
+static int log_line_critical(const char* s, size_t n) {
+    static const char* const k_tags[] = { "[WDOG]", "[FATAL]", "[CRASH]", NULL };
+    int i;
+    for (i = 0; k_tags[i]; i++) {
+        size_t k = strlen(k_tags[i]);
+        if (n >= k && memcmp(s, k_tags[i], k) == 0) return 1;
+    }
+    return 0;
+}
+
+/* boot.log's writer thread. A line only goes into s_logq (under s_log_cs,
+ * with the tail and COM1 as before); the writer moves the queue to the file
+ * (s_logf_cs) and flushes at most once a second, sooner after an urgent
+ * line. Round hw17's gold console (a stock drive, its partition nearly
+ * full: a 900 KB screenshot took 26-49 s to write) stalled the game ~1.3 s
+ * every 600 frames writing the stats lines on the game thread; every
+ * [MEM] line flushed there too. Crash, hang and exit paths still drain the
+ * queue themselves (log_try, xhw_log_sync, xhw_log_keep, critical lines).
+ * A queue the drive can't keep up with drops lines (counted in a [LOG]
+ * line) rather than stall the game. Lock order: s_logf_cs, then s_log_cs. */
+#define LOGQ_SIZE (256 * 1024)
+static char s_logq[LOGQ_SIZE];
+static unsigned s_logq_head, s_logq_n;   /* s_log_cs */
+static unsigned s_logq_dropped;          /* s_log_cs: bytes it had no room for */
+static CRITICAL_SECTION s_logf_cs;       /* s_bootlog and its counts, s_tracelog's flush */
+/* s_logq_event, s_logq_thread: above (xhw_log_open_file starts the writer) */
+static volatile int s_logq_flush;        /* an urgent line: onto the disk once written */
+
+static void logq_put_locked(const char* s, size_t n) {
+    size_t i;
+    if (s_logq_n + n > LOGQ_SIZE) {
+        s_logq_dropped += (unsigned)n;
+        return;
+    }
+    for (i = 0; i < n; i++) s_logq[(s_logq_head + s_logq_n + i) % LOGQ_SIZE] = s[i];
+    s_logq_n += (unsigned)n;
+}
+
+/* s_logf_cs held */
+static void bootlog_file_write(const char* s, size_t n) {
+    DWORD w;
+    if (s_bootlog != INVALID_HANDLE_VALUE && s_bootlog_bytes >= (s_bootlog_part ? BOOTLOG_PART : BOOTLOG_MAX))
+        bootlog_next_part();
+    if (s_bootlog == INVALID_HANDLE_VALUE) return;
+#if XHW_TEST_BUILD
+    {   /* env PX_LOG_DELAY_MS=n: every write waits n ms (gold's drive in xemu) */
+        const char* e = getenv("PX_LOG_DELAY_MS");
+        if (e) Sleep((DWORD)atoi(e));
+    }
+#endif
+    WriteFile(s_bootlog, s, (DWORD)n, &w, NULL);
+    s_bootlog_bytes += (unsigned)n;
+    s_bootlog_dirty = 1;
+}
+
+/* s_logf_cs held */
+static void log_flush_file(void) {
     if (s_tracelog_dirty) {   /* trace lines come in bursts (one frame's draws); the 1 Hz sync lands them */
         xhw_flush_handle(s_tracelog);
         s_tracelog_dirty = 0;
@@ -182,71 +253,158 @@ static void log_flush_locked(void) {
     s_bootlog_flushed = xhw_time_ns();
 }
 
+/* patient: up to ~0.5 s, then on without it (a hung thread may hold it);
+ * 1 if taken */
+static int cs_enter(CRITICAL_SECTION* cs, int patient) {
+    int tries;
+    if (!patient) {
+        EnterCriticalSection(cs);
+        return 1;
+    }
+    for (tries = 0; tries < 50; tries++) {
+        if (TryEnterCriticalSection(cs)) return 1;
+        Sleep(10);
+    }
+    return 0;
+}
+
+/* the queue into the file; flush: onto the disk too */
+static void logq_drain(int flush, int patient) {
+    static char chunk[8192];
+    const int fl = cs_enter(&s_logf_cs, patient);
+    if (s_bootlog == INVALID_HANDLE_VALUE) {   /* not open (yet): the queue waits */
+        if (fl) LeaveCriticalSection(&s_logf_cs);
+        return;
+    }
+    for (;;) {
+        unsigned n, i, dropped = 0;
+        const int ql = cs_enter(&s_log_cs, patient);
+        n = s_logq_n < sizeof chunk ? s_logq_n : (unsigned)sizeof chunk;
+        for (i = 0; i < n; i++) chunk[i] = s_logq[(s_logq_head + i) % LOGQ_SIZE];
+        s_logq_head = (s_logq_head + n) % LOGQ_SIZE;
+        s_logq_n -= n;
+        if (!n) {
+            dropped = s_logq_dropped;
+            s_logq_dropped = 0;
+        }
+        if (ql) LeaveCriticalSection(&s_log_cs);
+        if (n) {
+            bootlog_file_write(chunk, n);
+            continue;
+        }
+        if (dropped) {
+            char note[112];
+            const int k = snprintf(note, sizeof note, "[LOG] %u bytes of lines not written: the drive fell behind\n",
+                                   dropped);
+            if (k > 0) bootlog_file_write(note, (size_t)k);
+        }
+        break;
+    }
+    if (flush) log_flush_file();
+    if (fl) LeaveCriticalSection(&s_logf_cs);
+}
+
+static void logq_writer(void* arg) {
+    (void)arg;
+    for (;;) {
+        int flush;
+        xhw_event_wait(s_logq_event, 250);
+        flush = s_logq_flush || xhw_time_ns() - s_bootlog_flushed > 1000000000ull;
+        s_logq_flush = 0;
+        logq_drain(flush, 0);
+    }
+}
+
 static int s_log_no_com1;   /* set under the lock: the text already went to COM1 */
 
 static int s_log_trace;   /* set under the lock: the current line is a [DRAW] line */
 
-static void log_write_locked(const char* s, size_t n) {
+/* 1: the caller drains the queue once the lock is let go (no writer yet,
+ * or a critical line) */
+static int log_write_locked(const char* s, size_t n) {
     size_t i;
     if (s_log_trace) {   /* COM1 and trace.log only: keep boot.log and the report tail readable */
         if (!s_log_no_com1) com1_write(s, n);
         tracelog_write_locked(s, n);
-        return;
+        return 0;
     }
     for (i = 0; i < n; i++) s_tail[(s_tail_pos + i) % TAIL_SIZE] = s[i];
     s_tail_pos += (unsigned)n;
     if (!s_log_no_com1) com1_write(s, n);
-    if (s_bootlog != INVALID_HANDLE_VALUE && s_bootlog_bytes >= (s_bootlog_part ? BOOTLOG_PART : BOOTLOG_MAX))
-        bootlog_next_part();
-    if (s_bootlog != INVALID_HANDLE_VALUE) {
-        DWORD w;
-        WriteFile(s_bootlog, s, (DWORD)n, &w, NULL);
-        s_bootlog_bytes += (unsigned)n;
-        s_bootlog_dirty = 1;
-        /* Every line while booting and every urgent one (scene changes,
-         * warnings, faults); otherwise at most once a second here, and the
-         * watchdog's 1 Hz tick (xhw_log_sync) flushes whatever is left, so
-         * at most a second of routine lines can be lost. A flush per line
-         * costs a disk write, and a chatty scene then runs at a few fps. */
-        if (xhw_frame_count() < 600 || log_line_urgent(s, n) || xhw_time_ns() - s_bootlog_flushed > 1000000000ull)
-            log_flush_locked();
+    if (s_bootlog == INVALID_HANDLE_VALUE) {
+        if (s_log_mode < 0) logq_put_locked(s, n);   /* settings.ini will say */
+        return 0;
     }
+    logq_put_locked(s, n);
+    /* every line while booting and every urgent one (scene changes,
+     * warnings, faults) flushed as soon as it is written; otherwise once
+     * a second */
+    if (xhw_frame_count() < 600 || log_line_urgent(s, n)) s_logq_flush = 1;
+    return !s_logq_thread || log_line_critical(s, n);
 }
 
 static void log_lock_init(void) {
     if (!s_log_cs_init) {
+        InitializeCriticalSection(&s_logf_cs);
         InitializeCriticalSection(&s_log_cs);
         s_log_cs_init = 1;
     }
 }
 
-/* Flush pending lines without waiting for the lock (the watchdog, 1 Hz). */
+/* Everything written so far onto the disk, without waiting for the file
+ * (the watchdog, 1 Hz; the audio start-up's steps). */
 void xhw_log_sync(void) {
-    if (!s_log_cs_init || !TryEnterCriticalSection(&s_log_cs)) return;
-    log_flush_locked();
-    LeaveCriticalSection(&s_log_cs);
+    if (!s_log_cs_init || !TryEnterCriticalSection(&s_logf_cs)) return;
+    logq_drain(1, 0);
+    LeaveCriticalSection(&s_logf_cs);
 }
 
 /* A line from a thread that must not block on the log lock (the watchdog):
  * waits up to ~0.5 s for it, then writes anyway. A thread stuck holding the
  * lock is exactly the case the report is for; an interleaved line is the
- * lesser evil. Returns 1 if the lock was taken. */
+ * lesser evil. On disk before it returns. Returns 1 if the lock was taken. */
 static int log_try(const char* line, int com1) {
     size_t n = strlen(line);
-    int tries, locked = 0;
+    int locked;
     log_lock_init();
-    for (tries = 0; tries < 50 && !(locked = TryEnterCriticalSection(&s_log_cs)); tries++) Sleep(10);
+    locked = cs_enter(&s_log_cs, 1);
     s_log_no_com1 = !com1;
     log_write_locked(line, n);
     if (n == 0 || line[n - 1] != '\n') log_write_locked("\n", 1);
     s_log_no_com1 = 0;
-    log_flush_locked();
     if (locked) LeaveCriticalSection(&s_log_cs);
+    logq_drain(1, 1);
     return locked;
 }
 
 int xhw_log_try(const char* line) { return log_try(line, 1); }
 int xhw_log_try_file(const char* text) { return log_try(text, 0); }
+
+void xhw_log_set_file(int on) {
+    if (XHW_TEST_BUILD) return;   /* always on: the rounds read it */
+    log_lock_init();
+    EnterCriticalSection(&s_logf_cs);
+    if (on) {
+        if (s_log_mode != 1) {
+            s_log_mode = 1;
+            xhw_log_open_file();   /* the writer then writes what waited */
+        }
+    } else {
+        EnterCriticalSection(&s_log_cs);
+        s_log_mode = 0;
+        s_logq_n = 0;
+        s_logq_dropped = 0;
+        if (s_bootlog != INVALID_HANDLE_VALUE) {
+            log_flush_file();
+            CloseHandle(s_bootlog);
+            s_bootlog = INVALID_HANDLE_VALUE;
+        }
+        LeaveCriticalSection(&s_log_cs);
+    }
+    LeaveCriticalSection(&s_logf_cs);
+    xhw_logf("[LOG] boot.log %s (Port Options > System > Log File)", on ? "on" : "off");
+    if (s_logq_thread) xhw_event_signal(s_logq_event);
+}
 
 /* A console round's chain (xhw_launch_xbe): boot.log closed and renamed to
  * name, so the next boot's rotation (which keeps one previous log) leaves
@@ -254,9 +412,11 @@ int xhw_log_try_file(const char* text) { return log_try(text, 0); }
 void xhw_log_keep(const char* name) {
     char from[MAX_PATH], to[MAX_PATH];
     log_lock_init();
+    EnterCriticalSection(&s_logf_cs);
+    logq_drain(1, 0);
     EnterCriticalSection(&s_log_cs);
     if (s_bootlog != INVALID_HANDLE_VALUE) {
-        log_flush_locked();
+        log_flush_file();
         CloseHandle(s_bootlog);
         s_bootlog = INVALID_HANDLE_VALUE;
         snprintf(from, sizeof from, "%sboot.log", s_log_dir);
@@ -264,18 +424,22 @@ void xhw_log_keep(const char* name) {
         xhw_replace_file(from, to);
     }
     LeaveCriticalSection(&s_log_cs);
+    LeaveCriticalSection(&s_logf_cs);
 }
 
 /* One line, newline appended if missing, under one lock so lines from other
  * threads never land inside it. */
 static void log_write(const char* s, size_t n, int newline) {
+    int drain;
     log_lock_init();
     EnterCriticalSection(&s_log_cs);
     s_log_trace = n >= 6 && memcmp(s, "[DRAW]", 6) == 0;
-    log_write_locked(s, n);
-    if (newline && (n == 0 || s[n - 1] != '\n')) log_write_locked("\n", 1);
+    drain = log_write_locked(s, n);
+    if (newline && (n == 0 || s[n - 1] != '\n')) drain |= log_write_locked("\n", 1);
     s_log_trace = 0;
     LeaveCriticalSection(&s_log_cs);
+    if (drain) logq_drain(1, 0);
+    else if (s_logq_thread) xhw_event_signal(s_logq_event);
 }
 
 /* COM1 only, one whole line: bulk output (screenshots) that would drown

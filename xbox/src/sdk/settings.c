@@ -8,6 +8,8 @@
  *   screenshots = 0     ; BACK saves shotNN.bmp (default on in test builds)
  *   led_effects = 0     ; front LED effects (xbox/src/hw/xhw_led.c); off by
  *                       ; default: a modchip that drives the LED fights it
+ *   log_file = 0        ; boot.log in the save folder (release builds; off by
+ *                       ; default: a stock drive's writes stall; test builds always log)
  *   [game]
  *   hud_wide = 0        ; 1: at 16:9 the HUD reaches the screen's edges (0: centred, as 4:3)
  *   fov = 55            ; first-person field of view in degrees (55 is the GameCube's)
@@ -97,6 +99,7 @@ static void defaults(xsdk_settings* st) {
     st->fps = XSDK_FPS_DEFAULT;
     st->shots = XHW_TEST_BUILD;
     st->led = 0;   /* a Kronos-modded console needed a Cerbios recovery (docs/decisions.md) */
+    st->log = 0;   /* release builds write no boot.log unless asked (test builds always do) */
     st->rumble = 1.0f;
     st->hud_wide = 0;
     st->fov = 55;
@@ -167,6 +170,7 @@ static int parse(FILE* f, xsdk_settings* st) {
             /* not "led": v43-v48 wrote led = 1 as the default, and that
              * line is ignored so the effects start off for everyone */
             else if (_stricmp(key, "led_effects") == 0) st->led = atoi(val) != 0, saw |= SAW_LED;
+            else if (_stricmp(key, "log_file") == 0) st->log = atoi(val) != 0;
         } else if (_stricmp(section, "game") == 0) {
             if (_stricmp(key, "hud_wide") == 0) st->hud_wide = atoi(val) != 0;
             else if (_stricmp(key, "fov") == 0) st->fov = clampi(atoi(val), 45, 75);
@@ -200,7 +204,7 @@ static int parse(FILE* f, xsdk_settings* st) {
 int xsdk_settings_equal(const xsdk_settings* a, const xsdk_settings* b) {
     int p, i;
     if (a->video_720p != b->video_720p || a->progressive != b->progressive || a->widescreen != b->widescreen ||
-        a->fps != b->fps || a->shots != b->shots || a->led != b->led ||
+        a->fps != b->fps || a->shots != b->shots || a->led != b->led || a->log != b->log ||
         pct(a->rumble) != pct(b->rumble) || a->cstick_1p != b->cstick_1p || a->hud_wide != b->hud_wide ||
         a->fov != b->fov || a->skip_cutscenes != b->skip_cutscenes)
         return 0;
@@ -220,9 +224,10 @@ int xsdk_cstick_1p(void) { return g_xsdk_settings.cstick_1p; }
 static void log_summary(const char* what) {
     const xsdk_settings* st = &g_xsdk_settings;
     const xsdk_port_settings* p1 = &st->port[0];
-    xhw_logf("[SETTINGS] %s: 720p %d, progressive %d, widescreen %d, fps %d, screenshots %d, led %d, "
+    xhw_logf("[SETTINGS] %s: 720p %d, progressive %d, widescreen %d, fps %d, screenshots %d, led %d, log %d, "
              "HUD wide %d, FOV %d, rumble %d, C-stick in 1P %d, port 1 dead zones %d/%d, trigger click %d, trigger Z %d",
-             what, st->video_720p, st->progressive, st->widescreen, st->fps, st->shots, st->led, st->hud_wide,
+             what, st->video_720p, st->progressive, st->widescreen, st->fps, st->shots, st->led, st->log,
+             st->hud_wide,
              st->fov, pct(st->rumble), st->cstick_1p,
              pct(p1->stick_deadzone), pct(p1->cstick_deadzone), p1->trigger_click, p1->trigger_z);
 }
@@ -264,6 +269,7 @@ void xsdk_settings_load(void) {
         xgx_set_fps_overlay(g_xsdk_settings.fps);
         xhw_pad_set_shots(g_xsdk_settings.shots);
         xhw_led_enable(g_xsdk_settings.led);
+        xhw_log_set_file(g_xsdk_settings.log);
         return;
     }
     saw = parse(f, &g_xsdk_settings);
@@ -278,6 +284,7 @@ void xsdk_settings_load(void) {
     xgx_set_fps_overlay(g_xsdk_settings.fps);
     xhw_pad_set_shots(g_xsdk_settings.shots);
     xhw_led_enable(g_xsdk_settings.led);
+    xhw_log_set_file(g_xsdk_settings.log);
 }
 
 static void write_all(FILE* f, const xsdk_settings* st) {
@@ -291,7 +298,8 @@ static void write_all(FILE* f, const xsdk_settings* st) {
     fprintf(f, "; screenshots = 1: BACK saves a screenshot (shotNN.bmp, next to this file).\n");
     fprintf(f, "; led_effects = 1: the front LED flashes on KOs, in the last seconds and on GAME!.\n");
     fprintf(f, "; Leave it 0 on a console with a modchip that drives the LED (Kronos and similar).\n");
-    fprintf(f, "[system]\nscreenshots = %d\nled_effects = %d\n\n", st->shots, st->led);
+    fprintf(f, "; log_file = 1: boot.log in this folder, for bug reports (off: no log writes to the drive).\n");
+    fprintf(f, "[system]\nscreenshots = %d\nled_effects = %d\nlog_file = %d\n\n", st->shots, st->led, st->log);
     fprintf(f, "; hud_wide = 1: at 16:9 the HUD reaches the screen's edges. fov: 45-75 degrees, 55 is the GameCube's.\n");
     fprintf(f, "[game]\nhud_wide = %d\nfov = %d\nskip_cutscenes = %d\n\n", st->hud_wide, st->fov,
             st->skip_cutscenes);
