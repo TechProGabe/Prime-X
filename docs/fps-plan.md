@@ -535,7 +535,7 @@ The fight's remaining GX cost is the CPU-skinned lists: `GXCallDisplayList`'s
 dynamic path and its memcpy (fetching skinned positions and normals from
 the workspace into the ring on every call, ~14% of the fight's frame) and
 `BuildBoneRange` (1.1-1.6%, up to 3% with several pirates). The design is
-sized in `docs/handoff.md` (Next 2): the vertex program already takes a
+sized in `docs/history.md` ("Fights, as sized on 2026-10-30"): the vertex program already takes a
 per-vertex matrix index (`a0` = PNMTXIDX, 10 position and normal
 matrices, used by Melee-X on the console), so a skinned list can be drawn
 from the model's own disc arrays with each vertex's virtual bone as its
