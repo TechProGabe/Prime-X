@@ -511,6 +511,13 @@ static int resampleVoice(u32 voiceIdx, s32* out, int numSamples, u32 pitch) {
   VoiceResamplerState* state = &voiceResampler[voiceIdx];
 
 #if SAL_RESAMPLE_MODE == 0
+#if PX_MIXER_FAST
+  if (polyphaseFits32) { /* PORT_XBOX: the loop with its state in locals (px_mixer.h) */
+    pxMixResample4(out, numSamples, pitch, &state->curPos, state->srcBuf, &state->srcConsumed, state->srcCount,
+                   state->lastSamples, (const int16_t(*)[4])polyphaseTable);
+    return numSamples;
+  }
+#endif
   s16 temp[POLYPHASE_TAPS];
   u32 idx = 0;
 

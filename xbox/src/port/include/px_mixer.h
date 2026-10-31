@@ -85,6 +85,40 @@ static inline int pxMixTapsFit32(const int16_t (*table)[4], int phases) {
   return 1;
 }
 
+/* resampleVoice's polyphase loop (hw_pc.c, mode 0) when the taps fit 32
+ * bits (pxMixTapsFit32): the same samples, but the position, the read index
+ * and the four-sample history in locals. hw_pc.c's loop kept the history in
+ * a ring indexed modulo 4 and stored curPos and srcConsumed back through the
+ * state on every sample (out may alias them), ~2/3 of the mixer thread's
+ * time in a fight (round hw15). hist: oldest first, as lastSamples. */
+static inline void pxMixResample4(int32_t* out, int n, uint32_t pitch, uint32_t* curPos, const int32_t* src,
+                                  uint32_t* consumed, uint32_t count, int16_t hist[4],
+                                  const int16_t (*table)[4]) {
+  uint32_t pos = *curPos, k = *consumed;
+  int32_t h0 = hist[0], h1 = hist[1], h2 = hist[2], h3 = hist[3];
+  for (int i = 0; i < n; ++i) {
+    pos += pitch;
+    while (pos >= 0x10000) {
+      int32_t s = k < count ? src[k++] : 0;
+      s = s < -32768 ? -32768 : s > 32767 ? 32767 : s;
+      h0 = h1;
+      h1 = h2;
+      h2 = h3;
+      h3 = s;
+      pos -= 0x10000;
+    }
+    const int16_t* c = table[(pos & 0xFFFF) >> 9];
+    const int32_t v = (h0 * c[0] + h1 * c[1] + h2 * c[2] + h3 * c[3]) >> 15;
+    out[i] = v < -32768 ? -32768 : v > 32767 ? 32767 : v;
+  }
+  *curPos = pos;
+  *consumed = k;
+  hist[0] = (int16_t)h0;
+  hist[1] = (int16_t)h1;
+  hist[2] = (int16_t)h2;
+  hist[3] = (int16_t)h3;
+}
+
 /* DSP-ADPCM, musyxPcAdpcmSample in 32 bits: nibble x scale x 2048 is at
  * most 2^29 and |c0 h1 + c1 h2| at most 32768 (|c0| + |c1|), so the sum
  * stays inside 32 bits when every predictor's |c0| + |c1| is under 49152
