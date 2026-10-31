@@ -81,29 +81,27 @@ over unless a line here says otherwise.
   loads (ARAM pages read back from the disc image inside ARQPostRequest),
   and ~1.5-3 s at memory reclaims (swap-file writes). Now: boot.log goes
   through a 256 KB queue and a writer thread (`xhw_sys.c`; crash, hang,
-  fatal and exit paths still drain it to disk before going on; a queue
-  the drive can't keep up with drops lines, counted in a `[LOG]` line);
-  the reclaimer's swap-file writes run on the ARQ worker thread (`ar.c`),
-  the game thread keeps only the no-I/O pass; ARQ completions are a list
-  through the requests' `next` (the GameCube's queue has no bound: a
-  128-entry array overflowed with slow reads). ARQ copies with a callback
-  run on that worker too, in the order posted, the callbacks still on the
-  game thread (`XSDK_ARQ_ASYNC`; a first look blamed them for a title
-  Port Options frame without text, but the script's presses had landed
-  elsewhere: in lockstep both ways draw the same). The DVD read queue
-  holds 1024 reads, waiting and done (`dvd.c`): at 64 a room load's
+  fatal and exit paths still drain it to disk before going on, and so does
+  every line of the first 600 frames, the boot; a queue the drive can't
+  keep up with drops lines, counted in a `[LOG]` line). The DVD read
+  queue holds 1024 reads, waiting and done (`dvd.c`): at 64 a room load's
   hundreds of async resource reads (`CResLoader::LoadResourceAsync`,
   `CGameArea::StartStreamIn` streaming the next rooms) left the game
-  thread waiting in `enqueue` for the drive. xemu, Main Plaza with every
-  image read slowed to 40 ms: the queue at 64 froze the game 17 s twice
-  while it streamed the rooms around (and 1-5 s more); at 512 no stall
-  past 0.3 s after the world's first load (the room sweep peaks at 671
-  reads, the Chozo temple: hence 1024). The
-  first load from the menu into a world still waits for its reads, as on
-  the GameCube. Test builds: `env PX_IMG_DELAY_MS=n` (each image read
-  waits n ms), `env PX_LOG_DELAY_MS=n` (each boot.log write), `env
-  PX_ARQ_ASYNC=0`. xemu, every boot.log write slowed to 300 ms: the same
-  stalls and frame rates as without.
+  thread waiting in `enqueue` for the drive (xemu, every image read
+  slowed to 40 ms: two 17 s freezes while Main Plaza streamed the rooms
+  around -> none; the room sweep peaks at 671 reads). ARQ completions are
+  a list through the requests' `next` (the GameCube's queue has no bound:
+  a 128-entry array overflowed with slow reads). Tried in round hw18 and
+  backed out for the release candidate: ARQ copies on a worker thread
+  (`XSDK_ARQ_ASYNC`, now 0: gold froze twice at 720p with them on; red
+  ran clean), and the reclaimer's swap-file writes on that worker (the
+  game thread, not seeing the memory come back that frame, asked again
+  every frame and the worker went on to the hot chunks, which came
+  straight back: gold churned its drive and hung for minutes). Test
+  builds: `env PX_IMG_DELAY_MS=n` (each image read waits n ms), `env
+  PX_LOG_DELAY_MS=n` (each boot.log write), `env PX_ARQ_ASYNC=1`. The
+  first load from the menu into a world waits for its reads, as on the
+  GameCube.
 - **No boot.log in release builds unless asked** (2026-10-31, the user:
   "It's possible logging is adding to hdd problems, let's make sure on
   official release logging is on port settings with default off"):

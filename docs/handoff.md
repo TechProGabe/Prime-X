@@ -80,6 +80,21 @@ there is the limit). No audio fault in 21 chained scenes (hw11, hw12).
    (F:, 3.6 GB free on E:) has ~1 such stall a scene. Other 720p scenes:
    pirates 27-30, Landing Site 31-49, Lava Lake 35-41, Phendrana 30-34
    (GPU 12-14 ms a frame: fill).
+0a. **Round hw18 (RC1 candidate), 2026-10-31** (`logs-hw18red`,
+   `logs-hw18gold`, `-a`/`-b` the failed gold starts). Red at 480 clean:
+   pirates 38, Main Plaza 48, Lava Lake 44-45, Phendrana 59-60, no stall
+   past a second, rain's GPU wait 1-2 ms. Gold at 720p: Main Plaza 13-15
+   -> 36-40 fps (no lists decoded), stalls past a second ~18 -> 2. But
+   gold also froze: twice with ARQ copies on the worker (frames stopped,
+   the watchdog silent), and once churned its drive for minutes with the
+   reclaimer's swap writes on the worker (80 chunks out, 23 straight
+   back). Both backed out for RC1 (decisions.md "The hard drive stays off
+   the game thread"); boot.log is written straight to disk in the first
+   600 frames again (the frozen starts had lost their last lines in the
+   queue). One more gold start crashed in `pb_init` (the write to
+   0x80000000 that starts pbkit's pushbuffer, an access violation): the
+   first in every round so far; the watchdog sent it to the dashboard.
+   Watch for it again.
 0b. **Stock drives** (2026-10-31, the user: gold's drive is what most
    players have, little free space, "we should address it"). No hardware
    tests until truly needed (the user turned the consoles off). Done,
