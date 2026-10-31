@@ -2852,6 +2852,28 @@ static void emit_fixed(const XgxState* st) {
 /* ======================================================================
  * Draw
  * ====================================================================== */
+/* rel / s and whether it divides exactly, without a divide (~40 cycles on
+ * the Pentium III, once a draw): the quotient from s's reciprocal (a table
+ * by stride, strides being whole words), put right by one either way when
+ * it is off. rel is under 2^26 (the ring and the pools), so d * s can't
+ * wrap. Others divide. */
+#define DIV_STRIDES 129
+static uint32_t s_stride_inv[DIV_STRIDES];
+static inline int div_exact(uint32_t rel, uint32_t s, uint32_t* q) {
+    uint32_t d, inv;
+    if ((s & 3) || s / 4 >= DIV_STRIDES || !s) {
+        *q = rel / s;
+        return rel % s == 0;
+    }
+    inv = s_stride_inv[s >> 2];
+    if (!inv) inv = s_stride_inv[s >> 2] = 0xFFFFFFFFu / s + 1u;
+    d = (uint32_t)(((uint64_t)rel * inv) >> 32);
+    if (d * s > rel) d--;
+    else if ((d + 1) * s <= rel) d++;
+    *q = d;
+    return d * s == rel;
+}
+
 void* xgx_vtx_alloc(uint32_t count, uint32_t stride) {
     uint32_t bytes = count * stride;
     frame_open();
@@ -2863,7 +2885,10 @@ void* xgx_vtx_alloc(uint32_t count, uint32_t stride) {
         s_ring_gen++;
     }
     /* at a multiple of the stride from the ring's start: see xgx_draw */
-    s_draw_base = s_ring + (s_ring_pos + stride - 1) / stride * stride;
+    {
+        uint32_t q;
+        s_draw_base = s_ring + (div_exact(s_ring_pos, stride, &q) ? q : q + 1) * stride;
+    }
     if (s_draw_base + bytes > s_ring + RING_BYTES) {
         wait_idle();
         pb_open();
@@ -3633,28 +3658,6 @@ static uint32_t s_mrg_prim;
 static uint32_t s_mrg_last, s_mrg_have;   /* strips: the last vertex index, the vertices in the open BEGIN */
 static const uint8_t* s_mrg_base;
 static XgxLayout s_mrg_layout;
-
-/* rel / s and whether it divides exactly, without a divide (~40 cycles on
- * the Pentium III, once a draw): the quotient from s's reciprocal (a table
- * by stride, strides being whole words), put right by one either way when
- * it is off. rel is under 2^26 (the ring and the pools), so d * s can't
- * wrap. Others divide. */
-#define DIV_STRIDES 129
-static uint32_t s_stride_inv[DIV_STRIDES];
-static inline int div_exact(uint32_t rel, uint32_t s, uint32_t* q) {
-    uint32_t d, inv;
-    if ((s & 3) || s / 4 >= DIV_STRIDES || !s) {
-        *q = rel / s;
-        return rel % s == 0;
-    }
-    inv = s_stride_inv[s >> 2];
-    if (!inv) inv = s_stride_inv[s >> 2] = 0xFFFFFFFFu / s + 1u;
-    d = (uint32_t)(((uint64_t)rel * inv) >> 32);
-    if (d * s > rel) d--;
-    else if ((d + 1) * s <= rel) d++;
-    *q = d;
-    return d * s == rel;
-}
 
 /* the vertex window a draw's arrays point at (see xgx_draw) and its first index there */
 static const uint8_t* draw_window(const XgxLayout* layout, uint32_t count, uint32_t* first) {
