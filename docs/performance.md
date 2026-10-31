@@ -13,6 +13,17 @@ Measured on the consoles only (xemu's timing is not the console's). A room
 or above it. Hardware: a stock 733 MHz console is the bar; upgraded CPUs
 just get more frames (`docs/boot-safety.md`).
 
+## Where it stands (RC1c, round hw18d, 2026-10-31)
+
+Medians of the profiler's 5 s lines: red at 480i 39-51 fps (pirates 39,
+Main Plaza 49, Lava Lake 43, Landing Site 50, Phendrana 51); gold at
+720p 28-37 (Main Plaza 37, pirates 30, Landing Site 28, Lava Lake 34,
+Phendrana 32), Main Plaza at 480p 46. 720p runs 30 Hz ticks (each one
+1/30 s of game time), 480 Game Timing: Auto. Neither target is met; each
+round's numbers: `roadmap.md` "Performance per build", `fps-plan.md`
+section 0, `history.md`. The sections below are the measurements and
+plans as they were made.
+
 ## Where it starts
 
 Melee-X on the same hardware: menus at 60, 4-player matches 30-60 at 720p

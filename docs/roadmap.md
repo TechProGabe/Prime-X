@@ -46,45 +46,53 @@ line under it says how far it got.
         Fusion Suit, button remap); each row's effect on the console is
         still to be walked through
 - [ ] Phase 6: 60 fps at 480, 30+ at 720p on both consoles; ThinLTO + PGO
-      - ThinLTO + PGO + profile-ordered link in place; red at 480: 37-46
-        fps in the Landing Site's rain, 21-46 in Main Plaza (hw5)
+      - ThinLTO + PGO + profile-ordered link, -O3, Game Timing: Auto (30
+        Hz ticks drawn at 60 when the frame doesn't fit), GPU skinning,
+        texture-only draws. RC1c (hw18d, medians): red at 480i 39-51 fps
+        (pirates 39, Main Plaza 49, Landing Site 50); gold at 720p (30 Hz
+        ticks) 28-37 fps. Neither target met yet
 - [ ] Phase 7: full playthrough and burn test on hardware; v1 on `main`
+      - release candidate 1 (RC1c, 0ff5ed0, 2026-10-31) on red and gold
+        for the user's free play
 
 ## Known issues
 
 Open:
 
+- Audio stuck on red ("Sound hardware is stuck", silent until a
+  power-off): chained relaunches (`PX_NEXT_XBE`) in hw9, hw10, hw16 and
+  hw18-hw18c (none in hw18d's chain, never on gold). The codec stops
+  taking frames; restarts and the cold reset don't help (handoff, Next 2).
+- The `pb_init` crash (pbkit's store to 0x80000000, an access violation):
+  3 times in hw18-hw18c's ~13 chained launches, each time page 0 mapped
+  read-only. Since 0ff5ed0 the guard claims page 0 or gives it its write
+  bit; hw18d's 11 launches found it writable, so the repair is unproven.
+- Gold's stock drive (nearly full): the first load into a world takes
+  4-5 s (red ~0.8 s); a 1 MB memory reclaim 0-370 ms (was 1.1-1.7 s).
+  Screenshots took 27-47 s there (fixed on `dev` after RC1c, 6963d15).
+- 720p is GPU-bound in places: gold 28-37 fps (hw18d), the GPU 12-14 ms a
+  frame in Phendrana (hw17).
 - Fog volumes aren't drawn (`PostRenderFogs`, docs/decisions.md):
   Magmoor's lava haze and the other volume fogs (acid, water); what was
   listed as the "heat haze without its warp" is this pass. Dolphin's Lava
   Lake is dimmer for it. Needs the depth buffer read as a texture, a new
-  render path (handoff, Next 3; the user's call).
-- Fights are slow on red: hw10's pirate fight (r10d) 17-18 fps at 3.4
-  ticks per render (hw9 free play 10-20). The simulation is ~12 ms a
-  tick; Game Timing: Fixed catches up 3-4 ticks a frame, Flex would run
-  one (~35 fps).
-- Hitches of 250-300 ms at pickups and some doors (hw9 free play): not
-  measured since. hw10's room-entry stalls (0.3-1.3 s) were ~65% waiting
-  (disc reads); the profiler build logs [PROFT] for any such frame.
-- Audio stuck ("Sound hardware is stuck", silent until a power-off):
-  hw9 r9e, hw10's first r10a and every hw10 scene from r10c on (it began
-  at a relaunch). The codec stops taking frames; resets don't help. The
-  start-up freeze (hw4, hw7, hw9 r9f, on codec register reads) didn't
-  happen in hw10's eight launches (no codec reads since 2026-10-29).
+  render path (handoff, Next 6; the user's call).
+- Room-entry stalls of 0.3-1.3 s (disc reads; hw10, still in hw18d's
+  logs at each scene's load).
 - Inside the gunship: 12-14 fps on red in hw5; the dynamic-list budget is
   doubled since, not measured.
-- Out of memory on red (hw5 at 215 s, hw6 at 290 s): gone in hw8's free
-  play; keep an eye on longer sessions.
 
-Fixed on red in hw10: the landing cinematic's glow box and the
-lightning-lit clouds' hard edge; the thermal and X-ray palettes.
+Fixed on hardware since hw10: fights 17-18 -> 30-32 fps (Auto, GPU
+skinning; hw12); the pause screen 14-17 -> 58-60 (hw12); Main Plaza at
+720p 13-15 -> 36-40 (the 7 MB texture pool, hw18); the audio-lock
+deadlock after a Map Station (free play 2f145b2, fixed 2026-10-30); gold's
+drive stalls at reclaims (hw18d); the landing glow box, the lightning-lit
+clouds, the thermal and X-ray palettes (hw10). No out of memory since
+hw8.
 
-Fixed, not yet seen on red (hw10 had no free play):
-
-- The pause screen at 14-17 fps (hw8; ~40-46 fps in xemu), the charge
-  beam (hw8), Port Options' value cells off their rows (hw6, hw8).
-- Everything too bright after Morph Ball, the white arm cannon (Chozo,
-  Magmoor).
+Fixed, not yet seen on red: the charge beam (hw8), Port Options' value
+cells off their rows (hw6, hw8), everything too bright after Morph Ball,
+the white arm cannon (Chozo, Magmoor).
 
 Compared with Dolphin (2026-10-30, `tools/xbox/dolphin_ref.py`): the 14
 sweep rooms match, the arm cannon and particles included, but for the fog
@@ -104,6 +112,17 @@ without input).
 | 2026-10-29 | hw8 | red | r8g only (Flex, Landing Site 40.2 fps median); free play: no out of memory, pause screen 14-17 fps, charge beam dead |
 | 2026-10-29 | hw9 | red | chain r9a-e (r9f froze in audio start-up); free play to Parasite Queen: visuals fine, fights 10-20 fps. Hardware testing paused after it (the user) |
 | 2026-10-30 | hw10 | red | chain r10a-h ran: landing glow box gone, visors' palettes right, Landing Site 34-59 (hw9 dipped to 17), Main Plaza 30-36, fights 17-18 (3.4 ticks per render); audio stuck from r10c on (the old fault); no free play |
+| 2026-10-30 | hw11 | red | FPS plan M0-M2: Fixed against Auto, the mixer's share measured (fps-plan.md) |
+| 2026-10-30 | hw12 | red | GPU skinning, Auto everywhere: fight 30-32, pause screen 58-60, Lava Lake 40-41; no stuck audio in 21 chained scenes (hw11-12) |
+| 2026-10-30 | hw13 | red | -O2 against -O3: -O3 1-4% ahead everywhere, kept |
+| 2026-10-30 | hw14 | red | Main Plaza 38-39; the pushbuffer CALL test faulted the DMA pusher |
+| 2026-10-30 | hw15 | red | texture-only draws: Main Plaza 43-44, pirates 34-35, Lava Lake 44-45; JUMP and CALL tests passed |
+| 2026-10-30 | free play | red, gold | 2f145b2 hung on red after a Map Station (audio lock order, fixed); gold's first run at 720p: median 35 fps, no fault |
+| 2026-10-31 | hw16 | red | GPU rain, retrained PGO: pirates 37-38, Main Plaza 47-48; full LTO and the 16384-word kick no faster (dropped); audio stuck r16b-k |
+| 2026-10-31 | hw17 | gold, 720p | 30 Hz ticks, ring in the video framebuffer: no swapping back; Main Plaza 13-15 (lists decoded: 6 MB pool); drive stalls >1 s ~18 a scene |
+| 2026-10-31 | hw18 | red + gold | first both at once: red clean; gold 720p Main Plaza 36-40; gold froze with the ARQ worker on (backed out) and crashed once in `pb_init` |
+| 2026-10-31 | hw18b, hw18c | red + gold | RC1, RC1b: the `pb_init` crash on the launch after Lava Lake on both (page 0 read-only); gold's reclaims 1.1-1.7 s |
+| 2026-10-31 | hw18d | red + gold | RC1c (0ff5ed0): all 11 scenes on both, no fault; gold reclaims 0-370 ms, its screenshots 27-47 s (fixed after); release build left on both for free play |
 
 ## Performance per build
 
@@ -125,6 +144,19 @@ Console numbers only (xemu's are in `docs/performance.md`).
 | hw10 r10f (profiler) | Phendrana, visors | 480i | 48-60 | thermal and X-ray palettes |
 | hw10 r10g (profiler) | Lava Lake | 480i | 27-28 | Fixed |
 | hw10 r10h (profiler) | Frigate opening | 480i | 50-60 | Fixed |
+| hw12 (profiler) | Frigate Crash Site, pirate fight | 480i | 30-32.5 | Auto, GPU skinning |
+| hw15 (profiler) | Main Plaza | 480i | 43-44 | texture-only draws |
+| hw18d r18a (profiler) | Frigate Crash Site, pirates | 480i | 39 (median) | RC1c |
+| hw18d r18b (profiler) | Main Plaza | 480i | 49 | RC1c |
+| hw18d r18c (profiler) | Lava Lake | 480i | 43 | RC1c |
+| hw18d r18d (profiler) | Landing Site, rain | 480i | 50 | RC1c |
+| hw18d r18e (profiler) | Phendrana, visors | 480i | 51 | RC1c |
+| hw18d g18a (profiler) | Main Plaza | gold, 720p | 37 | RC1c, 30 Hz ticks |
+| hw18d g18b (profiler) | Frigate Crash Site, pirates | gold, 720p | 30 | RC1c |
+| hw18d g18c (profiler) | Landing Site, rain | gold, 720p | 28 | RC1c |
+| hw18d g18d (profiler) | Lava Lake | gold, 720p | 34 | RC1c |
+| hw18d g18e (profiler) | Phendrana, visors | gold, 720p | 32 | RC1c |
+| hw18d g18f (profiler) | Main Plaza | gold, 480p | 46 | RC1c |
 
 ## Future (after v1, not planned)
 
