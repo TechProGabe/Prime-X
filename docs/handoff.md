@@ -65,6 +65,8 @@ there is the limit). No audio fault in 21 chained scenes (hw11, hw12).
    and console/ (the upload tree; each scene folder has its image's XBE),
    NOT uploaded; P, F, K built from e41cffc (ship from 752cd89), xemu's room sweep on image P clean
    (14 rooms, 28 shots, rain drawn at the Landing Site and the temple).
+   r16e (rain on the CPU) and r16g (`[GPUT]`) dry-run in xemu on image P
+   to their last shot; GPU rain also drawn right at 720p (slot 3).
    Since hw15, all checked in xemu only:
    - a room's geometry as static memory (no content checks on its lists),
    - the list cache's chains in compact arrays,
