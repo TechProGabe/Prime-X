@@ -2051,6 +2051,7 @@ static inline int words_same(const void* a, const void* b, unsigned n) {
 }
 
 _Static_assert(sizeof(VpKey) % 4 == 0, "VpKey compares as words");
+_Static_assert(sizeof(XgxLayout) % 4 == 0, "XgxLayout compares as words (the merge check)");
 static inline int vk_same(const VpKey* a, const VpKey* b) { return words_same(a, b, sizeof(VpKey)); }
 
 /* A program covers a key when it is that key's program with more texture
@@ -3738,10 +3739,10 @@ void xgx_draw(uint32_t prim, uint32_t count, const XgxLayout* layout, XgxState* 
         if (!s_mrg_end) s_st_nomrg[0]++;
         else if (P != s_mrg_end || s_pb_mark != s_mrg_mark) s_st_nomrg[1]++;
         else if (prim != s_mrg_prim) s_st_nomrg[2]++;
-        else if (memcmp(layout, &s_mrg_layout, sizeof *layout) != 0) s_st_nomrg[3]++;
+        else if (!words_same(layout, &s_mrg_layout, sizeof *layout)) s_st_nomrg[3]++;
     }
     if (XGX_MERGE && !d && !s_rain_req && P == s_mrg_end && s_pb_mark == s_mrg_mark && prim == s_mrg_prim &&
-        memcmp(layout, &s_mrg_layout, sizeof *layout) == 0) {
+        words_same(layout, &s_mrg_layout, sizeof *layout)) {
         const uint8_t* base = draw_window(layout, count, &first);
         if (base == s_mrg_base) {   /* into the open primitive: its END back, the ranges, END again */
             P -= 2;
