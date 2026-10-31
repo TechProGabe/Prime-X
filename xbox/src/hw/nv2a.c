@@ -179,7 +179,12 @@ static int pix_y(float y) { return s_cy + (int)floorf(y * (float)s_ch / XGX_EFB_
 #else
 #define TEX_POOL_480 (7u * 1024 * 1024)   /* Prime: never more than ~5.5 MB of 8 in use in play, and
                                                the game's heap ran short (round hw6) */
-#define TEX_POOL_720 (6u * 1024 * 1024)
+/* 7 MB at 720p too since the vertex ring moved into the video fb
+ * (XGX_RING_IN_VFB): round hw17 on gold, Main Plaza at 720p with 6 MB, ran
+ * 13-15 fps, ~120 display lists a frame decoded every call (the vertex
+ * pool full, no room left to spill into the texture pool), 37-49 ms a
+ * frame in "dlist"; 480 (7 MB) cached them all */
+#define TEX_POOL_720 (7u * 1024 * 1024)
 #endif
 #define TEX_POOL_MIN (4u * 1024 * 1024)
 #define RING_BYTES (1536u * 1024)

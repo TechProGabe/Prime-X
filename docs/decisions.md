@@ -211,7 +211,13 @@ combiners; ThinLTO + PGO for releases.
     swapped ARAM to the disk throughout (432 chunks out, 346 read back),
     each read a stall. 24-bit depth and triple buffering stay (visuals,
     frame rate); the pushbuffer stays 1 MB (Melee-X hung the GPU when it
-    ran off a short one).
+    ran off a short one). Round hw17 (gold, 720p): swapping down to 0-32
+    chunks out and none read back a scene, but Main Plaza ran 13-15 fps:
+    the 6 MB texture pool left the display lists no room to spill into
+    once the vertex pool was full, ~120 lists a frame decoded every call
+    (37-49 ms). 720p's texture pool is 7 MB now, as 480's (1 MB of the
+    1.5 MB the ring gave back); xemu's Main Plaza at 720p then decodes
+    as few as at 480.
   - Rain on the GPU (M5.1, approved by the user 2026-10-30;
     `-DXGX_GPU_RAIN=0`, test builds' `env PX_GPU_RAIN=0`): each rain grid's
     streaks sit in a vertex buffer of their own (`GXPortRainGrid`), written
