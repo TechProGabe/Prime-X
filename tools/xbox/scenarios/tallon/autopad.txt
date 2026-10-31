@@ -1,0 +1,6 @@
+# tallon: boot straight into Tallon Overworld's default room (the Landing Site)
+env PX_DISC_CHECK=quick
+env MP_BOOT_WORLD=39F2DE28
+900 SHOT
+1500 SHOT
+2100 SHOT

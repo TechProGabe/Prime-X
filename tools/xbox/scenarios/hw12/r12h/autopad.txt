@@ -1,0 +1,11 @@
+# r12h: the pause screen over Main Plaza, Auto: Samus is skinned (against r11h); profiler build
+env PX_NEXT_XBE=F:\Applications\Prime-X-r12i\default.xbe
+env MP_BOOT_WORLD=83F6FF6F:D5CDB809
+1500 SHOT
+2000 START
+2300 SHOT
+2900 RIGHT
+3200 SHOT
+3800 START
+4000 SHOT
+4400 NEXT

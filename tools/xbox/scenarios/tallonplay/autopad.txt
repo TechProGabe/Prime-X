@@ -1,0 +1,19 @@
+# tallonplay: the Landing Site, then walk, fire, jump, morph and the scan
+# visor (GameCube by position: A fire, X jump, B morph, D-pad up scan visor)
+env PX_DISC_CHECK=quick
+env MP_BOOT_WORLD=39F2DE28
+2150 SHOT
+2200 SU for 120
+2330 SHOT
+2340 A
+2346 SHOT
+2400 X
+2412 SHOT
+2500 B
+2570 SHOT
+2620 B
+2700 UP
+2760 SHOT
+2800 UP
+2830 SL for 90
+2930 SHOT

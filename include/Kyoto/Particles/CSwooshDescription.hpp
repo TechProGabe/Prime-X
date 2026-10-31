@@ -1,0 +1,87 @@
+#ifndef _CSWOOSHDESCRIPTION
+#define _CSWOOSHDESCRIPTION
+
+class CColorElement;
+class CIntElement;
+class CModVectorElement;
+class CRealElement;
+class CUVElement;
+class CVectorElement;
+#ifdef TARGET_PC
+#include "Kyoto/Particles/CPortParticleVars.hpp"
+#include <memory>
+struct CPortVfxData;
+#endif
+class CSwooshDescription {
+public:
+  CSwooshDescription();
+  ~CSwooshDescription();
+
+  CIntElement* x0_PSLT;
+  CRealElement* x4_TIME;
+  CRealElement* x8_LRAD;
+  CRealElement* xc_RRAD;
+  CIntElement* x10_LENG;
+  CColorElement* x14_COLR;
+  CIntElement* x18_SIDE;
+  CRealElement* x1c_IROT;
+  CRealElement* x20_ROTM;
+  CVectorElement* x24_POFS;
+  CVectorElement* x28_IVEL;
+  CVectorElement* x2c_NPOS;
+  CModVectorElement* x30_VELM;
+  CModVectorElement* x34_VLM2;
+  CIntElement* x38_SPLN;
+  CUVElement* x3c_TEXR;
+  CIntElement* x40_TSPN;
+  bool x44_24_LLRD : 1;
+  bool x44_25_CROS : 1;
+  bool x44_26_VLS1 : 1;
+  bool x44_27_VLS2 : 1;
+  bool x44_28_SROT : 1;
+  bool x44_29_WIRE : 1;
+  bool x44_30_TEXW : 1;
+  bool x44_31_AALP : 1;
+  bool x45_24_ZBUF : 1;
+  bool x45_25_ORNT : 1;
+  bool x45_26_CRND : 1;
+#ifdef TARGET_PC
+  // port-only Remastered material (VMAT etc.; see CGenDescription::xPortVfx)
+  std::unique_ptr< CPortVfxData > xPortVfx;
+  // port-only PSRO: POFS is turned by the swoosh's orientation (Remastered's ROTV(v, EXTR))
+  bool xPortRotateOffset = false;
+  // port-only PRAZ/PRAF: Remastered's PROT KPIN(RAZY(EMRV, ROTV(axis, RLCL), fallback)), the
+  // fallback the orientation (PRAF 1) or identity
+  std::unique_ptr< CVectorElement > xPortRazyAxis;
+  bool xPortRazyFallbackLocal = false;
+  // port-only PROZ: Remastered's PROT of [KPIN]([RADD(EXTR, ]REUL(0, 0, z))), z in degrees,
+  // kept from each point's birth or else re-evaluated for every live point each frame
+  std::unique_ptr< CRealElement > xPortRotZ;
+  bool xPortRotKeep = false;
+  bool xPortRotOriented = false;
+  // port-only XFMD 3: Remastered draws the points in the emitter's frame (SetupTransformMode
+  // 0x2887d8: global T/Q/S alias the system vars, local orientation identity, point position zero)
+  bool xPortXfmdFollow = false;
+  // port-only XFMD 4 with an EMVR of SMOV(EXTT, 0, EXTR) and no SMVR: points are born at the
+  // external translation and rotation (vars b8/bc), drawn at identity and unit scale (a8/ac/b0)
+  bool xPortXfmdMover = false;
+  // port-only PIRN: a converted Remastered swoosh, whose COLR runs over the live points
+  bool xPortIrnd = false;
+  // port-only PDFG: Remastered's DFOG 1, drawn without volumetric fog (CGenDescription::xPortUnfogged)
+  bool xPortUnfogged = false;
+  // port-only PZTS: Remastered's ZTES 0, the depth test passes everywhere (compare ALWAYS)
+  bool xPortNoZTest = false;
+  // port-only PDBS: Remastered's DBIS (CGenDescription::xPortDepthBias)
+  float xPortDepthBias = 0.f;
+  // port-only PSHM: Remastered's SHTM (CParticleGen::DoShutdownBehavior 0x27b88c); 1 = a shutdown
+  // also destroys the live segments (CParticleSwoosh::DestroyParticles 0x27f744)
+  u8 xPortShutdownMode = 0;
+  // port-only PVRT: Remastered particle variables (names, types, defaults)
+  std::unique_ptr< CPortVarTable > xPortVars;
+  // port-only: the PKPR elements (per-point KPIN latches), latched at a point's birth in this
+  // order; owned by the element trees
+  std::vector< const CREPortKeep* > xPortKeeps;
+#endif
+};
+
+#endif // _CSWOOSHDESCRIPTION

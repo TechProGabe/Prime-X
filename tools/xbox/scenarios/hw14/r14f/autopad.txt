@@ -1,0 +1,6 @@
+# r14f: the pushbuffer CALL test (M6a's first step) on the front end; the chain ends at the dashboard
+env PX_NEXT_XBE=dashboard
+env PX_PB_CALL_TEST=1
+600 SHOT
+1500 SHOT
+1800 NEXT

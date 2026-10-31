@@ -1,0 +1,21 @@
+# r12a: the front end: title, main menu, Port Options (Game Timing row); profiler build
+env PX_NEXT_XBE=F:\Applications\Prime-X-r12b\default.xbe
+600 SHOT
+700 START for 4
+1300 SHOT
+2000 SHOT
+2300 DOWN for 4
+2330 DOWN for 4
+2360 DOWN for 4
+2390 DOWN for 4
+2450 SHOT
+2500 A for 4
+2700 SHOT
+2800 DOWN for 4
+2830 DOWN for 4
+2900 SHOT
+3000 A for 4
+3200 SHOT
+3300 DOWN for 4
+3400 SHOT
+3600 NEXT

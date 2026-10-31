@@ -1,0 +1,61 @@
+#ifndef METROID_PRIME_PORT_PORT_LOG_H
+#define METROID_PRIME_PORT_PORT_LOG_H
+#include <cstdarg>
+#include <cstdio>
+
+#if defined(__ANDROID__)
+#include <android/log.h>
+
+#include "port_log_file.h"
+#endif
+
+// The port's own diagnostics: build id, chosen disc, randomizer and
+// Archipelago messages. They used to be plain fprintf(stderr), which is right
+// on a desktop and useless on Android, where nothing captures the process's
+// stderr - an app that exits during startup leaves no trace of why, and there is
+// no terminal to read. On Android these go to logcat instead, under the
+// "metroidprime" tag; everywhere else they stay on stderr exactly as before.
+#if defined(TARGET_XBOX)
+extern "C" void xhw_log(const char* line);
+// nxdk's vsnprintf has no %f and reads every later argument 4 bytes off;
+// the SDK's formats floats (xbox/src/sdk/log.c)
+extern "C" int xsdk_vsnprintf(char* out, size_t cap, const char* fmt, va_list ap);
+#endif
+
+namespace PortLog {
+
+inline void WriteV(const char* format, va_list arguments) {
+  char buffer[2048];
+#if defined(TARGET_XBOX)
+  const int written = xsdk_vsnprintf(buffer, sizeof(buffer), format, arguments);
+#else
+  const int written = std::vsnprintf(buffer, sizeof(buffer), format, arguments);
+#endif
+  if (written <= 0)
+    return;
+#if defined(TARGET_XBOX)
+  // Prime-X: into boot.log and COM1, without the trailing newline
+  size_t n = 0;
+  while (buffer[n] != '\0')
+    ++n;
+  while (n > 0 && (buffer[n - 1] == '\n' || buffer[n - 1] == '\r'))
+    buffer[--n] = '\0';
+  xhw_log(buffer);
+#elif defined(__ANDROID__)
+  __android_log_write(ANDROID_LOG_INFO, "metroidprime", buffer);
+  PortLogFile::Write("metroidprime", buffer);
+#else
+  std::fputs(buffer, stderr);
+#endif
+}
+
+inline void Write(const char* format, ...) {
+  va_list arguments;
+  va_start(arguments, format);
+  WriteV(format, arguments);
+  va_end(arguments);
+}
+
+} // namespace PortLog
+
+#endif // METROID_PRIME_PORT_PORT_LOG_H

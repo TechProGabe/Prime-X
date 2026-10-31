@@ -1,0 +1,189 @@
+#include "MetroidPrime/CMainFlow.hpp"
+#include <stdlib.h>
+
+#include "MetroidPrime/CArchMsgParmInt32.hpp"
+#include "MetroidPrime/CArchitectureMessage.hpp"
+#include "MetroidPrime/CArchitectureQueue.hpp"
+#include "MetroidPrime/CCredits.hpp"
+#include "MetroidPrime/CFrontEndUI.hpp"
+#include "MetroidPrime/CMFGameLoader.hpp"
+#include "MetroidPrime/CPlayMovie.hpp"
+#include "MetroidPrime/CPreFrontEnd.hpp"
+#include "MetroidPrime/CStateSetterFlow.hpp"
+#include "MetroidPrime/Decode.hpp"
+
+#include "MetroidPrime/CMain.hpp"
+
+#include "MetroidPrime/Player/CGameState.hpp"
+
+#include "port_debug.h"
+#include "port_discord.h"
+#include "port_savestate.h"
+#ifdef TARGET_XBOX
+#include "port_log.h" // PORT_XBOX: PX_CARD_FILE's log line
+#endif
+
+#include <stdio.h>
+
+CMainFlow::CMainFlow() : CIOWin(rstl::string_l("MainFlow")), x14_gameState(kCFS_Unspecified) {}
+
+CIOWin::EMessageReturn CMainFlow::OnMessage(const CArchitectureMessage& msg,
+                                            CArchitectureQueue& queue) {
+  switch (msg.GetType()) {
+  case kAM_TimerTick:
+    AdvanceGameState(queue);
+    break;
+  case kAM_SetGameState:
+    CArchMsgParmInt32 state = MakeMsg::GetParmNewGameflowState(msg);
+    SetGameState(static_cast< EClientFlowStates >(state.GetInt32()), queue);
+    return CIOWin::kMR_Exit;
+  }
+
+  return CIOWin::kMR_Normal;
+}
+
+bool CMainFlow::GetIsContinueDraw() const { return false; }
+
+void CMainFlow::Draw() const {}
+
+void CMainFlow::AdvanceGameState(CArchitectureQueue& queue) {
+  switch (x14_gameState) {
+  case kCFS_Game:
+    SetGameState(kCFS_GameExit, queue);
+    break;
+  case kCFS_PreFrontEnd:
+    SetGameState(kCFS_FrontEnd, queue);
+    break;
+  case kCFS_FrontEnd:
+    SetGameState(kCFS_Game, queue);
+    break;
+  case kCFS_GameExit: {
+    if (gpMain->GetRestartMode() != CMain::kRM_None &&
+        gpMain->GetRestartMode() != CMain::kRM_StateSetter) {
+      gpMain->SetX30(true);
+    }
+    // Fall through.
+  }
+  case kCFS_Unspecified:
+    SetGameState(kCFS_PreFrontEnd, queue);
+    break;
+  default:
+    break;
+  }
+}
+
+static inline bool IsCreditsMode(CMain::ERestartMode m) {
+  return m >= CMain::kRM_WinBad && m <= CMain::kRM_LoseGame;
+}
+
+void CMainFlow::SetGameState(EClientFlowStates state, CArchitectureQueue& queue) {
+  x14_gameState = state;
+  PortSaveState::SetInFrontEnd(state == kCFS_FrontEnd);
+
+  switch (x14_gameState) {
+  case kCFS_GameExit: {
+    CMain::ERestartMode m = gpMain->GetRestartMode();
+    if (IsCreditsMode(m)) {
+      switch (m) {
+      case CMain::kRM_WinBad:
+      case CMain::kRM_WinGood:
+      case CMain::kRM_WinBest: {
+        CIOWin* credits = rs_new CCredits();
+        queue.Push(MakeMsg::CreateCreateIOWin(kAMT_IOWinManager, kFrontEndUIMsgPriority,
+                                              kFrontEndUIDrawPriority, credits));
+        break;
+      }
+      default: {
+        CIOWin* movie = rs_new CPlayMovie(CPlayMovie::kWM_LoseGame);
+        queue.Push(MakeMsg::CreateCreateIOWin(kAMT_IOWinManager, kFrontEndUIMsgPriority,
+                                              kFrontEndUIDrawPriority, movie));
+        break;
+      }
+      }
+      break;
+    }
+    break;
+  }
+  case kCFS_PreFrontEnd: {
+    if (gpMain->GetRestartMode() == CMain::kRM_None) {
+      break;
+    }
+
+    CIOWin* preFrontEnd = rs_new CPreFrontEnd();
+    queue.Push(MakeMsg::CreateCreateIOWin(kAMT_IOWinManager, kFrontEndUIMsgPriority,
+                                          kFrontEndUIDrawPriority, preFrontEnd));
+    break;
+  }
+  case kCFS_FrontEnd: {
+    PortDiscord::SetMenu();
+    if (gpMain->GetRestartMode() == CMain::kRM_None) {
+      break;
+    }
+    // Port: MP_BOOT_WORLD skips the front end once, starting a new game in that
+    // world like CFrontEndUI's new game does (the world id, options kept).
+    static bool sBootWorldUsed = false;
+    uint32_t bootWorld, bootArea;
+    if (!sBootWorldUsed && PortDebug::BootWorld(bootWorld, bootArea)) {
+      sBootWorldUsed = true;
+      gpGameState->SetCurrentWorldId(CAssetId(bootWorld));
+      CWorldState& worldState = gpGameState->CurrentWorldState();
+      worldState.SetAreaId(TAreaId(0));
+      worldState.SetDesiredAreaAssetId(bootArea != 0 ? static_cast< CAssetId >(bootArea)
+                                                     : kInvalidAssetId);
+#ifdef TARGET_XBOX
+      // PORT_XBOX: test builds' "env PX_ALL_ITEMS=1" (autopad.txt): every
+      // item, so the visors, beams and suits can be rendered in xemu
+      // (docs/testing.md)
+      if (getenv("PX_ALL_ITEMS") != nullptr) {
+        CPlayerState& ps = *gpGameState->PlayerState();
+        for (int i = 0; i < CPlayerState::kIT_Max; ++i) {
+          const CPlayerState::EItemType t = static_cast< CPlayerState::EItemType >(i);
+          const int n = t == CPlayerState::kIT_Missiles     ? 250
+                        : t == CPlayerState::kIT_PowerBombs  ? 8
+                        : t == CPlayerState::kIT_EnergyTanks ? 14
+                                                             : 1;
+          ps.InitializePowerUp(t, n);
+          ps.IncrPickUp(t, n);
+        }
+        fprintf(stderr, "[boot-world] every item (PX_ALL_ITEMS)\n");
+      }
+      // PORT_XBOX: "env PX_CARD_FILE=<0-2>": the game is that file of the
+      // memory card, as the file select would make it, so a save station
+      // offers to save (it offers nothing to a game without a card serial):
+      // the save round trip in xemu (docs/testing.md)
+      if (const char* f = getenv("PX_CARD_FILE")) {
+        u64 serial = 0;
+        CARDGetSerialNo(0, &serial);
+        gpGameState->SetCardSerial(serial);
+        gpGameState->SetFileIdx(static_cast< u32 >(atoi(f)));
+        PortLog::Write("[TEST] boot-world game is card file %d\n", atoi(f));
+      }
+#endif
+      gpGameState->WriteBackupBuf();
+      fprintf(stderr, "[boot-world] new game in world %08X area %08X\n", bootWorld, bootArea);
+      SetGameState(kCFS_Game, queue);
+      break;
+    }
+    CIOWin* ioWin;
+    if (gpMain->GetRestartMode() == CMain::kRM_StateSetter) {
+      ioWin = rs_new CStateSetterFlow();
+    } else {
+      ioWin = rs_new CFrontEndUI();
+    }
+    queue.Push(MakeMsg::CreateCreateIOWin(kAMT_IOWinManager, kFrontEndUIMsgPriority,
+                                          kFrontEndUIDrawPriority, ioWin));
+    break;
+  }
+  case kCFS_Game: {
+    PortSaveState::InstallPending();
+    gpGameState->GameOptions().EnsureOptions();
+    CIOWin* const gameFlow = rs_new CMFGameLoader();
+    gpMain->SetRestartMode(CMain::kRM_Default);
+    queue.Push(MakeMsg::CreateCreateIOWin(kAMT_IOWinManager, kMFGameMsgPriority,
+                                          kMFGameDrawPriority, gameFlow));
+    break;
+  }
+  }
+}
+
+CMainFlow::~CMainFlow() {}

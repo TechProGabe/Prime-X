@@ -1,0 +1,1225 @@
+#include "MetroidPrime/Player/CPlayerVisor.hpp"
+
+#include "MetroidPrime/CStateManager.hpp"
+#include "MetroidPrime/CTargetReticles.hpp"
+#include "MetroidPrime/Cameras/CCameraManager.hpp"
+#include "MetroidPrime/Cameras/CGameCamera.hpp"
+#include "MetroidPrime/Factories/CScannableObjectInfo.hpp"
+#include "MetroidPrime/Player/CPlayer.hpp"
+#include "MetroidPrime/TCastTo.hpp"
+#include "Collision/CMaterialFilter.hpp"
+#include "Collision/CRayCastResult.hpp"
+#include "MetroidPrime/Tweaks/CTweakGui.hpp"
+#include "MetroidPrime/Tweaks/CTweakGuiColors.hpp"
+#include "MetroidPrime/Tweaks/CTweakPlayer.hpp"
+#include "MetroidPrime/Tweaks/CTweakTargeting.hpp"
+
+#include "Kyoto/Audio/CSfxManager.hpp"
+#include "Kyoto/Graphics/CGX.hpp"
+#include "Kyoto/Graphics/CGraphics.hpp"
+#include "Kyoto/Graphics/CModel.hpp"
+#include "Kyoto/Graphics/CModelFlags.hpp"
+#include "Kyoto/Graphics/CTexture.hpp"
+#include "Kyoto/Math/CFrustumPlanes.hpp"
+#include "MetaRender/CCubeRenderer.hpp"
+
+#include <dolphin/gx/GXFrameBuffer.h>
+#include <dolphin/gx/GXManage.h>
+#include <dolphin/gx/GXTexture.h>
+#include <float.h>
+
+#ifdef TARGET_PC
+#include "port_debug.h"
+#include "port_disc.h"
+#include "port_room_env.h"
+
+#include "Kyoto/Graphics/CCubeMaterial.hpp"
+#include "Kyoto/Graphics/CCubeModel.hpp"
+
+// Port: Trilogy's scan lens clock (CPlayerVisor +0x660): reset as the scan visor comes in,
+// advanced by UpdateScanWindow (fn_801A5460); TriDrawScanLens animates by it.
+#ifdef TARGET_PC
+static float sPortTriLensTime = 0.f;
+#endif
+
+// Port: the Remastered scan indicators (kb func/CPlayerVisorMP1-DrawScanObjectIndicators) apply
+// when the scan icon's CMDL is the converted one (the Remastered models mod puts
+// CMDL_ScanIconNoncritical through the PBR path: kStateFlag_PortPBR). The critical icon is not
+// converted, so the noncritical one stands for the pair.
+static bool PortScanIconsRemastered(const CModel* model) {
+  if (model == nullptr)
+    return false;
+  const CCubeModel* cube = model->GetCubeModel();
+  if (cube == nullptr)
+    return false;
+  const uint count = cube->PortMaterialCount();
+  for (uint i = 0; i < count; ++i) {
+    if (cube->GetMaterialByIndex(static_cast< int >(i)).IsFlagSet(kStateFlag_PortPBR))
+      return true;
+  }
+  return false;
+}
+
+// Port: stand-ins for Remastered's runtime-built scan filters (0x4b22be0 family, contents not
+// recoverable from the binary); same shape as the orbit line-of-sight filters.
+static const CMaterialFilter kPortScanLosFilter = CMaterialFilter::MakeIncludeExclude(
+    CMaterialList(kMT_Solid), CMaterialList(kMT_ProjectilePassthrough, kMT_ScanPassthrough, kMT_Player));
+static const CMaterialFilter kPortScanOccluderFilter = CMaterialFilter::MakeIncludeExclude(
+    CMaterialList(kMT_Solid, kMT_Occluder),
+    CMaterialList(kMT_ProjectilePassthrough, kMT_ScanPassthrough, kMT_Player));
+
+// Remastered's smoothstep of the pop-in t (0xe62e74).
+static float PortScanSmooth(float t) { return t * t * (3.f - 2.f * t); }
+#endif
+
+static const int skPixelsPerTileDimension16Bit = 4;
+
+static inline int round_up_n(int value, int n) { return (value + n - 1) & ~(n - 1); }
+
+static inline int round_up_to_tile(float value) {
+  return round_up_n(CCast::ToInt(value), skPixelsPerTileDimension16Bit);
+}
+
+CPlayerVisor::CPlayerVisor(const CStateManager& mgr)
+: x1c_curVisor(CPlayerState::kPV_Combat)
+, x20_nextVisor(CPlayerState::kPV_Combat)
+, x24_visorSfxVol(127)
+, x25_24_visorTransitioning(false)
+, x25_25_(false)
+, x28_scanTimer(0.f)
+, x2c_scanDimInterp(1.f)
+, x30_prevState(kSWS_NotInScanVisor)
+, x34_nextState(kSWS_NotInScanVisor)
+, x38_windowInterpDuration(0.f)
+, x3c_windowInterpTimer(0.f)
+, x40_prevWindowDims(CVector2f::Zero())
+, x48_interpWindowDims(x40_prevWindowDims)
+, x50_nextWindowDims(x40_prevWindowDims)
+, x58_scanMagInterp(1.f)
+, xc4_vpScaleX(1.f)
+, xc8_vpScaleY(1.f)
+, xcc_scanFrameCorner(gpSimplePool->GetObj("CMDL_ScanFrameCorner"))
+, xd8_scanFrameCenterSide(gpSimplePool->GetObj("CMDL_ScanFrameCenterSide"))
+, xe4_scanFrameCenterTop(gpSimplePool->GetObj("CMDL_ScanFrameCenterTop"))
+, xf0_scanFrameStretchSide(gpSimplePool->GetObj("CMDL_ScanFrameStretchSide"))
+, xfc_scanFrameStretchTop(gpSimplePool->GetObj("CMDL_ScanFrameStretchTop"))
+, x108_newScanPane(gpSimplePool->GetObj("CMDL_NewScanPane"))
+, x114_scanShield(gpSimplePool->GetObj("CMDL_ScanShield"))
+, x120_assetLockCountdown(0)
+, x124_scanIconNoncritical(gpSimplePool->GetObj("CMDL_ScanIconNoncritical"))
+, x130_scanIconCritical(gpSimplePool->GetObj("CMDL_ScanIconCritical"))
+, x13c_scanTargets(64, SScanObjectIndicatorInfo(kInvalidUniqueId, 0.f, 0.f))
+, x540_xrayPalette(gpSimplePool->GetObj("TXTR_XRayPalette"))
+, x54c_scanFrameColorInterp(0.f)
+, x550_scanFrameColorImpulseInterp(0.f) {
+  x0_scanWindowSizes.push_back(CVector2f::Zero());
+  const float idleWidth = gpTweakGui->GetScanWindowIdleWidth();
+  const float idleHeight = gpTweakGui->GetScanWindowIdleHeight();
+  x0_scanWindowSizes.push_back(CVector2f(idleWidth, idleHeight));
+  const float activeWidth = gpTweakGui->GetScanWindowActiveWidth();
+  const float activeHeight = gpTweakGui->GetScanWindowActiveHeight();
+  x0_scanWindowSizes.push_back(CVector2f(activeWidth, activeHeight));
+  x540_xrayPalette.Lock();
+}
+
+CPlayerVisor::~CPlayerVisor() {
+  CSfxManager::SfxStop(x5c_visorLoopSfx);
+  CSfxManager::SfxStop(x60_scanningLoopSfx);
+}
+
+float CPlayerVisor::GetDesiredViewportScaleX(const CStateManager& mgr) const {
+  return mgr.GetPlayerState()->GetActiveVisor(mgr) == CPlayerState::kPV_Combat ? 1.f : xc4_vpScaleX;
+}
+
+float CPlayerVisor::GetDesiredViewportScaleY(const CStateManager& mgr) const {
+  return mgr.GetPlayerState()->GetActiveVisor(mgr) == CPlayerState::kPV_Combat ? 1.f : xc8_vpScaleY;
+}
+
+void CPlayerVisor::BeginTransitionOut() {
+  if (x5c_visorLoopSfx) {
+    CSfxManager::SfxStop(x5c_visorLoopSfx);
+    x5c_visorLoopSfx.Clear();
+  }
+  switch (x1c_curVisor) {
+  case CPlayerState::kPV_Combat:
+    break;
+  case CPlayerState::kPV_XRay:
+    CSfxManager::SfxStart(0x566, x24_visorSfxVol, 64, false, CSfxManager::kMedPriority, false,
+                          CSfxManager::kAllAreas);
+    break;
+  case CPlayerState::kPV_Scan:
+    if (x60_scanningLoopSfx)
+      CSfxManager::SfxStop(x60_scanningLoopSfx);
+    CSfxManager::SfxStart(0x566, x24_visorSfxVol, 64, false, CSfxManager::kMedPriority, false,
+                          CSfxManager::kAllAreas);
+    break;
+  case CPlayerState::kPV_Thermal:
+    CSfxManager::SfxStart(0x566, x24_visorSfxVol, 64, false, CSfxManager::kMedPriority, false,
+                          CSfxManager::kAllAreas);
+    break;
+  default:
+    break;
+  }
+}
+
+void CPlayerVisor::FinishTransitionOut(const CStateManager& mgr) {
+  switch (x1c_curVisor) {
+  case CPlayerState::kPV_Combat:
+    break;
+  case CPlayerState::kPV_XRay:
+    x90_xrayBlur.DisableBlur(0.f);
+    xc4_vpScaleX = 1.f;
+    xc8_vpScaleY = 1.f;
+    break;
+  case CPlayerState::kPV_Scan:
+    x64_scanDim.DisableFilter(0.f);
+    x34_nextState = kSWS_NotInScanVisor;
+    x30_prevState = kSWS_NotInScanVisor;
+    break;
+  case CPlayerState::kPV_Thermal:
+    x90_xrayBlur.DisableBlur(0.f);
+    break;
+  default:
+    break;
+  }
+}
+
+void CPlayerVisor::BeginTransitionIn(const CStateManager& mgr) {
+  switch (x1c_curVisor) {
+  case CPlayerState::kPV_Combat:
+    break;
+  case CPlayerState::kPV_XRay:
+    x90_xrayBlur.SetBlur(CCameraBlurPass::kBT_XRay, 0.f, 0.f, false);
+    xc4_vpScaleX = CCameraBlurPass::GetXRayViewportScaleX();
+    xc8_vpScaleY = CCameraBlurPass::GetXRayViewportScaleY();
+    CSfxManager::SfxStart(0x567, x24_visorSfxVol, 64, false, CSfxManager::kMedPriority, false,
+                          CSfxManager::kAllAreas);
+    break;
+  case CPlayerState::kPV_Scan:
+    CSfxManager::SfxStart(0x567, x24_visorSfxVol, 64, false, CSfxManager::kMedPriority, false,
+                          CSfxManager::kAllAreas);
+    x64_scanDim.SetFilter(CCameraFilterPass::kFT_Multiply, CCameraFilterPass::kFS_Fullscreen, 0.f,
+                          CColor::White(), kInvalidAssetId);
+#ifdef TARGET_PC
+    sPortTriLensTime = 0.f;
+#endif
+    break;
+  case CPlayerState::kPV_Thermal:
+    CSfxManager::SfxStart(0x567, x24_visorSfxVol, 64, false, CSfxManager::kMedPriority, false,
+                          CSfxManager::kAllAreas);
+    break;
+  default:
+    break;
+  }
+}
+
+void CPlayerVisor::FinishTransitionIn() {
+  switch (x1c_curVisor) {
+  case CPlayerState::kPV_Combat:
+    x90_xrayBlur.DisableBlur(0.f);
+    break;
+  case CPlayerState::kPV_XRay:
+    x90_xrayBlur.SetBlur(CCameraBlurPass::kBT_XRay, 36.f, 0.f, false);
+    if (!x5c_visorLoopSfx)
+      x5c_visorLoopSfx =
+          CSfxManager::SfxStart(0x568, x24_visorSfxVol, 64, false, CSfxManager::kMedPriority + 0x10,
+                                true, CSfxManager::kAllAreas);
+    break;
+  case CPlayerState::kPV_Scan: {
+    const CColor& screenColor = gpTweakGuiColors->GetScanVisorScreenDimColor();
+    const CColor& hudColor = gpTweakGuiColors->GetScanVisorHudLightMultiply();
+    CColor dimColor = CColor::Lerp(screenColor, hudColor, x2c_scanDimInterp);
+    x64_scanDim.SetFilter(CCameraFilterPass::kFT_Multiply, CCameraFilterPass::kFS_Fullscreen, 0.f,
+                          dimColor, kInvalidAssetId);
+    if (!x5c_visorLoopSfx)
+      x5c_visorLoopSfx =
+          CSfxManager::SfxStart(0x57c, x24_visorSfxVol, 64, false, CSfxManager::kMedPriority + 0x10,
+                                true, CSfxManager::kAllAreas);
+    break;
+  }
+  case CPlayerState::kPV_Thermal:
+    if (!x5c_visorLoopSfx)
+      x5c_visorLoopSfx =
+          CSfxManager::SfxStart(0x56c, x24_visorSfxVol, 64, false, CSfxManager::kMedPriority + 0x10,
+                                true, CSfxManager::kAllAreas);
+    break;
+  default:
+    break;
+  }
+}
+
+void CPlayerVisor::UpdateCurrentVisor(float transFactor) {
+  switch (x1c_curVisor) {
+  case CPlayerState::kPV_Combat:
+    break;
+  case CPlayerState::kPV_XRay:
+    x90_xrayBlur.SetBlur(CCameraBlurPass::kBT_XRay, 36.f * transFactor, 0.f, false);
+    break;
+  case CPlayerState::kPV_Scan: {
+    const CColor& white = CColor::White();
+    CColor dimColor =
+        CColor::Lerp(gpTweakGuiColors->GetScanVisorHudLightMultiply(), white, 1.f - transFactor);
+    x64_scanDim.SetFilter(CCameraFilterPass::kFT_Multiply, CCameraFilterPass::kFS_Fullscreen, 0.f,
+                          dimColor, kInvalidAssetId);
+    break;
+  }
+  case CPlayerState::kPV_Thermal:
+  default:
+    break;
+  }
+}
+
+void CPlayerVisor::Update(float dt, const CStateManager& mgr) {
+  x90_xrayBlur.Update(dt);
+  const CPlayerState& playerState = *mgr.GetPlayerState();
+  CPlayerState::EPlayerVisor activeVisor = playerState.GetActiveVisor(mgr);
+#ifdef TARGET_PC
+  PortRoomEnv::XRayTick(dt, activeVisor == CPlayerState::kPV_XRay);
+  PortRoomEnv::ThermalTick(dt, activeVisor == CPlayerState::kPV_Thermal);
+#endif
+  CPlayerState::EPlayerVisor curVisor = playerState.GetCurrentVisor();
+  CPlayerState::EPlayerVisor transVisor = playerState.GetTransitioningVisor();
+  CPlayer::EPlayerScanState scanState = mgr.GetPlayer()->GetPlayerScanState();
+  bool visorTransitioning = playerState.GetIsVisorTransitioning();
+  UpdateScanWindow(dt, mgr);
+  if (transVisor != x20_nextVisor)
+    x20_nextVisor = transVisor;
+  LockUnlockAssets();
+  if (scanState == CPlayer::kSS_ScanComplete)
+    x2c_scanDimInterp = rstl::max_val(0.f, x2c_scanDimInterp - 2.f * dt);
+  else
+    x2c_scanDimInterp = rstl::min_val(1.f, x2c_scanDimInterp + 2.f * dt);
+  if (visorTransitioning) {
+    if (!x25_24_visorTransitioning)
+      BeginTransitionOut();
+    if (curVisor != x1c_curVisor) {
+      FinishTransitionOut(mgr);
+      x1c_curVisor = curVisor;
+      BeginTransitionIn(mgr);
+    }
+    UpdateCurrentVisor(playerState.GetVisorTransitionFactor());
+  } else {
+    if (x25_24_visorTransitioning) {
+      FinishTransitionIn();
+    } else if (curVisor == CPlayerState::kPV_Scan) {
+      const CColor& screenColor = gpTweakGuiColors->GetScanVisorScreenDimColor();
+      const CColor& hudColor = gpTweakGuiColors->GetScanVisorHudLightMultiply();
+      CColor dimColor = CColor::Lerp(screenColor, hudColor, x2c_scanDimInterp);
+      x64_scanDim.SetFilter(CCameraFilterPass::kFT_Multiply, CCameraFilterPass::kFS_Fullscreen, 0.f,
+                            dimColor, kInvalidAssetId);
+    }
+  }
+  x25_24_visorTransitioning = visorTransitioning;
+  if (activeVisor != x1c_curVisor) {
+    if (x24_visorSfxVol != 0) {
+      x24_visorSfxVol = 0;
+      CSfxManager::SfxVolume(x5c_visorLoopSfx, x24_visorSfxVol);
+      CSfxManager::SfxVolume(x60_scanningLoopSfx, x24_visorSfxVol);
+    }
+  } else {
+    if (x24_visorSfxVol != 127) {
+      x24_visorSfxVol = 127;
+      CSfxManager::SfxVolume(x5c_visorLoopSfx, x24_visorSfxVol);
+      CSfxManager::SfxVolume(x60_scanningLoopSfx, x24_visorSfxVol);
+    }
+  }
+  float scanMag = gpTweakGui->GetScanWindowMagnification();
+  if (x58_scanMagInterp < scanMag)
+    x58_scanMagInterp = rstl::min_val(scanMag, x58_scanMagInterp + 2.f * dt);
+  else
+    x58_scanMagInterp = rstl::max_val(scanMag, x58_scanMagInterp - 2.f * dt);
+}
+
+void CPlayerVisor::Draw(const CStateManager& mgr, const CTargetingManager* tgtMgr) const {
+  CGraphics::SetAmbientColor(CColor::White());
+  CGraphics::DisableAllLights();
+  switch (mgr.GetPlayerState()->GetActiveVisor(mgr)) {
+  case CPlayerState::kPV_Combat:
+    break;
+  case CPlayerState::kPV_XRay:
+    DrawXRayEffect(mgr);
+    break;
+  case CPlayerState::kPV_Thermal:
+    DrawThermalEffect(mgr);
+    break;
+  case CPlayerState::kPV_Scan:
+    DrawScanEffect(mgr, tgtMgr);
+    break;
+  default:
+    break;
+  }
+}
+
+void CPlayerVisor::Touch() const {
+  if (x124_scanIconNoncritical.GetObject() != nullptr)
+    x124_scanIconNoncritical.GetObject()->Touch(0);
+  if (x130_scanIconCritical.GetObject() != nullptr)
+    x130_scanIconCritical.GetObject()->Touch(0);
+}
+
+void CPlayerVisor::DrawThermalEffect(const CStateManager& mgr) const {}
+
+void CPlayerVisor::DrawXRayEffect(const CStateManager& mgr) const {
+#ifdef TARGET_PC
+  // Remastered's ramp and vignette replace retail's blur copy.
+  if (PortRoomEnv::XRayPass(false)) {
+    return;
+  }
+#endif
+  x90_xrayBlur.Draw();
+}
+
+// The scan window is authored in pixels of a 448-high 4:3 view. Below 4:3 the view is narrower
+// than that, so the window shrinks to keep its share of the width (and its proportions).
+static float ScanWindowFit(int vpWidth, int vpHeight) {
+  if (vpHeight > 0 && vpWidth * 3 < vpHeight * 4) {
+    return static_cast< float >(vpWidth) * 3.f / (static_cast< float >(vpHeight) * 4.f);
+  }
+  return 1.f;
+}
+
+// The magnification of the scan window and the size of the screen copy it shows.
+float CPlayerVisor::ScanWindowCopySize(const CStateManager& mgr, int vpWidth, int vpHeight,
+                                       int& width, int& height) const {
+  const float transFactor = mgr.GetPlayerState()->GetVisorTransitionFactor();
+  const float scanSidesStart = gpTweakGui->GetScanSidesStartTime();
+  const float scanSidesDuration = gpTweakGui->GetScanSidesDuration();
+  float t;
+  if (x34_nextState == kSWS_Scan)
+    t = 1.f - (x3c_windowInterpTimer < scanSidesDuration
+                   ? 0.f
+                   : (x3c_windowInterpTimer - scanSidesDuration) / scanSidesStart);
+  else
+    t = x3c_windowInterpTimer > scanSidesStart ? 1.f : x3c_windowInterpTimer / scanSidesStart;
+  const float divisor = transFactor * ((1.f - t) * x58_scanMagInterp +
+                                       t * gpTweakGui->GetScanWindowScanningAspect()) +
+                        (1.f - transFactor);
+  const float fit = ScanWindowFit(vpWidth, vpHeight);
+#ifdef TARGET_PC
+  const float vpW = 169.218f * fit * x48_interpWindowDims.GetX() * PortWindowShapeX();
+  const float vpH = 152.218f * fit * x48_interpWindowDims.GetY() * PortWindowShapeY();
+#else
+  const float vpW = 169.218f * fit * x48_interpWindowDims.GetX();
+  const float vpH = 152.218f * fit * x48_interpWindowDims.GetY();
+#endif
+  width = CMath::Clamp(skPixelsPerTileDimension16Bit, round_up_to_tile(vpW / divisor), vpWidth);
+  height = CMath::Clamp(skPixelsPerTileDimension16Bit, round_up_to_tile(vpH / divisor), vpHeight);
+  return divisor;
+}
+
+#ifdef TARGET_PC
+// Port: with pointer aim, the scan window is the pointer's cursor. It follows the presented
+// pointer (half-view units, +y down) and magnifies the screen around it; the scan zone moves
+// with it (CPlayerOrbit.cpp). Locked, the pointer is held at the centre and so is the window.
+static bool PortScanWindowPointer(float& x, float& y) {
+  return PortDebug::PresentedPointerAimPosition(CCameraManager::GetPresentationInterpolation(), x,
+                                                y);
+}
+
+// Same area as retail's window, held while the pointer is locked so the window keeps its shape.
+// Only the idle (search) window takes it: as the window grows to its scan size it returns to
+// retail's, which sits above the scan text box. 0 = idle size, 1 = scan size (UpdateScanWindow).
+static float sPortScanSizeBlend = 0.f;
+float CPlayerVisor::PortWindowShapeX() {
+  return PortDebug::PointerAim() ? 0.7f + 0.3f * sPortScanSizeBlend : 1.f;
+}
+float CPlayerVisor::PortWindowShapeY() {
+  return PortDebug::PointerAim() ? 1.4f - 0.4f * sPortScanSizeBlend : 1.f;
+}
+
+// The zoomed copy (sharp scan window), keyed apart from the spare buffer; valid for the frame
+// that made it, until DrawScanEffect takes it.
+static u8 sPortScanZoomCopy[32];
+// The whole-view copy that clears the EFB after the zoomed pass; never drawn.
+static u8 sPortScanZoomClear[32];
+static bool sPortScanZoomCopied = false;
+static int sPortScanZoomWidth = 0;
+static int sPortScanZoomHeight = 0;
+
+bool CPlayerVisor::PortScanZoom(const CStateManager& mgr, float& zoom, int& width,
+                                int& height) const {
+  sPortScanZoomCopied = false;
+  float pointerX, pointerY;
+  // The zoomed pass zooms about the view's centre, so a window following the pointer takes
+  // the screen copy instead.
+  if (!PortDebug::SharpScanWindow() || PortScanWindowPointer(pointerX, pointerY) ||
+      mgr.GetPlayerState()->GetActiveVisor(mgr) != CPlayerState::kPV_Scan ||
+      mgr.GetPlayerState()->GetVisorTransitionFactor() <= 0.f ||
+      x108_newScanPane.GetObject() == nullptr) {
+    return false;
+  }
+  int vpLeft, vpTop, vpWidth, vpHeight;
+  CGraphics::GetViewport(vpLeft, vpTop, vpWidth, vpHeight);
+  zoom = ScanWindowCopySize(mgr, vpWidth, vpHeight, width, height);
+  // The zoomed view shows the copy's area at `zoom` times its size; one bigger than the
+  // screen is zoomed less, so the window still shows exactly that area.
+  zoom = rstl::min_val(zoom, rstl::min_val(static_cast< float >(vpWidth) / width,
+                                           static_cast< float >(vpHeight) / height));
+  return zoom > 1.001f;
+}
+
+void CPlayerVisor::PortCopyScanZoom(int width, int height, float zoom) {
+  int vpLeft, vpTop, vpWidth, vpHeight;
+  CGraphics::GetViewport(vpLeft, vpTop, vpWidth, vpHeight);
+  // Whole tiles, as retail's copy.
+  const int zoomWidth =
+      rstl::max_val(4, rstl::min_val(vpWidth, static_cast< int >(width * zoom + 0.5f)) & ~3);
+  const int zoomHeight =
+      rstl::max_val(4, rstl::min_val(vpHeight, static_cast< int >(height * zoom + 0.5f)) & ~3);
+  GXSetTexCopySrc(vpLeft + (vpWidth - zoomWidth) / 2, vpTop + (vpHeight - zoomHeight) / 2,
+                  zoomWidth, zoomHeight);
+  GXSetTexCopyDst(zoomWidth, zoomHeight, GX_TF_RGB565, GX_FALSE);
+  // A clearing copy clears only the rectangle it copies, as on the GameCube: a second one over
+  // the whole view clears the rest, so the frame's world draws on a clean EFB.
+  CGX::SetZMode(true, GX_LEQUAL, true);
+  GXSetColorUpdate(GX_TRUE);
+  GXSetAlphaUpdate(GX_TRUE);
+  GXCopyTex(sPortScanZoomCopy, GX_TRUE);
+  GXPixModeSync();
+  const int clearWidth = (vpWidth + 1) & ~1;
+  const int clearHeight = (vpHeight + 1) & ~1;
+  GXSetTexCopySrc(vpLeft, vpTop, clearWidth, clearHeight);
+  GXSetTexCopyDst(clearWidth, clearHeight, GX_TF_RGB565, GX_FALSE);
+  GXCopyTex(sPortScanZoomClear, GX_TRUE);
+  GXPixModeSync();
+  sPortScanZoomWidth = zoomWidth;
+  sPortScanZoomHeight = zoomHeight;
+  sPortScanZoomCopied = true;
+}
+
+void CPlayerVisor::PortDropScanZoom() { sPortScanZoomCopied = false; }
+
+float CPlayerVisor::PortScanWindowOpen() const {
+  const float scanSidesStart = gpTweakGui->GetScanSidesStartTime();
+  const float scanSidesDuration = gpTweakGui->GetScanSidesDuration();
+  if (x34_nextState == kSWS_Scan)
+    return 1.f - (x3c_windowInterpTimer < scanSidesDuration
+                      ? 0.f
+                      : (x3c_windowInterpTimer - scanSidesDuration) / scanSidesStart);
+  return x3c_windowInterpTimer > scanSidesStart ? 1.f : x3c_windowInterpTimer / scanSidesStart;
+}
+
+void CPlayerVisor::PortDrawScanOverlay(const CStateManager& mgr,
+                                       const CTargetingManager* const tgtMgr) const {
+  const bool indicatorsDrawn = DrawScanObjectIndicators(mgr);
+  if (tgtMgr != nullptr && indicatorsDrawn) {
+    CGraphics::SetDepthRange(0.125f + FLT_EPSILON, 0.125f + FLT_EPSILON);
+    tgtMgr->Draw(mgr, false);
+    CGraphics::SetDepthRange(0.015625f, 0.03125f);
+  }
+}
+#endif
+
+#ifdef TARGET_PC
+// Trilogy's scan lens (drawn by its DrawScanEffect, fn_801A3428, in place of the scan dim):
+// vignette rings and a flickering outline round the window that morph from a circle into the
+// window's square as it opens. Sizes are Wii view pixels, scaled here as the frame's 17 is.
+
+// fn_801A3314: the direction at `angle`, morphed toward the square of half-size `square`.
+static CVector2f TriLensDir(float angle, float morph, float square) {
+  const float x = CMath::FastCosR(angle);
+  const float y = CMath::FastSinR(angle);
+  const float s = square / rstl::max_val(fabsf(x), fabsf(y));
+  return CVector2f(x * (1.f - morph) + x * s * morph, y * (1.f - morph) + y * s * morph);
+}
+
+struct STriLensDir {
+  float x;
+  float y;
+};
+
+static void TriLensVertex(float cx, float cy, float r, const CVector2f& v) {
+  gpRender->PrimVertex(CVector3f(cx + r * v.GetX(), 0.f, cy + r * v.GetY()));
+}
+
+// fn_801A3148: a band between two radii over degrees start..end, turned by rot.
+static void TriLensArc(int start, int end, int rot, const CColor& color, const STriLensDir* table,
+                       float cx, float cy, float rIn, float rOut) {
+  gpRender->BeginTriangleStrip((end - start + 360) % 360 + 2);
+  gpRender->PrimColor(color);
+  for (int i = rot + start; i <= rot + end; i += 2) {
+    const CVector2f v(table[i % 360].x, table[i % 360].y);
+    TriLensVertex(cx, cy, rIn, v);
+    TriLensVertex(cx, cy, rOut, v);
+  }
+  gpRender->EndPrimitive();
+}
+
+// t: the visor transition; open: the window's open factor (ScanWindowCopySize's t); cx, cy: the
+// lens centre in the -4096..4096 ortho; px: view pixels per Wii pixel.
+static void TriDrawScanLens(float t, float open, float cx, float cy, float px) {
+  // lbl_804C3528, lbl_80474C58
+  static const float kRingRgb[3][3] = {{0.f, 0.f, 0.f}, {0.f, 0.f, 0.f}, {0.f, 0.2f, 0.3f}};
+  static const float kRingClosed[3] = {100.f, 150.f, 400.f};
+  static const float kRingOpen[3] = {115.f, 120.f, 400.f};
+  static const float kRingAlpha[3] = {0.f, 0.67f, 0.f};
+  static const float kNoiseSpeed[4] = {1.f, -1.5f, 2.5f, -3.5f};
+  static const float kNoiseFreq[4] = {4.f, 6.f, 10.f, 14.f};
+  static const float kNoisePhase[4] = {0.f, 5.f, 7.f, 6.f};
+  const float time = sPortTriLensTime;
+  float radius[3];
+  for (int i = 0; i < 3; ++i)
+    radius[i] = px * ((1.f - open) * kRingClosed[i] + open * kRingOpen[i]);
+  gpRender->SetDepthReadWrite(false, false);
+  gpRender->SetBlendMode_AlphaBlended();
+  for (int ring = 0; ring < 2; ++ring) {
+    const float* rgbIn = kRingRgb[ring];
+    const float* rgbOut = kRingRgb[ring + 1];
+    const CColor inner(rgbIn[0], rgbIn[1], rgbIn[2], t * kRingAlpha[ring]);
+    const CColor outer(rgbOut[0], rgbOut[1], rgbOut[2], t * kRingAlpha[ring + 1]);
+    gpRender->BeginTriangleStrip(74);
+    for (int i = 0; i <= 36; ++i) {
+      const CVector2f d = TriLensDir(static_cast< float >(i % 36) * 0.17453292f, open, 0.72f);
+      gpRender->PrimColor(inner);
+      TriLensVertex(cx, cy, radius[ring], d);
+      gpRender->PrimColor(outer);
+      // The outer ring's rim is about the view's centre, not the lens's (as shipped).
+      if (ring == 0)
+        TriLensVertex(cx, cy, radius[1], d);
+      else
+        TriLensVertex(0.f, 0.f, radius[2], d);
+    }
+    gpRender->EndPrimitive();
+  }
+  const CColor arcColor(0.5f, 0.8f, 1.f, 0.3f * t * (1.f - open));
+  const CColor glowColor(0.2f, 0.2f, 0.2f, 0.1f * t);
+  const CColor clearColor(0.f, 0.f, 0.f, 0.f);
+  const float shadowRadius = px * 400.f * ((1.f - open) + open * 1.3888888f);
+  STriLensDir table[360];
+  bool on[360];
+  for (int deg = 0; deg < 360; ++deg) {
+    const float angle = static_cast< float >(deg) * 0.017453292f;
+    const CVector2f dir = TriLensDir(angle, open, 0.72f);
+    table[deg].x = dir.GetX();
+    table[deg].y = dir.GetY();
+    float noise = 0.f;
+    for (int i = 0; i < 4; ++i)
+      noise += CMath::FastSinR(kNoisePhase[i] + time * kNoiseSpeed[i] + kNoiseFreq[i] * angle);
+    on[deg] = noise > 0.5f;
+  }
+  const int rot1 = static_cast< int >(30.f * time) % 360;
+  TriLensArc(0, 160, rot1, arcColor, table, cx, cy, px * 115.f, px * 120.f);
+  TriLensArc(200, 246, rot1, arcColor, table, cx, cy, px * 115.f, px * 120.f);
+  TriLensArc(250, 350, rot1, arcColor, table, cx, cy, px * 115.f, px * 120.f);
+  const CColor& active = gpTweakGuiColors->GetScanFrameActiveColor();
+  const CColor activeArc = active.WithAlphaOf(active.GetAlpha() * (t * (1.f - open)));
+  const int rot2 = 360 - static_cast< int >(45.f * time) % 360;
+  TriLensArc(100, 270, rot2, activeArc, table, cx, cy, px * 110.f, px * 112.f);
+  TriLensArc(290, 440, rot2, activeArc, table, cx, cy, px * 110.f, px * 112.f);
+  // The outline: each run of lit degrees is a band with a glow out to the shadow's radius and
+  // a tick at its middle as long as the run.
+  const float rIn = px * 122.f;
+  const float rOut = px * 124.f;
+  for (int deg = 0; deg < 360; ++deg) {
+    if (on[(deg + 359) % 360] || !on[deg])
+      continue;
+    int n = 1;
+    while (on[(deg + n) % 360] && n < 360)
+      ++n;
+    const int count = (n / 2 + 1) * 2;
+    gpRender->BeginTriangleStrip(count);
+    gpRender->PrimColor(arcColor);
+    for (int j = 0; j <= n; j += 2) {
+      const CVector2f v(table[(deg + j) % 360].x, table[(deg + j) % 360].y);
+      TriLensVertex(cx, cy, rIn, v);
+      TriLensVertex(cx, cy, rOut, v);
+    }
+    gpRender->EndPrimitive();
+    gpRender->BeginTriangleStrip(count);
+    for (int j = 0; j <= n; j += 2) {
+      const CVector2f v(table[(deg + j) % 360].x, table[(deg + j) % 360].y);
+      gpRender->PrimColor(glowColor);
+      TriLensVertex(cx, cy, rOut, v);
+      gpRender->PrimColor(clearColor);
+      TriLensVertex(0.f, 0.f, shadowRadius, v);
+    }
+    gpRender->EndPrimitive();
+    const float vx = table[(deg + n / 2) % 360].x;
+    const float vy = table[(deg + n / 2) % 360].y;
+    const float baseX = cx + rOut * vx;
+    const float baseY = cy + rOut * vy;
+    const float tipR = rOut + px * static_cast< float >(n);
+    const float tipX = cx + tipR * vx;
+    const float tipY = cy + tipR * vy;
+    // Across the band (3 either side at the base, 1 at the tip), set 0.5 inside it.
+    const float baseW = px * 3.f;
+    const float tipW = px * 1.f;
+    const float in = px * -0.5f;
+    gpRender->BeginTriangleStrip(4);
+    gpRender->PrimColor(arcColor);
+    gpRender->PrimVertex(CVector3f(baseX - baseW * vy + in * vx, 0.f, baseY + baseW * vx + in * vy));
+    gpRender->PrimVertex(CVector3f(baseX + baseW * vy + in * vx, 0.f, baseY - baseW * vx + in * vy));
+    gpRender->PrimVertex(CVector3f(tipX - tipW * vy, 0.f, tipY + tipW * vx));
+    gpRender->PrimVertex(CVector3f(tipX + tipW * vy, 0.f, tipY - tipW * vx));
+    gpRender->EndPrimitive();
+  }
+}
+#endif
+
+void CPlayerVisor::DrawScanEffect(const CStateManager& mgr,
+                                  const CTargetingManager* const tgtMgr) const {
+  const bool indicatorsDrawn = DrawScanObjectIndicators(mgr);
+  if (tgtMgr != nullptr && indicatorsDrawn) {
+    CGraphics::SetDepthRange(0.125f + FLT_EPSILON, 0.125f + FLT_EPSILON);
+    tgtMgr->Draw(mgr, false);
+    CGraphics::SetDepthRange(0.015625f, 0.03125f);
+  }
+  int vpLeft, vpTop, vpWidth, vpHeight;
+  CGraphics::GetViewport(vpLeft, vpTop, vpWidth, vpHeight);
+  const float transFactor = mgr.GetPlayerState()->GetVisorTransitionFactor();
+  int width, height;
+  ScanWindowCopySize(mgr, vpWidth, vpHeight, width, height);
+  const float fit = ScanWindowFit(vpWidth, vpHeight);
+  void* buffer = CGraphics::GetDolphinSpareBuffer();
+#ifdef TARGET_PC
+  // Trilogy copies and draws the window only while it is open, at the open factor's alpha.
+  const bool trilogy = PortDisc::IsTrilogy(PortDisc::Current());
+  const float windowOpen = PortScanWindowOpen();
+  const bool windowOn = !trilogy || !(fabsf(windowOpen) < 0.00001f);
+  const float windowAlpha = trilogy ? windowOpen * transFactor : transFactor;
+  float pointerX = 0.f;
+  float pointerY = 0.f;
+  const bool portPointer = PortScanWindowPointer(pointerX, pointerY);
+  // The window's centre in pixels from the view's centre (+y down).
+  const float portShiftX = pointerX * 0.5f * static_cast< float >(vpWidth);
+  const float portShiftY = pointerY * 0.5f * static_cast< float >(vpHeight);
+  if (!windowOn) {
+    sPortScanZoomCopied = false;
+  } else if (sPortScanZoomCopied) {
+    sPortScanZoomCopied = false;
+    buffer = sPortScanZoomCopy;
+    width = sPortScanZoomWidth;
+    height = sPortScanZoomHeight;
+  } else if (portPointer) {
+    // The copy is centred on the window, kept inside the view.
+    const int srcLeft = CMath::Clamp(
+        vpLeft, (vpLeft + (vpWidth - width) / 2 + static_cast< int >(portShiftX)) & ~1,
+        vpLeft + vpWidth - width);
+    const int srcTop = CMath::Clamp(
+        vpTop, (vpTop + (vpHeight - height) / 2 + static_cast< int >(portShiftY)) & ~1,
+        vpTop + vpHeight - height);
+    GXSetTexCopySrc(srcLeft, srcTop, width, height);
+    GXSetTexCopyDst(width, height, GX_TF_RGB565, GX_FALSE);
+    GXCopyTex(buffer, GX_FALSE);
+    GXPixModeSync();
+  } else
+#endif
+  {
+    GXSetTexCopySrc(vpLeft + (vpWidth - width) / 2, vpTop + (vpHeight - height) / 2, width,
+                    height);
+    GXSetTexCopyDst(width, height, GX_TF_RGB565, GX_FALSE);
+    GXCopyTex(buffer, GX_FALSE);
+    GXPixModeSync();
+  }
+#ifdef TARGET_PC
+  if (trilogy) {
+    // The lens centres on the pointer, as the window does.
+    gpRender->SetViewportOrtho(true, -4096.f, 4096.f);
+    TriDrawScanLens(transFactor, windowOpen, portPointer ? portShiftX : 0.f,
+                    portPointer ? -portShiftY : 0.f, fit);
+  } else
+#endif
+    x64_scanDim.Draw();
+  gpRender->SetViewportOrtho(true, -1.f, 1.f);
+#ifdef TARGET_PC
+  if (!windowOn)
+    return;
+  // Moving the view the other way draws the window and its frame around the pointer.
+  if (portPointer)
+    CGraphics::SetViewPointMatrix(CTransform4f::Translate(-portShiftX, 0.f, portShiftY));
+#endif
+#ifdef TARGET_PC
+  const CTransform4f windowScale =
+      CTransform4f::Scale(x48_interpWindowDims.GetX() * PortWindowShapeX(), 1.f,
+                          x48_interpWindowDims.GetY() * PortWindowShapeY());
+#else
+  const CTransform4f windowScale =
+      CTransform4f::Scale(x48_interpWindowDims.GetX(), 1.f, x48_interpWindowDims.GetY());
+#endif
+  const CTransform4f seventeenScale = CTransform4f::Scale(17.f * fit, 1.f, 17.f * fit);
+  const CTransform4f mm = seventeenScale * windowScale;
+  const CTransform4f verticalFlip = CTransform4f::Scale(1.f, 1.f, -1.f);
+  const CTransform4f horizontalFlip = CTransform4f::Scale(-1.f, 1.f, 1.f);
+  gpRender->SetModelMatrix(mm);
+  CGraphics::LoadDolphinSpareTexture(width, height, GX_TF_RGB565, buffer, GX_TEXMAP0);
+  GXInvalidateTexAll();
+#ifdef TARGET_PC
+  const CColor paneColor = CColor::White().WithAlphaOf(windowAlpha);
+#else
+  const CColor paneColor = CColor::White().WithAlphaOf(transFactor);
+#endif
+  if (const CModel* pane = x108_newScanPane.GetObject())
+    pane->Draw(CModelFlags::AlphaBlended(paneColor).DontLoadTextures());
+  CGraphics::SetCullMode(kCM_None);
+  const CColor& inactiveColor = gpTweakGuiColors->GetScanFrameInactiveColor();
+  const CColor& activeColor = gpTweakGuiColors->GetScanFrameActiveColor();
+  CColor frameColor = CColor::Lerp(inactiveColor, activeColor, x54c_scanFrameColorInterp);
+#ifdef TARGET_PC
+  frameColor = frameColor.WithAlphaOf(windowAlpha);
+#else
+  frameColor = frameColor.WithAlphaOf(transFactor);
+#endif
+  const CColor impulseColor =
+      CColor::Modulate(gpTweakGuiColors->xd0_scanFrameImpulseColor,
+                       CColor(x550_scanFrameColorImpulseInterp, x550_scanFrameColorImpulseInterp,
+                              x550_scanFrameColorImpulseInterp, x550_scanFrameColorImpulseInterp));
+  frameColor = CColor::Add(frameColor, impulseColor);
+  const CModelFlags flags = CModelFlags::AlphaBlended(frameColor).DepthCompareUpdate(false, false);
+  const CVector3f topBaseOffset(0.f, 0.f, 4.553f);
+  CVector3f topPosition = windowScale * topBaseOffset;
+  if (const CModel* model = xe4_scanFrameCenterTop.GetObject()) {
+    const CTransform4f modelXf = seventeenScale * CTransform4f::Translate(topPosition);
+    gpRender->SetModelMatrix(modelXf);
+    model->Draw(flags);
+    gpRender->SetModelMatrix(verticalFlip * modelXf);
+    model->Draw(flags);
+  }
+  const CVector3f sideOffset(-5.f, 0.f, 0.f);
+  CVector3f sidePosition = windowScale * sideOffset;
+  if (const CModel* model = xd8_scanFrameCenterSide.GetObject()) {
+    const CTransform4f modelXf = seventeenScale * CTransform4f::Translate(sidePosition);
+    gpRender->SetModelMatrix(modelXf);
+    model->Draw(flags);
+    gpRender->SetModelMatrix(horizontalFlip * modelXf);
+    model->Draw(flags);
+  }
+  const CVector3f cornerOffset(-5.f, 0.f, 4.553f);
+  CVector3f cornerPosition = windowScale * cornerOffset;
+  if (const CModel* model = xcc_scanFrameCorner.GetObject()) {
+    const CTransform4f modelXf = seventeenScale * CTransform4f::Translate(cornerPosition);
+    gpRender->SetModelMatrix(modelXf);
+    model->Draw(flags);
+    gpRender->SetModelMatrix(horizontalFlip * modelXf);
+    model->Draw(flags);
+    gpRender->SetModelMatrix(verticalFlip * modelXf);
+    model->Draw(flags);
+    gpRender->SetModelMatrix(verticalFlip * horizontalFlip * modelXf);
+    model->Draw(flags);
+  }
+  const float xScale = windowScale.Get00();
+  const CVector3f& up = windowScale.GetUp();
+  const float topWidth = 5.f * xScale - 1.f - 1.884f;
+  CVector3f stretchTopPosition(-1.f, 0.f, 4.553f * up.GetZ());
+  const float topOffset = stretchTopPosition.GetZ();
+  if (const CModel* model = xfc_scanFrameStretchTop.GetObject()) {
+    const CTransform4f modelXf = seventeenScale * CTransform4f::Translate(stretchTopPosition) *
+                                 CTransform4f::Scale(topWidth, 1.f, 1.f);
+    gpRender->SetModelMatrix(modelXf);
+    model->Draw(flags);
+    gpRender->SetModelMatrix(horizontalFlip * modelXf);
+    model->Draw(flags);
+    gpRender->SetModelMatrix(verticalFlip * modelXf);
+    model->Draw(flags);
+    gpRender->SetModelMatrix(verticalFlip * horizontalFlip * modelXf);
+    model->Draw(flags);
+  }
+  const float sideHeight = topOffset - 1.f - 1.886f;
+  CVector3f stretchSidePosition(-5.f * xScale, 0.f, 1.f);
+  if (const CModel* model = xf0_scanFrameStretchSide.GetObject()) {
+    const CTransform4f modelXf = seventeenScale * CTransform4f::Translate(stretchSidePosition) *
+                                 CTransform4f::Scale(1.f, 1.f, sideHeight);
+    gpRender->SetModelMatrix(modelXf);
+    model->Draw(flags);
+    gpRender->SetModelMatrix(horizontalFlip * modelXf);
+    model->Draw(flags);
+    gpRender->SetModelMatrix(verticalFlip * modelXf);
+    model->Draw(flags);
+    gpRender->SetModelMatrix(verticalFlip * horizontalFlip * modelXf);
+    model->Draw(flags);
+  }
+#ifdef TARGET_PC
+  if (portPointer)
+    CGraphics::SetViewPointMatrix(CTransform4f::Identity());
+#endif
+  CGraphics::SetCullMode(kCM_Front);
+}
+
+void CPlayerVisor::LockUnlockAssets() {
+  if (x1c_curVisor == CPlayerState::kPV_Scan)
+    x120_assetLockCountdown = 2;
+  else
+    --x120_assetLockCountdown;
+  if (x120_assetLockCountdown > 0) {
+    xcc_scanFrameCorner.Lock();
+    xd8_scanFrameCenterSide.Lock();
+    xe4_scanFrameCenterTop.Lock();
+    xf0_scanFrameStretchSide.Lock();
+    xfc_scanFrameStretchTop.Lock();
+    x108_newScanPane.Lock();
+    x114_scanShield.Lock();
+    x124_scanIconNoncritical.Lock();
+    x130_scanIconCritical.Lock();
+    xcc_scanFrameCorner.TryCache();
+    xd8_scanFrameCenterSide.TryCache();
+    xe4_scanFrameCenterTop.TryCache();
+    xf0_scanFrameStretchSide.TryCache();
+    xfc_scanFrameStretchTop.TryCache();
+    x108_newScanPane.TryCache();
+    x114_scanShield.TryCache();
+    x124_scanIconNoncritical.TryCache();
+    x130_scanIconCritical.TryCache();
+  } else {
+    xcc_scanFrameCorner.Unlock();
+    xd8_scanFrameCenterSide.Unlock();
+    xe4_scanFrameCenterTop.Unlock();
+    xf0_scanFrameStretchSide.Unlock();
+    xfc_scanFrameStretchTop.Unlock();
+    x108_newScanPane.Unlock();
+    x114_scanShield.Unlock();
+    x124_scanIconNoncritical.Unlock();
+    x130_scanIconCritical.Unlock();
+  }
+}
+
+CPlayerVisor::EScanWindowState
+CPlayerVisor::GetDesiredScanWindowState(const CStateManager& mgr) const {
+  CPlayerState::EPlayerVisor visor = mgr.GetPlayerState()->GetCurrentVisor();
+  CPlayer::EPlayerScanState scanState = mgr.GetPlayer()->GetPlayerScanState();
+  if (visor == CPlayerState::kPV_Scan) {
+    if (scanState == CPlayer::kSS_Scanning || scanState == CPlayer::kSS_ScanComplete)
+      return kSWS_Scan;
+    return kSWS_Idle;
+  }
+  return kSWS_NotInScanVisor;
+}
+
+void CPlayerVisor::UpdateScanWindow(float dt, const CStateManager& mgr) {
+  UpdateScanObjectIndicators(mgr, dt);
+#ifdef TARGET_PC
+  sPortTriLensTime += dt;
+#endif
+  float scanTimer = mgr.GetPlayer()->GetScanTimer();
+  if (mgr.GetPlayer()->GetPlayerScanState() == CPlayer::kSS_Scanning) {
+    if (!x60_scanningLoopSfx)
+      x60_scanningLoopSfx =
+          CSfxManager::SfxStart(0x57f, x24_visorSfxVol, 64, false, CSfxManager::kMedPriority, true,
+                                CSfxManager::kAllAreas);
+  } else {
+    CSfxManager::SfxStop(x60_scanningLoopSfx);
+    x60_scanningLoopSfx.Clear();
+  }
+  x28_scanTimer = scanTimer;
+  EScanWindowState desiredState = GetDesiredScanWindowState(mgr);
+  switch (x34_nextState) {
+  case kSWS_NotInScanVisor:
+    if (desiredState != kSWS_NotInScanVisor) {
+      if (x30_prevState == kSWS_NotInScanVisor)
+        x48_interpWindowDims = x0_scanWindowSizes[desiredState];
+      x50_nextWindowDims = x0_scanWindowSizes[desiredState];
+      x40_prevWindowDims = x48_interpWindowDims;
+      x30_prevState = x34_nextState;
+      x34_nextState = desiredState;
+      x38_windowInterpDuration = desiredState == kSWS_Scan
+                                     ? gpTweakGui->GetScanSidesEndTime() - x3c_windowInterpTimer
+                                     : 0.f;
+      x3c_windowInterpTimer = x38_windowInterpDuration;
+    }
+    break;
+  case kSWS_Idle:
+    if (desiredState != kSWS_Idle) {
+      x50_nextWindowDims = desiredState == kSWS_NotInScanVisor ? x48_interpWindowDims
+                                                               : x0_scanWindowSizes[desiredState];
+      x40_prevWindowDims = x48_interpWindowDims;
+      x30_prevState = x34_nextState;
+      x34_nextState = desiredState;
+      x38_windowInterpDuration = desiredState == kSWS_Scan
+                                     ? gpTweakGui->GetScanSidesEndTime() - x3c_windowInterpTimer
+                                     : 0.f;
+      x3c_windowInterpTimer = x38_windowInterpDuration;
+      if (desiredState == kSWS_Scan)
+        CSfxManager::SfxStart(0x583, x24_visorSfxVol, 64, false, CSfxManager::kMedPriority, false,
+                              CSfxManager::kAllAreas);
+    }
+    break;
+  case kSWS_Scan:
+    if (desiredState != kSWS_Scan) {
+      x50_nextWindowDims = desiredState == kSWS_NotInScanVisor ? x48_interpWindowDims
+                                                               : x0_scanWindowSizes[desiredState];
+      x40_prevWindowDims = x48_interpWindowDims;
+      x30_prevState = x34_nextState;
+      x34_nextState = desiredState;
+      x38_windowInterpDuration = desiredState == kSWS_Idle
+                                     ? gpTweakGui->GetScanSidesEndTime() - x3c_windowInterpTimer
+                                     : 0.f;
+      x3c_windowInterpTimer = x38_windowInterpDuration;
+      if (mgr.GetPlayerState()->GetVisorTransitionFactor() == 1.f)
+        CSfxManager::SfxStart(0x581, x24_visorSfxVol, 64, false, CSfxManager::kMedPriority, false,
+                              CSfxManager::kAllAreas);
+    }
+    break;
+  default:
+    break;
+  }
+  if (x30_prevState != x34_nextState) {
+    x3c_windowInterpTimer = rstl::max_val(0.f, x3c_windowInterpTimer - dt);
+    if (x3c_windowInterpTimer == 0.f)
+      x30_prevState = x34_nextState;
+    float t = 0.f;
+    if (x38_windowInterpDuration > 0.f) {
+      float scanSidesStart = gpTweakGui->GetScanSidesStartTime();
+      float scanSidesDuration = gpTweakGui->GetScanSidesDuration();
+      if (x34_nextState == kSWS_Scan)
+        t = x3c_windowInterpTimer < scanSidesDuration
+                ? 0.f
+                : (x3c_windowInterpTimer - scanSidesDuration) / scanSidesStart;
+      else
+        t = x3c_windowInterpTimer > scanSidesStart ? 1.f : x3c_windowInterpTimer / scanSidesStart;
+    }
+    x48_interpWindowDims = CVector2f::Lerp(x50_nextWindowDims, x40_prevWindowDims, t);
+  }
+#ifdef TARGET_PC
+  const CVector2f toScan = x0_scanWindowSizes[kSWS_Scan] - x0_scanWindowSizes[kSWS_Idle];
+  const float scanDist = CVector2f::Dot(toScan, toScan);
+  sPortScanSizeBlend =
+      scanDist > 0.f
+          ? CMath::Clamp(0.f,
+                         CVector2f::Dot(x48_interpWindowDims - x0_scanWindowSizes[kSWS_Idle],
+                                        toScan) /
+                             scanDist,
+                         1.f)
+          : 0.f;
+#endif
+}
+
+void CPlayerVisor::UpdateScanObjectIndicators(const CStateManager& mgr, float dt) {
+  bool inBoxExists = false;
+  float dt2 = 2.f * dt;
+  for (AUTO(it, x13c_scanTargets.begin()); it != x13c_scanTargets.end(); ++it) {
+    SScanObjectIndicatorInfo& target = *it;
+    target.x4_timer = rstl::max_val(0.f, target.x4_timer - dt);
+    if (const_cast< CPlayer* >(mgr.GetPlayer())->ObjectInScanningRange(target.x0_objId, mgr))
+      target.x8_inRangeTimer = rstl::max_val(0.f, target.x8_inRangeTimer - dt2);
+    else
+      target.x8_inRangeTimer = rstl::min_val(1.f, target.x8_inRangeTimer + dt2);
+    if (const CActor* actor = TCastToConstPtr< CActor >(mgr.GetObjectById(target.x0_objId))) {
+      const CGameCamera& camera = mgr.GetCameraManager()->GetCurrentCamera(mgr);
+#ifdef TARGET_PC
+      const bool portRem = PortScanIconsRemastered(x124_scanIconNoncritical.GetObject());
+      // Remastered boxes the scan indicator position, not the orbit position (0xe632c4).
+      CVector3f orbitPos = camera.ConvertToScreenSpace(portRem ? actor->GetScanObjectIndicatorPosition(mgr)
+                                                              : actor->GetOrbitPosition(mgr));
+#else
+      CVector3f orbitPos = camera.ConvertToScreenSpace(actor->GetOrbitPosition(mgr));
+#endif
+      orbitPos.SetX(0.5f * (orbitPos.GetX() * CGraphics::GetViewportWidth()) +
+                    0.5f * CGraphics::GetViewportWidth());
+      orbitPos.SetY(0.5f * (orbitPos.GetY() * CGraphics::GetViewportHeight()) +
+                    0.5f * CGraphics::GetViewportHeight());
+      bool inBox = mgr.GetPlayer()->WithinOrbitScreenBox(
+          orbitPos, mgr.GetPlayer()->GetOrbitZoneMode(), mgr.GetPlayer()->GetOrbitZoneType());
+#ifdef TARGET_PC
+      if (portRem) {
+        // t eases 3/s toward "in the box and visible" (0xe632c4). Visibility is last frame's
+        // (the render list is swapped one frame late). Remastered takes static LOS or a GPU
+        // occlusion query of a 0.2x0.2 sprite; the port approximates both with one world ray
+        // from the camera to the orbit position (unverified filter, no GPU query).
+        const bool wasVisible = target.xPort_visible;
+        {
+          const CVector3f camPos = camera.GetTranslation();
+          const CVector3f toTarget = actor->GetOrbitPosition(mgr) - camPos;
+          const float len = toTarget.Magnitude();
+          bool clear = false;
+          if (len > 0.f && len < gpTweakPlayer->GetScanMaxTargetDistance()) {
+            const CVector3f dir = toTarget * (1.f / len);
+            TEntityList nearList;
+            TUniqueId hitId = kInvalidUniqueId;
+            CStateManager& smgr = const_cast< CStateManager& >(mgr);
+            // As retail's orbit LOS (CPlayerOrbit.cpp): the target itself is excluded from the
+            // near list and the ray runs the full distance to the orbit position.
+            smgr.BuildNearList(nearList, camPos, dir, len, kPortScanOccluderFilter, actor);
+            clear = smgr.RayWorldIntersection(hitId, camPos, dir, len, kPortScanLosFilter, nearList)
+                        .IsInvalid() ||
+                    hitId == target.x0_objId;
+          }
+          target.xPort_visible = clear;
+        }
+        target.xPort_t = CMath::Clamp(0.f, target.xPort_t + ((inBox && wasVisible) ? 3.f : -3.f) * dt, 1.f);
+      }
+#endif
+      if (inBox != target.xc_inBox) {
+        target.xc_inBox = inBox;
+        if (inBox)
+          x550_scanFrameColorImpulseInterp = 1.f;
+      }
+      inBoxExists = inBoxExists || inBox;
+    }
+  }
+  if (inBoxExists)
+    x54c_scanFrameColorInterp = rstl::min_val(1.f, x54c_scanFrameColorInterp + dt2);
+  else
+    x54c_scanFrameColorInterp = rstl::max_val(0.f, x54c_scanFrameColorInterp - dt2);
+  x550_scanFrameColorImpulseInterp = rstl::max_val(0.f, x550_scanFrameColorImpulseInterp - dt);
+  dt = FLT_EPSILON + dt;
+  const CPlayer& player = *mgr.GetPlayer();
+  const rstl::vector< TUniqueId >& nearbyObjects = player.GetOrbitObjectsOnScreenList();
+  AUTO(it, nearbyObjects.begin());
+  TAreaId playerArea = player.GetCurrentAreaId();
+  for (; it != nearbyObjects.end(); ++it) {
+    if (const CActor* actor = TCastToConstPtr< CActor >(mgr.GetObjectById(*it))) {
+      if (actor->GetCurrentAreaId() != playerArea)
+        continue;
+      if (!actor->GetMaterialList().HasMaterial(kMT_Scannable))
+        continue;
+      int target = FindCachedInactiveScanTarget(*it);
+      if (target != -1) {
+        SScanObjectIndicatorInfo& info = x13c_scanTargets[target];
+        info.x4_timer = rstl::min_val(1.f, info.x4_timer + dt2);
+      } else {
+        target = FindEmptyInactiveScanTarget();
+        if (target != -1)
+          x13c_scanTargets[target] = SScanObjectIndicatorInfo(*it, dt, 1.f);
+      }
+    }
+  }
+}
+
+bool CPlayerVisor::DrawScanObjectIndicators(const CStateManager& mgr) const {
+  if (!x124_scanIconNoncritical.TryCache())
+    return false;
+  if (!x130_scanIconCritical.TryCache())
+    return false;
+  const CModel* shield = x114_scanShield.GetObject();
+  if (shield == nullptr)
+    return false;
+  CGraphics::SetDepthRange(0.125f, 1.f);
+  gpRender->SetViewportOrtho(true, 0.f, 4096.f);
+  const float fit = ScanWindowFit(CGraphics::GetViewportWidth(), CGraphics::GetViewportHeight());
+#ifdef TARGET_PC
+  // The shield masks the reticle lines outside the window by depth: it moves with the window.
+  float pointerX = 0.f;
+  float pointerY = 0.f;
+  if (PortScanWindowPointer(pointerX, pointerY))
+    CGraphics::SetViewPointMatrix(CTransform4f::Translate(
+        -pointerX * 0.5f * static_cast< float >(CGraphics::GetViewportWidth()), 0.f,
+        pointerY * 0.5f * static_cast< float >(CGraphics::GetViewportHeight())));
+  gpRender->SetModelMatrix(
+      CTransform4f::Scale(17.f * fit * x48_interpWindowDims.GetX() * PortWindowShapeX(), 1.f,
+                          17.f * fit * x48_interpWindowDims.GetY() * PortWindowShapeY()));
+#else
+  gpRender->SetModelMatrix(CTransform4f::Scale(17.f * fit * x48_interpWindowDims.GetX(), 1.f,
+                                               17.f * fit * x48_interpWindowDims.GetY()));
+#endif
+  shield->Draw(CModelFlags::AlphaBlended(CColor(0)));
+  const CGameCamera& camera = mgr.GetCameraManager()->GetCurrentCamera(mgr);
+  CTransform4f cameraXf = mgr.GetCameraManager()->GetCurrentCameraTransform(mgr);
+  CGraphics::SetViewPointMatrix(cameraXf);
+  CFrustumPlanes frustum(cameraXf, 0.01745329238474369f * camera.GetRenderFov(), camera.GetAspectRatio(),
+                         1.f, false, 100.f);
+  gpRender->SetClippingPlanes(frustum);
+#ifdef TARGET_PC
+  gpRender->SetPerspective(CStateManager::PortZoomedFov(camera.GetRenderFov()),
+                           CGraphics::GetViewportWidth(),
+                           CGraphics::GetViewportHeight(), camera.GetNearClipDistance(),
+                           camera.GetFarClipDistance());
+#else
+  gpRender->SetPerspective(camera.GetRenderFov(),
+                           CGraphics::GetViewportWidth(),
+                           CGraphics::GetViewportHeight(), camera.GetNearClipDistance(),
+                           camera.GetFarClipDistance());
+#endif
+  CMatrix3f cameraRotation = cameraXf.BuildMatrix3f();
+  CVector3f cameraPosition = cameraXf.GetTranslation();
+  for (int i = 0; i < x13c_scanTargets.size(); ++i) {
+    const SScanObjectIndicatorInfo& target = x13c_scanTargets[i];
+    if (target.x4_timer == 0.f)
+      continue;
+    if (const CActor* const actor = TCastToConstPtr< CActor >(mgr.GetObjectById(target.x0_objId))) {
+      if (!actor->GetMaterialList().HasMaterial(kMT_Scannable))
+        continue;
+      const CScannableObjectInfo* scanInfo = actor->GetScannableObjectInfo();
+      const CModel* const model = scanInfo->IsImportant() ? x130_scanIconCritical.GetObject()
+                                                          : x124_scanIconNoncritical.GetObject();
+      const CColor& color = scanInfo->IsImportant()
+                                ? gpTweakGuiColors->GetScanIconCriticalColor()
+                                : gpTweakGuiColors->GetScanIconNoncriticalColor();
+      const CColor& dimColor = scanInfo->IsImportant()
+                                   ? gpTweakGuiColors->GetScanIconCriticalDimColor()
+                                   : gpTweakGuiColors->GetScanIconNoncriticalDimColor();
+      CVector3f scanPosition = actor->GetScanObjectIndicatorPosition(mgr);
+#ifdef TARGET_PC
+      // Drawn through the presented camera, so follow the presented actor, not its last tick.
+      // The icon is pulled from the orbit point toward the last tick's camera, for large
+      // actors to just past the near plane; redo that pull toward the presented camera, or
+      // the tick-to-present camera offset swings it across the screen (#98).
+      {
+        const CVector3f orbitPos = actor->GetOrbitPosition(mgr);
+        const float pull = (orbitPos - scanPosition).Magnitude();
+        const CVector3f presentedOrbit = actor->PortPresentedPoint(orbitPos);
+        const CVector3f toCamera =
+            cameraPosition - mgr.GetCameraManager()->GetGlobalCameraTranslation(mgr) - presentedOrbit;
+        const float mag = toCamera.Magnitude();
+        scanPosition = presentedOrbit;
+        if (mag > 0.0001f)
+          scanPosition += toCamera *
+                          (rstl::min_val(pull, mag - camera.GetNearClipDistance() - 0.1f) / mag);
+      }
+      const bool portRem = PortScanIconsRemastered(x124_scanIconNoncritical.GetObject());
+      float portSmooth = 1.f;
+      if (portRem) {
+        // 0xe62e74: placed at the shake-offset camera translation too, drawn only inside the
+        // max target distance and while t > 0.
+        scanPosition += mgr.GetCameraManager()->GetGlobalCameraTranslation(mgr);
+        if ((scanPosition - cameraPosition).Magnitude() >= gpTweakPlayer->GetScanMaxTargetDistance())
+          continue;
+        portSmooth = PortScanSmooth(target.xPort_t);
+        if (portSmooth == 0.f)
+          continue;
+      }
+#endif
+      float scale = CCompoundTargetReticle::CalculateClampedScale(
+          scanPosition, 1.f, gpTweakTargeting->x21c_scanTargetClampMin,
+          gpTweakTargeting->x220_scanTargetClampMax, mgr);
+#ifdef TARGET_PC
+      if (portRem)
+        scale *= portSmooth * 0.19999999f + 0.8f;
+#endif
+      CTransform4f xf(CMatrix3f::Scale(scale) * cameraRotation, scanPosition);
+      float distance = (scanPosition - cameraPosition).Magnitude();
+      float scanRange = gpTweakPlayer->GetScanningRange();
+      float farRange = gpTweakPlayer->GetScanMaxLockDistance() - scanRange;
+      float farT;
+      if (farRange <= 0.f)
+        farT = 1.f;
+      else
+        farT = CMath::Clamp(0.f, 1.f - (distance - scanRange) / farRange, 1.f);
+      CColor iconColor = CColor::Lerp(color, dimColor, target.x8_inRangeTimer);
+      float iconAlpha = target.x4_timer;
+      if (mgr.GetPlayerState()->GetScanTime(scanInfo->GetScannableObjectId()) == 1.f) {
+        iconAlpha *= 0.25f;
+      } else {
+        float alphaScale = 1.f;
+        if (target.x0_objId == mgr.GetPlayer()->GetOrbitTargetId())
+          alphaScale = 0.75f * x2c_scanDimInterp + 0.25f;
+        iconAlpha *= alphaScale;
+      }
+      gpRender->SetModelMatrix(xf);
+#ifdef TARGET_PC
+      if (portRem) {
+        model->Draw(CModelFlags::AlphaBlended(iconColor.WithAlphaModulatedBy(iconAlpha * farT * portSmooth))
+                        .DepthCompareUpdate(false, false));
+        continue;
+      }
+#endif
+      model->Draw(CModelFlags::Additive(iconColor.WithAlphaModulatedBy(iconAlpha * farT))
+                      .DepthCompareUpdate(true, false));
+    }
+  }
+  CGraphics::SetDepthRange(0.015625f, 0.03125f);
+  return true;
+}
+
+int CPlayerVisor::FindCachedInactiveScanTarget(TUniqueId uid) const {
+  for (int i = 0; i < x13c_scanTargets.size(); ++i) {
+    if (x13c_scanTargets[i].x0_objId == uid && x13c_scanTargets[i].x4_timer > 0.f)
+      return i;
+  }
+  return -1;
+}
+
+int CPlayerVisor::FindEmptyInactiveScanTarget() const {
+  for (int i = 0; i < x13c_scanTargets.size(); ++i) {
+    if (x13c_scanTargets[i].x4_timer == 0.f)
+      return i;
+  }
+  return -1;
+}

@@ -24,3 +24,4 @@ __pycache__/
 
 # release zips (tools/xbox/package_release.py)
 /dist/
+/build-spike/
