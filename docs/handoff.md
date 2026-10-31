@@ -54,12 +54,14 @@ and their files: `C:\xemu\hw\prime\ROUNDS.md`; older sessions and rounds
 ## Next session, in order
 
 0. **v1.0 beta is out** (2026-10-31): RC1c passed the user's free play;
-   dev merged into `main` (fd6264c), tagged `v1.0-beta`. The release zip
-   (`dist/Prime-X-v1.0-beta.zip`, from `tools/xbox/package_release.py`)
-   holds RC1c's own binary (MD5 7b0273f0...), not a rebuild of main: main
-   also has 6963d15 (screenshots) and docs. The GitHub release itself is
-   the user's to post (`gh` isn't logged in here). Bug reports from
-   players come with a boot.log only if they turn Log File on.
+   dev merged into `main`, tagged `v1.0-beta`. The release is built and
+   published by GitHub Actions (the user): pushing the tag runs
+   `.github/workflows/build.yml` (docs/toolchain.md "Release"), a full
+   release marked latest. That build is from main's source on Linux
+   (RC1c plus 6963d15's screenshot writer and docs), not the MSYS2 binary
+   the consoles ran (MD5 7b0273f0...); likely this repo's first CI run, so
+   check it went through. Bug reports from players come with a boot.log
+   only if they turn Log File on.
 1. **Watch in the next round** (none planned: hardware only when truly
    needed, the user):
    - the page-0 repair: a `[MEM] page 0 at 0x80000000 read-only ...
