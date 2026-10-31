@@ -33,9 +33,18 @@ set(PX_PGO "" CACHE STRING "PGO: empty, gen, or a .profdata path")
 # than -O2 in each of its four scenes on red (XBOX_CMAKE_ARGS=-DPX_OPT_LEVEL=2
 # for the old level).
 set(PX_OPT_LEVEL 3 CACHE STRING "-O level for the game and the SDK (2 or 3)")
+# thin (the default) or full: whole-program LTO, the compiler trial of
+# docs/fps-plan.md (one optimizer over the whole program, on top of PGO);
+# XBOX_CMAKE_ARGS=-DPX_LTO_MODE=full. -fwhole-program-vtables is out:
+# px_eh.cpp is built -fno-lto, which clang refuses with it.
+set(PX_LTO_MODE thin CACHE STRING "LTO kind with PX_LTO: thin or full")
 set(PX_OPT_FLAGS)
 if(PX_LTO)
-    list(APPEND PX_OPT_FLAGS -flto=thin)
+    if(PX_LTO_MODE STREQUAL "full")
+        list(APPEND PX_OPT_FLAGS -flto=full)
+    else()
+        list(APPEND PX_OPT_FLAGS -flto=thin)
+    endif()
 endif()
 if(PX_PGO STREQUAL "gen")
     # no compiler-rt: no value profiling; static functions named by their
