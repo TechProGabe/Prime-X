@@ -253,6 +253,7 @@ void xsdk_aram_log(void) {
              (unsigned)xsdk_aram_disc_kb(), (unsigned)xsdk_aram_swap_kb(), (unsigned)s_slots,
              (unsigned)s_swapped_out, (unsigned)s_swap_fills);
     xsdk_arq_log();
+    xsdk_dvd_log();
 }
 
 /* main memory -> ARAM; disc: the image offset of src's bytes, or NO_DISC */
@@ -407,14 +408,14 @@ void __ARClearInterrupt(void) {}
  * background too. Requests without a callback wait for the queue, then
  * copy at once. The worker never takes the interrupt lock (a poster may
  * hold it while it waits for the queue): its queues have s_jlock.
- * OFF by default (2026-10-31): with it on, xemu's title-screen Port
- * Options frame came up without its text (with it off, the same run drew
- * it), so some reader of ARAM still counts on the copy being done when
- * ARQPostRequest returns; not found yet. -DXSDK_ARQ_ASYNC=1, or test
- * builds' env PX_ARQ_ASYNC=1, turn it on. The worker runs either way: the
- * reclaimer's swap-file writes go there (aram_reclaim). */
+ * (A first look blamed it for a title-screen Port Options frame without
+ * text: the script's presses had landed elsewhere, xemu's timing drifting
+ * with the screenshots; in lockstep both ways draw the same.)
+ * -DXSDK_ARQ_ASYNC=0, or test builds' env PX_ARQ_ASYNC=0, copy at post
+ * time. The worker runs either way: the reclaimer's swap-file writes go
+ * there (aram_reclaim). */
 #ifndef XSDK_ARQ_ASYNC
-#define XSDK_ARQ_ASYNC 0
+#define XSDK_ARQ_ASYNC 1
 #endif
 #define QMAX 512   /* copies waiting for the worker; more: at post time, after them */
 typedef struct {
@@ -519,8 +520,10 @@ int aurora_arq_inflight(void) { return s_done_n + (int)s_job_busy; }
 
 static void xsdk_arq_log(void) {
     if (s_st_jobs || s_st_sync || s_st_reclaim_kb)
-        xhw_logf("[AR] ARQ: %u copies on the worker (at most %u waiting), %u at post time; %u KB reclaimed there",
-                 (unsigned)s_st_jobs, (unsigned)s_st_job_max, (unsigned)s_st_sync, (unsigned)s_st_reclaim_kb);
+        xhw_logf("[AR] ARQ: %u copies on the worker (at most %u waiting), %u at post time; %u KB reclaimed there; "
+                 "now %d queued, %d not copied, %d callbacks waiting",
+                 (unsigned)s_st_jobs, (unsigned)s_st_job_max, (unsigned)s_st_sync, (unsigned)s_st_reclaim_kb, s_job_n,
+                 (int)s_job_busy, s_done_n);
     s_st_jobs = s_st_job_max = s_st_sync = s_st_reclaim_kb = 0;
 }
 
