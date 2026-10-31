@@ -136,7 +136,7 @@ void xhw_log_open_file(void) {
     DeleteFileA(path);
     log_lock_init();
     if (s_bootlog != INVALID_HANDLE_VALUE && !s_logq_thread && (s_logq_event = xhw_event_create()) != NULL)
-        s_logq_thread = xhw_thread_start(logq_writer, NULL, -1, 16 * 1024);
+        s_logq_thread = xhw_thread_start(logq_writer, NULL, 0, 16 * 1024);
 }
 
 /* Under the log lock: boot.log (or the current part) is full, go on in the
@@ -339,8 +339,11 @@ static int log_write_locked(const char* s, size_t n) {
     /* every line while booting and every urgent one (scene changes,
      * warnings, faults) flushed as soon as it is written; otherwise once
      * a second */
-    if (xhw_frame_count() < 600 || log_line_urgent(s, n)) s_logq_flush = 1;
-    return !s_logq_thread || log_line_critical(s, n);
+    if (log_line_urgent(s, n)) s_logq_flush = 1;
+    /* booting (the first 600 frames): on the disk before the caller goes on,
+     * as before the writer thread; round hw18's gold froze early in boot and
+     * its boot.log ended a few lines in, the rest still queued */
+    return !s_logq_thread || xhw_frame_count() < 600 || log_line_critical(s, n);
 }
 
 static void log_lock_init(void) {

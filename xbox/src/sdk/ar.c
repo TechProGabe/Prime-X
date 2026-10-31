@@ -228,8 +228,6 @@ static u32 reclaim_passes(u32 want_kb, int urgent, u32 npass) {
     return got;
 }
 
-static int arq_reclaim_ask(u32 kb);   /* the ARQ worker's swap-outs (below) */
-
 static u32 aram_reclaim(u32 want_kb, int urgent) {
     u32 got;
     if (!s_aram) return 0;
@@ -237,11 +235,13 @@ static u32 aram_reclaim(u32 want_kb, int urgent) {
      * image read (seconds on a full stock drive), and xhw_mem_tick runs on
      * the game thread; the next frame tries again */
     if (!xhw_mutex_trylock(s_lock)) return 0;
-    /* xhw_mem_tick (the game thread): what costs no I/O here, the swap
-     * file's 64 KB writes on the ARQ worker (each a stall on a stock drive:
-     * up to 16 a frame) */
-    got = reclaim_passes(want_kb, urgent, urgent ? 3 : 1);
-    if (!urgent && got < want_kb && !arq_reclaim_ask(want_kb - got)) got += reclaim_passes(want_kb - got, 0, 3);
+    /* All here, as before round hw18. Handing the swap-file writes to the
+     * ARQ worker (arq_reclaim_ask) let the game thread, not seeing the
+     * memory come back that frame, ask again every frame: the worker went
+     * on to the hot chunks (the mixer's samples, live data), which came
+     * straight back from the file. Round hw18's gold (720p, the least
+     * free memory) hung with its drive churning. */
+    got = reclaim_passes(want_kb, urgent, 3);
     xhw_mutex_unlock(s_lock);
     return got;
 }
@@ -408,14 +408,14 @@ void __ARClearInterrupt(void) {}
  * background too. Requests without a callback wait for the queue, then
  * copy at once. The worker never takes the interrupt lock (a poster may
  * hold it while it waits for the queue): its queues have s_jlock.
- * (A first look blamed it for a title-screen Port Options frame without
- * text: the script's presses had landed elsewhere, xemu's timing drifting
- * with the screenshots; in lockstep both ways draw the same.)
- * -DXSDK_ARQ_ASYNC=0, or test builds' env PX_ARQ_ASYNC=0, copy at post
- * time. The worker runs either way: the reclaimer's swap-file writes go
- * there (aram_reclaim). */
+ * OFF by default again: round hw18's gold console (720p, a stock drive,
+ * little free space) froze twice with it on, once early in boot and once
+ * as the first room started (frames stopped, the watchdog silent too);
+ * with env PX_ARQ_ASYNC=0 the same scenes ran. Not reproduced in xemu,
+ * even with the image reads slowed. -DXSDK_ARQ_ASYNC=1, or test builds'
+ * env PX_ARQ_ASYNC=1, turn it on (the worker then starts). */
 #ifndef XSDK_ARQ_ASYNC
-#define XSDK_ARQ_ASYNC 1
+#define XSDK_ARQ_ASYNC 0
 #endif
 #define QMAX 512   /* copies waiting for the worker; more: at post time, after them */
 typedef struct {
@@ -434,8 +434,6 @@ static volatile int s_job_busy;    /* posted, not yet copied */
  * xemu with slowed image reads) */
 static ARQRequest *s_done_first, *s_done_last;
 static int s_done_n;
-static volatile u32 s_reclaim_ask;   /* KB aram_reclaim left to the worker's swap-outs */
-static u32 s_st_reclaim_kb;
 static xhw_mutex* s_jlock;         /* s_job*, s_done* */
 static xhw_event* s_job_event;
 static int s_arq_init, s_async = -1, s_worker;
@@ -456,15 +454,8 @@ static void arq_worker(void* arg) {
         ArqJob j;
         xhw_mutex_lock(s_jlock);
         while (s_job_n == 0) {
-            const u32 ask = __atomic_exchange_n(&s_reclaim_ask, 0, __ATOMIC_SEQ_CST);
             xhw_mutex_unlock(s_jlock);
-            if (ask) {   /* between copies: the cold chunks through the swap file */
-                xhw_mutex_lock(s_lock);
-                s_st_reclaim_kb += reclaim_passes(ask, 0, 3);
-                xhw_mutex_unlock(s_lock);
-            } else {
-                xhw_event_wait(s_job_event, 100);
-            }
+            xhw_event_wait(s_job_event, 100);
             xhw_mutex_lock(s_jlock);
         }
         j = s_job[s_job_head];
@@ -490,16 +481,9 @@ static void arq_start(void) {
         const char* e = XHW_TEST_BUILD ? getenv("PX_ARQ_ASYNC") : NULL;
         s_async = e ? atoi(e) != 0 : XSDK_ARQ_ASYNC;
     }
-    s_worker = xhw_thread_start(arq_worker, NULL, 1, 64 * 1024);
+    s_worker = s_async && xhw_thread_start(arq_worker, NULL, 1, 64 * 1024);
     if (!s_worker) s_async = 0;
     xhw_logf("[AR] ARQ copies %s", s_async ? "on a worker thread" : "at post time");
-}
-
-static int arq_reclaim_ask(u32 kb) {
-    if (!s_worker) return 0;
-    __atomic_store_n(&s_reclaim_ask, kb, __ATOMIC_SEQ_CST);
-    xhw_event_signal(s_job_event);
-    return 1;
 }
 
 /* until every posted copy is done (the worker never needs the interrupt
@@ -519,12 +503,11 @@ u32 ARQGetChunkSize(void) { return 4096; }
 int aurora_arq_inflight(void) { return s_done_n + (int)s_job_busy; }
 
 static void xsdk_arq_log(void) {
-    if (s_st_jobs || s_st_sync || s_st_reclaim_kb)
-        xhw_logf("[AR] ARQ: %u copies on the worker (at most %u waiting), %u at post time; %u KB reclaimed there; "
-                 "now %d queued, %d not copied, %d callbacks waiting",
-                 (unsigned)s_st_jobs, (unsigned)s_st_job_max, (unsigned)s_st_sync, (unsigned)s_st_reclaim_kb, s_job_n,
-                 (int)s_job_busy, s_done_n);
-    s_st_jobs = s_st_job_max = s_st_sync = s_st_reclaim_kb = 0;
+    if (s_st_jobs || s_st_sync)
+        xhw_logf("[AR] ARQ: %u copies on the worker (at most %u waiting), %u at post time; now %d queued, %d not "
+                 "copied, %d callbacks waiting",
+                 (unsigned)s_st_jobs, (unsigned)s_st_job_max, (unsigned)s_st_sync, s_job_n, (int)s_job_busy, s_done_n);
+    s_st_jobs = s_st_job_max = s_st_sync = 0;
 }
 
 void ARQPostRequest(ARQRequest* r, u32 owner, u32 type, u32 priority, uintptr_t source, uintptr_t dest,
