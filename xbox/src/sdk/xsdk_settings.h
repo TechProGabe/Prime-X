@@ -34,6 +34,7 @@ typedef struct {
     int fps;                 /* 1: frame-rate counter on screen */
     int shots;               /* 1: BACK takes a screenshot (shotNN.bmp in the save folder) */
     int led;                 /* 1: front LED effects (KOs, the last seconds, GAME!) */
+    int log;                 /* 1: boot.log in the save folder (ship builds; test builds always) */
     float rumble;            /* 0..1 */
     int cstick_1p;           /* 1: the C-stick attacks in 1P modes too (training...), not the camera (GitHub #13) */
     int hud_wide;            /* 1: at 16:9 the HUD spreads to the screen's edges (PortDebug::HudWide) */

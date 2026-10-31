@@ -72,6 +72,37 @@ over unless a line here says otherwise.
 - **Saves never stall a frame** (user, 2026-10-27): Melee-X's background
   card writer (`card.c`, its v63 START-hitch fix) is kept as is; check the
   `[CARD] saved ... (N ms)` lines and `[PERFW]` around a save on hardware.
+- **The hard drive stays off the game thread** (2026-10-31, the user: gold
+  has a stock-like drive, "what probably most people use, and there's not
+  a lot of free space. So if that's a common issue, we should address
+  it"). Round hw17 on gold (E: 456 MB free of 4881): a 900 KB screenshot
+  took 26-49 s to write, the game stalled ~1.3 s every 600 frames (the
+  stats lines written and flushed on the game thread), froze ~6 s at room
+  loads (ARAM pages read back from the disc image inside ARQPostRequest),
+  and ~1.5-3 s at memory reclaims (swap-file writes). Now: boot.log goes
+  through a 256 KB queue and a writer thread (`xhw_sys.c`; crash, hang,
+  fatal and exit paths still drain it to disk before going on; a queue
+  the drive can't keep up with drops lines, counted in a `[LOG]` line);
+  the reclaimer's swap-file writes run on the ARQ worker thread (`ar.c`),
+  the game thread keeps only the no-I/O pass; ARQ completions are a list
+  through the requests' `next` (the GameCube's queue has no bound: a
+  128-entry array overflowed with slow reads). ARQ copies themselves on
+  that worker are written but OFF (`XSDK_ARQ_ASYNC`): with them on,
+  xemu's title-screen Port Options frame came up without text, so some
+  reader still counts on a copy being done when ARQPostRequest returns;
+  until that is found the image reads behind room loads stay on the game
+  thread. Test builds: `env PX_IMG_DELAY_MS=n` (each image read waits n
+  ms), `env PX_LOG_DELAY_MS=n` (each boot.log write), `env
+  PX_ARQ_ASYNC=1`. xemu, every boot.log write slowed to 300 ms: the same
+  stalls and frame rates as without.
+- **No boot.log in release builds unless asked** (2026-10-31, the user:
+  "It's possible logging is adding to hdd problems, let's make sure on
+  official release logging is on port settings with default off"):
+  settings.ini `[system] log_file` (default 0), the title screen's Port
+  Options > System > Log File (Off / On, at once). Until settings.ini is
+  read the lines wait in memory, then go to boot.log or are dropped. Test
+  builds always write it (the console rounds read it). Crash and hang
+  reports (crash.log, hang.log) are still written: only after a fault.
 - **Frames** (2026-10-27): MetroidPrimePort's `CGraphics::EndScene` closes
   "the aurora frame" after `GXCopyDisp`; `aurora_end_frame` is the Xbox frame
   boundary (`vi.c`: 60 Hz pacing, alarms, retrace callbacks), and
@@ -299,7 +330,7 @@ One line per edit to `src/`, `include/`, `extern/musyx` or
 | `src/Kyoto/Input/CDolphinController.cpp` | input always focused | no window; SDL focus is always null |
 | `src/Kyoto/Graphics/CCubeMoviePlayer.cpp` | movies always take the deinterlaced (whole-frame) path | the field path draws every other line for an interlaced TV; Xbox frames are whole |
 | `extern/aurora/include/dolphin/ppc_math.h` | `_BitScanReverse64` only on x64 | nxdk's clang defines `_MSC_VER` on 32-bit |
-| `src/MetroidPrime/CPauseScreenFrame.cpp` | Prime-X's Options rows (`port_xbox_options.h`) in place of MetroidPrimePort's PC rows: tables, titles, get/set, triple labels, Restore Defaults, save on close; the title-screen frame reads its tables through `GetOptionCategory` so "Port Options" can swap them | the user's settings (docs/ui.md); the PC rows drive hooks the Xbox doesn't have |
+| `src/MetroidPrime/CPauseScreenFrame.cpp` | (2026-10-31: Log File in the title screen's System rows) Prime-X's Options rows (`port_xbox_options.h`) in place of MetroidPrimePort's PC rows: tables, titles, get/set, triple labels, Restore Defaults, save on close; the title-screen frame reads its tables through `GetOptionCategory` so "Port Options" can swap them | the user's settings (docs/ui.md); the PC rows drive hooks the Xbox doesn't have |
 | `src/MetroidPrime/CFrontEndUI.cpp` | the main menu's "Metroid Fusion Connection Bonuses" row reads "Port Options" and opens them | the user: reachable without a New Game slot; the bonuses need a GBA link an Xbox can't have |
 | `src/MetroidPrime/CFrontEndUI.cpp` | the New Game popup's third slot (Hard's, unused before Normal is beaten) shows "Port Options" and opens the Options frame with Prime-X's tables | the user's main-menu entry (docs/ui.md) |
 | `src/MetroidPrime/main.cpp` | `UpdateTicks` reports the updates it ran to `xhw_perf_ticks` | `[PERF]`'s "ticks per render" was always 0 (Melee-X's hook, never called): Fixed's catch-up shows now |

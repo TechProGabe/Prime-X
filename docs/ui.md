@@ -127,7 +127,7 @@ frame has four categories of five rows and doesn't scroll):
 | Video | Video (Next Start), Widescreen, Widescreen HUD, Field of View, Frame Rate |
 | Controller | Rumble Strength, Stick Dead Zone, C-Stick Dead Zone, Trigger Click |
 | Gameplay | Skip Cutscenes (Off / On: randomprime's skippable-cutscene patches, from MetroidPrimePort, applied to each room as it loads; START skips any cinematic) |
-| System | Screen Capture, Fusion Suit (Off / On: the GBA-link bonus, which an Xbox can't link for; kept in the game's save as on the GameCube). Check Disc was removed: L+R+Y at boot does it |
+| System | Screen Capture, Fusion Suit (Off / On: the GBA-link bonus, which an Xbox can't link for; kept in the game's save as on the GameCube), Log File (Off / On: boot.log in the save folder, for bug reports; Off by default in release builds, test builds always log; `[system] log_file`). Check Disc was removed: L+R+Y at boot does it |
 
 It is also a row of the main menu itself, in place of "Metroid Fusion
 Connection Bonuses" (a GBA and its link cable, which an Xbox can't have), so

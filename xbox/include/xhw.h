@@ -294,6 +294,12 @@ int xhw_running_from_dvd(void);
 /* an error card in the splash's look; 0 if the splash no longer owns the screen */
 int xhw_splash_card(const char* title, const char* const* lines);
 
+/* settings.ini's log_file (Port Options > System > Log File): release
+ * builds write boot.log only when it is on, from the moment it is set (the
+ * lines since boot are kept in memory until settings.ini is read); test
+ * builds always write it. Crash and hang reports are written either way. */
+void xhw_log_set_file(int on);
+
 /* ---- front LED effects (xhw_led.c) ----
  * Game events, posted from the game thread: a few stores and a SetEvent when
  * the effects are on, nothing when off. The SMBus writes happen on a worker. */

@@ -30,11 +30,29 @@ static u32 s_ciso_blocks;
 
 static int img_read_raw(u32 off, void* dst, u32 len) { return xhw_file_read(s_img, off, dst, len); }
 
+/* Test builds: env PX_IMG_DELAY_MS=n waits n ms in every image read (a
+ * seek on a slow, fragmented drive), so xemu shows where a stock drive
+ * stalls the game (round hw17: gold, ~6 s freezes at room loads) */
+static int img_delay_ms(void) {
+#if XHW_TEST_BUILD
+    static int ms = -1;
+    if (ms < 0) {
+        const char* e = getenv("PX_IMG_DELAY_MS");
+        ms = e ? atoi(e) : 0;
+        if (ms) xhw_logf("[DVD] PX_IMG_DELAY_MS=%d: every image read waits that long", ms);
+    }
+    return ms;
+#else
+    return 0;
+#endif
+}
+
 /* into memory that is committed already */
 static int img_read_committed(u32 off, void* dst, u32 len) {
     u8* d = (u8*)dst;
     int ok = 1;
     xhw_mutex_lock(s_img_lock);
+    if (img_delay_ms()) xhw_sleep_ms((uint32_t)img_delay_ms());
     if (!s_ciso_index) {
         ok = img_read_raw(off, d, len);
     } else {
