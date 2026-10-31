@@ -92,6 +92,56 @@ int main(void) {
       fails += tapFails;
     }
   }
+  /* the resampler loop: pxMixResample4 against resampleVoice's own loop
+   * (mode 0, its 32-bit taps), copied here verbatim but for the state */
+  if (pxMixTapsFit32((const int16_t(*)[4])polyphaseTable, POLYPHASE_PHASES)) {
+    static int32_t rsrc[1024], outA[160], outB[160];
+    long rfails = 0, rtrials = 0;
+    for (t = 0; t < 100000; ++t) {
+      const uint32_t count = rnd() % 600, pitch = (rnd() % 8) ? 0x4000 + rnd() % 0x18000 : rnd() % 0x40000;
+      uint32_t posA = rnd() & 0xFFFF, posB = posA, kA = rnd() % 40, kB = kA;
+      int16_t histA[4], histB[4];
+      n = 1 + (int)(rnd() % 160);
+      for (i = 0; i < (int)count; ++i) rsrc[i] = (rnd() % 16) ? pick16() : (int32_t)(rnd() % 200000) - 100000;
+      for (i = 0; i < 4; ++i) histA[i] = histB[i] = (int16_t)pick16();
+      { /* resampleVoice, mode 0, polyphaseFits32 */
+        s16 temp[4];
+        u32 idx = 0;
+        temp[idx++ & 3] = histA[0];
+        temp[idx++ & 3] = histA[1];
+        temp[idx++ & 3] = histA[2];
+        temp[idx++ & 3] = histA[3];
+        for (i = 0; i < n; ++i) {
+          posA += pitch;
+          while (posA >= 0x10000) {
+            s32 sample = 0;
+            if (kA < count) sample = rsrc[kA++];
+            temp[idx++ & 3] = clamp16(sample);
+            posA -= 0x10000;
+          }
+          const u32 phase = (posA & 0xFFFF) >> 9;
+          const s16* c = polyphaseTable[phase];
+          const s32 u0 = temp[idx++ & 3];
+          const s32 u1 = temp[idx++ & 3];
+          const s32 u2 = temp[idx++ & 3];
+          const s32 u3 = temp[idx++ & 3];
+          outA[i] = clamp16((u0 * c[0] + u1 * c[1] + u2 * c[2] + u3 * c[3]) >> 15);
+        }
+        histA[3] = temp[--idx & 3];
+        histA[2] = temp[--idx & 3];
+        histA[1] = temp[--idx & 3];
+        histA[0] = temp[--idx & 3];
+      }
+      pxMixResample4(outB, n, pitch, &posB, rsrc, &kB, count, histB, (const int16_t(*)[4])polyphaseTable);
+      ++rtrials;
+      if (memcmp(outA, outB, (size_t)n * sizeof outA[0]) != 0 || posA != posB || kA != kB ||
+          memcmp(histA, histB, sizeof histA) != 0) {
+        if (rfails++ < 5) printf("resample mismatch: n %d pitch %x\n", n, pitch);
+      }
+    }
+    printf("resample: %ld trials, %ld mismatches\n", rtrials, rfails);
+    fails += rfails;
+  }
   /* DSP-ADPCM: pxAdpcmSample32 against musyxPcAdpcmSample wherever
    * pxAdpcmFits32 allows it, edges included */
   {
