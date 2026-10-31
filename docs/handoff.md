@@ -3,7 +3,7 @@
 Update this at the end of every session: what was done, what's next,
 what's broken, anything the next agent would otherwise rediscover.
 
-## Where it stands (2026-10-31): release candidate 1
+## Where it stands (2026-10-31): v1.0 beta (release candidate 1c)
 
 **RC1c is 0ff5ed0.** Its release build (`stage-hw18d/ship`) is in
 `Prime-X` on both consoles (red `F:\Applications`, gold
@@ -53,10 +53,15 @@ and their files: `C:\xemu\hw\prime\ROUNDS.md`; older sessions and rounds
 
 ## Next session, in order
 
-0. **The user's free play of RC1c** on both consoles. If they call it,
-   tag 0ff5ed0 (and merge to `main` only when asked: the release branch).
-   Their reports come first; the free-play build writes no boot.log
-   unless they turn Log File on.
+0. **v1.0 beta is out** (2026-10-31): RC1c passed the user's free play;
+   dev merged into `main`, tagged `v1.0-beta`. The release is built and
+   published by GitHub Actions (the user): pushing the tag runs
+   `.github/workflows/build.yml` (docs/toolchain.md "Release"), a full
+   release marked latest. That build is from main's source on Linux
+   (RC1c plus 6963d15's screenshot writer and docs), not the MSYS2 binary
+   the consoles ran (MD5 7b0273f0...); likely this repo's first CI run, so
+   check it went through. Bug reports from players come with a boot.log
+   only if they turn Log File on.
 1. **Watch in the next round** (none planned: hardware only when truly
    needed, the user):
    - the page-0 repair: a `[MEM] page 0 at 0x80000000 read-only ...

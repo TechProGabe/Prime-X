@@ -35,7 +35,14 @@ As Melee-X: nxdk's `i386-pc-win32`, C, `xbox/CMakeLists.txt`.
 ## Release
 
 As Melee-X (phase 7): the GitHub Actions `build` workflow on a release tag,
-ThinLTO + PGO, `package_release.py` refusing a build without them.
+ThinLTO + PGO, `package_release.py` refusing a build without them. Pushing
+a tag `v*` (on `main`) runs it: the build, the host tests, then
+`dist/Prime-X-<tag>.zip` published as a full release marked latest, with
+`.github/release-notes.md` as its text. A release already under that tag
+is deleted first, so moving a tag and pushing it again rebuilds its
+release. A manual run (`workflow_dispatch`) builds and tests, and
+publishes only when given a tag. v1.0-beta (2026-10-31) is the first
+release built this way.
 
 ## Icon and logo
 
