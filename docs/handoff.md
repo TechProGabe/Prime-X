@@ -72,6 +72,17 @@ there is the limit). No audio fault in 21 chained scenes (hw11, hw12).
      and gold already as the free-play build,
    - snow drawn between ticks in one call (was 8 calls a flake under Auto),
    - particles' textured quads in one call (`GXPortVertices3fC2f`, verified),
+   - and the untextured ones (`GXPortVertices3fC1s16`: Lava Lake, ~8.7M
+     vertices verified in xemu, none different),
+   - **rain on the GPU** (the user approved it 2026-10-30 night; dec2a97):
+     a vertex buffer per grid, the fall and the streaks' near-plane and
+     guard-band clip in the vertex program, so nothing is dropped after
+     all. Host-checked against the CPU clipper (test_vp_opt.py); xemu's
+     Landing Site: render 12-15 -> 6-7 ms, shots alike. Off switch for an
+     A/B on red: `env PX_GPU_RAIN=0` (profiler/autopad builds),
+   - a GPU-per-pass probe for the visors (`env PX_GPU_TIME=1`: waits for
+     the GPU at each EFB copy and the present, `[GPUT]` lines; frame
+     rates are not valid with it on), for M5.6's first step,
    - a cached list's draws counted in [PERF]'s "dlist" (compare dlist + draw),
    - the PGO profile retrained on this code (98d6793).
    xemu's room sweep at 588573a (all of the above): 14 rooms, 28 shots, no
@@ -80,9 +91,16 @@ there is the limit). No audio fault in 21 chained scenes (hw11, hw12).
    Measure all against hw15 in the same four scenes plus Phendrana. Ready
    as an A/B too: full LTO (`XBOX_CMAKE_ARGS=-DPX_LTO_MODE=full`), and the
    busy-GPU pushbuffer kick (8192 words now; 16384 is the candidate).
-   Questions for the user: GPU rain (drops streaks crossing the near plane
-   instead of clipping them, a small visible difference) and M6a's shape
-   (`docs/fps-plan.md` M6a "Where it stands").
+   Question for the user: M6a's shape (`docs/fps-plan.md` M6a "Where it
+   stands"). Found in hw15's profiles: `CGameAllocator::Alloc` is 20-55%
+   of a room load's samples and 4-8% while walking the Landing Site, all
+   of it one store: a split block's header written into heap memory that
+   isn't committed yet (the lazy MEM1 commit's page fault and 64 KB
+   zero-fill, `xhw_lazy_fault`). Load and streaming time, not steady fps.
+   Keeping freed chunks committed for a while would cut the refaults, but
+   hw15's logs show free memory already dipping under 3 MB (`[MEM] low`,
+   the reclaimers firing) in Main Plaza and the Landing Site: not done
+   (stability first).
 1. **M6a on JUMPs** (hw15: both pushbuffer tests passed on red; hw14's
    CALL failure fell on the boot's one context switch). hw15: Main Plaza
    38-39 -> 43-44, pirates 33 -> 34-35, Lava Lake 42 -> 44-45 with

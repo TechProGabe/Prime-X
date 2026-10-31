@@ -655,6 +655,57 @@ static void wait_idle(void) {
     xhw_perf_leave(pf);
 }
 
+/* GPU time per pass (test builds' env PX_GPU_TIME=1; the fps plan's M5.6
+ * measurement): the frame cut at its EFB copies, the CPU waiting for the
+ * GPU before each copy and at the present, the wait charged to the segment
+ * that ended there (segment k: from copy k-1 to copy k; the last, to the
+ * present). A segment with little CPU work (a full-screen pass) shows its
+ * GPU time as its wait. It serializes the frame: a measuring mode, not for
+ * frame rates. [GPUT] every 300 frames: per segment its waits a frame, and
+ * its wait and CPU time in us a frame. */
+#define GPUT_SEGS 10
+static int s_gput = -1;
+static uint64_t s_gput_wait[GPUT_SEGS], s_gput_cpu[GPUT_SEGS], s_gput_mark;
+static uint32_t s_gput_n[GPUT_SEGS], s_gput_seg, s_gput_frames;
+
+static void gput_mark(int frame_end) {
+    uint64_t t0, t1;
+    uint32_t k;
+    if (s_gput < 0) {
+        const char* e = XHW_TEST_BUILD ? getenv("PX_GPU_TIME") : NULL;
+        s_gput = e && atoi(e) ? 1 : 0;
+        if (s_gput) xhw_log("[GPUT] on: the GPU waited for at each EFB copy and present (frame rates not valid)");
+    }
+    if (!s_gput) return;
+    t0 = xhw_time_ns();
+    wait_idle();
+    t1 = xhw_time_ns();
+    k = s_gput_seg < GPUT_SEGS ? s_gput_seg : GPUT_SEGS - 1;
+    if (s_gput_mark) s_gput_cpu[k] += t0 - s_gput_mark;
+    s_gput_wait[k] += t1 - t0;
+    s_gput_n[k]++;
+    s_gput_mark = t1;
+    s_gput_seg++;
+    if (!frame_end) return;
+    s_gput_seg = 0;
+    if (++s_gput_frames < 300) return;
+    {
+        char line[400];
+        int at = snprintf(line, sizeof line, "[GPUT] %u frames:", (unsigned)s_gput_frames);
+        for (k = 0; k < GPUT_SEGS && at < (int)sizeof line - 48; k++)
+            if (s_gput_n[k])
+                at += snprintf(line + at, sizeof line - (size_t)at, " | %u: %u/100 a frame, wait %u cpu %u", (unsigned)k,
+                               (unsigned)(s_gput_n[k] * 100u / s_gput_frames),
+                               (unsigned)(s_gput_wait[k] / 1000 / s_gput_frames),
+                               (unsigned)(s_gput_cpu[k] / 1000 / s_gput_frames));
+        xhw_log(line);
+    }
+    memset(s_gput_wait, 0, sizeof s_gput_wait);
+    memset(s_gput_cpu, 0, sizeof s_gput_cpu);
+    memset(s_gput_n, 0, sizeof s_gput_n);
+    s_gput_frames = 0;
+}
+
 static uint32_t pb_used(void) {
     const uint32_t* p = s_pb_open ? P : pb_begin();
     return (uint32_t)((const uint8_t*)p - (const uint8_t*)s_pb_base);
@@ -1766,6 +1817,7 @@ void xgx_present(int black) {
     int ovl, note;
     uint64_t t_flip;
     frame_open();
+    gput_mark(1);
     if (black) clear_fb(0, 0, s_fbw, s_fbh, 0xFF000000u, 1, 0, 0);
     pb_budget();   /* the frame's pushbuffer peak */
     if (s_fps_on && !black) fps_overlay();
@@ -4330,6 +4382,7 @@ uint32_t xgx_tex_from_efb(const int32_t src[4], uint32_t dst_w, uint32_t dst_h, 
 #ifdef XGX_DEBUG_NOEFB
     return 0;
 #endif
+    gput_mark(0);
     pw = copy_dim(dst_w);
     ph = copy_dim(dst_h);
 #ifdef XGX_DEBUG_TRACE
