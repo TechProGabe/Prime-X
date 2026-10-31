@@ -10,7 +10,7 @@
 #include "Kyoto/Graphics/CTevCombiners.hpp"
 #include "Kyoto/Graphics/CTexture.hpp"
 #ifdef TARGET_XBOX
-#include "port_xbox_gx.h" // PORT_XBOX: GXPortVertices3fC2f
+#include "port_xbox_gx.h" // PORT_XBOX: GXPortVertices3fC2f, GXPortVertices3fC1s16
 #endif
 #include "Kyoto/Math/CAABox.hpp"
 #include "Kyoto/Math/CMatrix3f.hpp"
@@ -50,6 +50,30 @@
 #include "port_debug.h"
 #include "port_fx_debug.h"
 #include "port_vfx_particles.h"
+#endif
+
+#ifdef TARGET_XBOX
+// PORT_XBOX: an untextured quad (texture corners (1,1) (0,1) (0,0) (1,0), the
+// 16 bits each GXTexCoord1s16 call writes) in one call, its positions as the
+// calls would have given them; the calls if the batch isn't that layout.
+// Lava Lake's particles were ~4% of the console's CPU in those calls (hw15).
+static inline void PortQ(float* q, float x, float y, float z) {
+  q[0] = x;
+  q[1] = y;
+  q[2] = z;
+}
+static inline void PortQ(float* q, const CVector3f& v) { PortQ(q, v.GetX(), v.GetY(), v.GetZ()); }
+static void PortBasicQuad(const float* q, uint color) {
+  static const unsigned short kST[4] = {0x0202, 0x0002, 0x0000, 0x0200};
+  if (GXPortVertices3fC1s16(q, color, kST, 4)) {
+    return;
+  }
+  for (int k = 0; k < 4; ++k) {
+    GXPosition3f32(q[k * 3], q[k * 3 + 1], q[k * 3 + 2]);
+    GXColor1u32(color);
+    GXTexCoord1s16(static_cast< s16 >(kST[k]));
+  }
+}
 #endif
 
 #ifdef TARGET_PC
@@ -2591,6 +2615,21 @@ void CElementGen::RenderBasicParticlesNoRotTS(const CTransform4f& xf) {
     float y = viewPos.GetY();
     float z = viewPos.GetZ() + halfSize;
 
+#ifdef TARGET_XBOX
+    {
+      // PORT_XBOX: the quad's four vertices in one call (PortBasicQuad), the
+      // values the calls below make, which are its fallback
+      float q[12];
+      PortQ(q + 0, x, y, z);
+      x -= particle.x2c_lineLengthOrSize;
+      PortQ(q + 3, x, y, z);
+      z -= particle.x2c_lineLengthOrSize;
+      PortQ(q + 6, x, y, z);
+      x += particle.x2c_lineLengthOrSize;
+      PortQ(q + 9, x, y, z);
+      PortBasicQuad(q, color);
+    }
+#else
     GXPosition3f32(x, y, z);
     GXColor1u32(color);
     GXTexCoord1s16(0x0202);
@@ -2609,6 +2648,7 @@ void CElementGen::RenderBasicParticlesNoRotTS(const CTransform4f& xf) {
     GXPosition3f32(x, y, z);
     GXColor1u32(color);
     GXTexCoord1s16(0x0200);
+#endif
   }
 }
 
@@ -2628,6 +2668,18 @@ void CElementGen::RenderBasicParticlesRotTS(const CTransform4f& xf) {
     float y = viewPos.GetY();
     float z = viewPos.GetZ();
 
+#ifdef TARGET_XBOX
+    {
+      // PORT_XBOX: the quad's four vertices in one call (PortBasicQuad), the
+      // values the calls below make, which are its fallback
+      float q[12];
+      PortQ(q + 0, x + sinPlusCos, y, z - sinMinusCos);
+      PortQ(q + 3, x + sinMinusCos, y, z + sinPlusCos);
+      PortQ(q + 6, x - sinPlusCos, y, z + sinMinusCos);
+      PortQ(q + 9, x - sinMinusCos, y, z - sinPlusCos);
+      PortBasicQuad(q, color);
+    }
+#else
     GXPosition3f32(x + sinPlusCos, y, z - sinMinusCos);
     GXColor1u32(color);
     GXTexCoord1s16(0x0202);
@@ -2643,6 +2695,7 @@ void CElementGen::RenderBasicParticlesRotTS(const CTransform4f& xf) {
     GXPosition3f32(x - sinMinusCos, y, z - sinPlusCos);
     GXColor1u32(color);
     GXTexCoord1s16(0x0200);
+#endif
   }
 }
 
@@ -2657,6 +2710,21 @@ void CElementGen::RenderBasicParticlesNoRotNoTS(const CTransform4f& xf) {
     float y = viewPos.GetY();
     float z = viewPos.GetZ() + halfSize;
 
+#ifdef TARGET_XBOX
+    {
+      // PORT_XBOX: the quad's four vertices in one call (PortBasicQuad), the
+      // values the calls below make, which are its fallback
+      float q[12];
+      PortQ(q + 0, x, y, z);
+      x -= particle.x2c_lineLengthOrSize;
+      PortQ(q + 3, x, y, z);
+      z -= particle.x2c_lineLengthOrSize;
+      PortQ(q + 6, x, y, z);
+      x += particle.x2c_lineLengthOrSize;
+      PortQ(q + 9, x, y, z);
+      PortBasicQuad(q, color);
+    }
+#else
     GXPosition3f32(x, y, z);
     GXColor1u32(color);
     GXTexCoord1s16(0x0202);
@@ -2675,6 +2743,7 @@ void CElementGen::RenderBasicParticlesNoRotNoTS(const CTransform4f& xf) {
     GXPosition3f32(x, y, z);
     GXColor1u32(color);
     GXTexCoord1s16(0x0200);
+#endif
   }
 }
 
@@ -2694,6 +2763,18 @@ void CElementGen::RenderBasicParticlesRotNoTS(const CTransform4f& xf) {
     float y = viewPos.GetY();
     float z = viewPos.GetZ();
 
+#ifdef TARGET_XBOX
+    {
+      // PORT_XBOX: the quad's four vertices in one call (PortBasicQuad), the
+      // values the calls below make, which are its fallback
+      float q[12];
+      PortQ(q + 0, x + sinPlusCos, y, z - sinMinusCos);
+      PortQ(q + 3, x + sinMinusCos, y, z + sinPlusCos);
+      PortQ(q + 6, x - sinPlusCos, y, z + sinMinusCos);
+      PortQ(q + 9, x - sinMinusCos, y, z - sinPlusCos);
+      PortBasicQuad(q, color);
+    }
+#else
     GXPosition3f32(x + sinPlusCos, y, z - sinMinusCos);
     GXColor1u32(color);
     GXTexCoord1s16(0x0202);
@@ -2709,6 +2790,7 @@ void CElementGen::RenderBasicParticlesRotNoTS(const CTransform4f& xf) {
     GXPosition3f32(x - sinMinusCos, y, z - sinPlusCos);
     GXColor1u32(color);
     GXTexCoord1s16(0x0200);
+#endif
   }
 }
 
@@ -3043,6 +3125,21 @@ void CElementGen::RenderParticles() {
           float y = viewPoint.GetY();
           float z = (particle.x2c_lineLengthOrSize * 0.5f) + viewPoint.GetZ();
 
+#ifdef TARGET_XBOX
+          {
+            // PORT_XBOX: the quad's four vertices in one call (PortBasicQuad), the
+            // values the calls below make, which are its fallback
+            float q[12];
+            PortQ(q + 0, x, y, z);
+            x -= particle.x2c_lineLengthOrSize;
+            PortQ(q + 3, x, y, z);
+            z -= particle.x2c_lineLengthOrSize;
+            PortQ(q + 6, x, y, z);
+            x += particle.x2c_lineLengthOrSize;
+            PortQ(q + 9, x, y, z);
+            PortBasicQuad(q, color);
+          }
+#else
           GXPosition3f32(x, y, z);
           GXColor1u32(color);
           GXTexCoord1s16(0x0202);
@@ -3061,6 +3158,7 @@ void CElementGen::RenderParticles() {
           GXPosition3f32(x, y, z);
           GXColor1u32(color);
           GXTexCoord1s16(0x0200);
+#endif
         } else {
           float halfSize = 0.5f * particle.x2c_lineLengthOrSize;
           float theta = particle.x30_lineWidthOrRota * (M_PIF / 180.f);
@@ -3074,6 +3172,18 @@ void CElementGen::RenderParticles() {
           float vpY = viewPoint.GetY();
           float vpZ = viewPoint.GetZ();
 
+#ifdef TARGET_XBOX
+          {
+            // PORT_XBOX: the quad's four vertices in one call (PortBasicQuad), the
+            // values the calls below make, which are its fallback
+            float q[12];
+            PortQ(q + 0, vpX + sinPlusCos, vpY, vpZ - sinMinusCos);
+            PortQ(q + 3, vpX + sinMinusCos, vpY, vpZ + sinPlusCos);
+            PortQ(q + 6, vpX - sinPlusCos, vpY, vpZ + sinMinusCos);
+            PortQ(q + 9, vpX - sinMinusCos, vpY, vpZ - sinPlusCos);
+            PortBasicQuad(q, color);
+          }
+#else
           GXPosition3f32(vpX + sinPlusCos, vpY, vpZ - sinMinusCos);
           GXColor1u32(color);
           GXTexCoord1s16(0x0202);
@@ -3089,6 +3199,7 @@ void CElementGen::RenderParticles() {
           GXPosition3f32(vpX - sinMinusCos, vpY, vpZ - sinPlusCos);
           GXColor1u32(color);
           GXTexCoord1s16(0x0200);
+#endif
         }
 
 #if NONMATCHING
@@ -3189,6 +3300,21 @@ void CElementGen::RenderParticles() {
           GXTexCoord2f32(uvs.xMax, uvs.yMin);
         } else {
           CVector3f p = pos + right * 0.5f + fore * 0.5f;
+#ifdef TARGET_XBOX
+          {
+            // PORT_XBOX: the quad's four vertices in one call (PortBasicQuad), the
+            // values the calls below make, which are its fallback
+            float q[12];
+            PortQ(q + 0, p);
+            p -= fore;
+            PortQ(q + 3, p);
+            p -= right;
+            PortQ(q + 6, p);
+            p += fore;
+            PortQ(q + 9, p);
+            PortBasicQuad(q, color);
+          }
+#else
           GXPositionVector3f(p);
           GXColor1u32(color);
           GXTexCoord1s16(0x0202);
@@ -3207,6 +3333,7 @@ void CElementGen::RenderParticles() {
           GXPositionVector3f(p);
           GXColor1u32(color);
           GXTexCoord1s16(0x0200);
+#endif
         }
 
 #if NONMATCHING
@@ -3342,6 +3469,21 @@ void CElementGen::RenderParticles() {
           float y = viewPoint.GetY();
           float z = (0.5f * particle->x2c_lineLengthOrSize) + viewPoint.GetZ();
 
+#ifdef TARGET_XBOX
+          {
+            // PORT_XBOX: the quad's four vertices in one call (PortBasicQuad), the
+            // values the calls below make, which are its fallback
+            float q[12];
+            PortQ(q + 0, x, y, z);
+            x -= particle->x2c_lineLengthOrSize;
+            PortQ(q + 3, x, y, z);
+            z -= particle->x2c_lineLengthOrSize;
+            PortQ(q + 6, x, y, z);
+            x += particle->x2c_lineLengthOrSize;
+            PortQ(q + 9, x, y, z);
+            PortBasicQuad(q, color);
+          }
+#else
           GXPosition3f32(x, y, z);
           GXColor1u32(color);
           GXTexCoord1s16(0x0202);
@@ -3360,6 +3502,7 @@ void CElementGen::RenderParticles() {
           GXPosition3f32(x, y, z);
           GXColor1u32(color);
           GXTexCoord1s16(0x0200);
+#endif
         }
       } else {
         for (int j = 0; j < mbspVal; ++j) {
@@ -3377,6 +3520,18 @@ void CElementGen::RenderParticles() {
           float vpY = viewPoint.GetY();
           float vpZ = viewPoint.GetZ();
 
+#ifdef TARGET_XBOX
+          {
+            // PORT_XBOX: the quad's four vertices in one call (PortBasicQuad), the
+            // values the calls below make, which are its fallback
+            float q[12];
+            PortQ(q + 0, vpX + sinPlusCos, vpY, vpZ - sinMinusCos);
+            PortQ(q + 3, vpX + sinMinusCos, vpY, vpZ + sinPlusCos);
+            PortQ(q + 6, vpX - sinPlusCos, vpY, vpZ + sinMinusCos);
+            PortQ(q + 9, vpX - sinMinusCos, vpY, vpZ - sinPlusCos);
+            PortBasicQuad(q, color);
+          }
+#else
           GXPosition3f32(vpX + sinPlusCos, vpY, vpZ - sinMinusCos);
           GXColor1u32(color);
           GXTexCoord1s16(0x0202);
@@ -3392,6 +3547,7 @@ void CElementGen::RenderParticles() {
           GXPosition3f32(vpX - sinMinusCos, vpY, vpZ - sinPlusCos);
           GXColor1u32(color);
           GXTexCoord1s16(0x0200);
+#endif
         }
       }
     }

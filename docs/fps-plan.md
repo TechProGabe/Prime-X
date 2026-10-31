@@ -44,7 +44,7 @@ The user's policy for this plan (asked 2026-10-30):
 | M4 GPU skinning | built; Main Plaza's lists in the texture pool when the vertex pool is full (hw14) |
 | M5.1 rain | built: on the GPU (`XGX_GPU_RAIN`, approved): a vertex buffer per grid, the fall and the streaks' clip in the vertex program, none dropped; the CPU path (`XGX_LINE_BOX`, `XGX_LINE_SSE`) as the fallback |
 | M5.2 snow | drawn between ticks in one call too (`GXPortSnowQuads` with stepped copies) |
-| M5.3 particle quads | built: `GXPortVertices3fC2f` for the textured quads; the basic (untextured) ones keep their calls |
+| M5.3 particle quads | built: `GXPortVertices3fC2f` for the textured quads, `GXPortVertices3fC1s16` for the untextured ones |
 | M5.4 particles at the tick period | dropped: frame-keyed elements, a visible rewrite |
 | M6a recorded pushbuffers | JUMP/CALL proven on red (hw15); its shape is the user's call (M6a below) |
 | compiler | `-O3` (hw13), full LTO ready as an A/B (`PX_LTO_MODE=full`), PGO retrained (98d6793) |

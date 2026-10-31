@@ -49,6 +49,9 @@ int GXPortSnowQuads(const short* xyz, unsigned n, const short up[3], const short
 // triples would (the particles' quads). 0: the batch isn't exactly that
 // layout and nothing was written (make the calls).
 int GXPortVertices3fC2f(const float* xyz, unsigned color, const float* uv, unsigned n);
+// The same for the untextured quads, their texture coordinates the 16 bits
+// each GXTexCoord1s16 call would write (two S8s): 0 as above.
+int GXPortVertices3fC1s16(const float* xyz, unsigned color, const unsigned short* st, unsigned n);
 
 // The CPU skinning wrote these buffers (positions, normals; either may be
 // null): a display list drawn from them again in the same frame may reuse
