@@ -4535,6 +4535,41 @@ int GXPortRainLines(const short* xyz, unsigned n, short dz, unsigned short c0, u
  * CPU in Phendrana (round hw7). Flakes go last to first, as the game's
  * loop; corners p, p + up, p + up + right, p + right in the game's short
  * sums; texture corners (0,0) (0,2) (2,2) (2,0). */
+int GXPortVertices3fC2f(const float* xyz, unsigned color, const float* uv, unsigned n) {
+    const Slot *ps, *cs, *ts;
+    uint32_t i, w, s;
+    if (!B.open || !B.base || B.cursor != 0 || B.plan.n != 3 || B.done > B.expected || B.expected - B.done < n)
+        return 0;
+    ps = &B.plan.slot[0];
+    cs = &B.plan.slot[1];
+    ts = &B.plan.slot[2];
+    if (ps->attr != GX_VA_POS || ps->type != GX_DIRECT || ps->kind != SK_F32_3) return 0;
+    if (cs->attr != GX_VA_CLR0 || cs->type != GX_DIRECT || cs->kind != SK_RGBA8) return 0;
+    if (ts->attr < GX_VA_TEX0 || ts->attr > GX_VA_TEX7 || ts->type != GX_DIRECT || ts->kind != SK_F32_2) return 0;
+    s = B.plan.layout.stride;
+    for (i = 0; i < n; i++, xyz += 3, uv += 2) {
+        /* as GXPosition3f32, GXColor4u8 and GXTexCoord2f32's fast paths
+         * store them; the vertex was cleared by the last after_attr */
+        float* o = (float*)(B.cur + ps->dst);
+        uint8_t* c = B.cur + cs->dst;
+        o[0] = xyz[0];
+        o[1] = xyz[1];
+        o[2] = xyz[2];
+        c[0] = (uint8_t)(color >> 24);
+        c[1] = (uint8_t)(color >> 16);
+        c[2] = (uint8_t)(color >> 8);
+        c[3] = (uint8_t)color;
+        o = (float*)(B.cur + ts->dst);
+        o[0] = uv[0];
+        o[1] = uv[1];
+        B.done++;
+        B.cur += s;
+        if (B.done < B.expected)   /* after_attr's clear of the next vertex */
+            for (w = 0; w < s / 4; w++) ((uint32_t*)B.cur)[w] = 0;
+    }
+    return 1;
+}
+
 int GXPortSnowQuads(const short* xyz, unsigned n, const short up[3], const short right[3]) {
     const Slot *ps, *ts;
     uint32_t i, k;

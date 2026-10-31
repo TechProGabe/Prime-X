@@ -35,6 +35,13 @@ int GXPortRainLines(const short* xyz, unsigned n, short dz, unsigned short c0, u
 // that layout and nothing was written (make the calls).
 int GXPortSnowQuads(const short* xyz, unsigned n, const short up[3], const short right[3]);
 
+// n vertices of position (3 floats each in xyz), one RGBA8 colour (as
+// GXColor1u32 takes it) and a texture coordinate (2 floats each in uv)
+// into the open batch, as n GXPosition3f32 + GXColor1u32 + GXTexCoord2f32
+// triples would (the particles' quads). 0: the batch isn't exactly that
+// layout and nothing was written (make the calls).
+int GXPortVertices3fC2f(const float* xyz, unsigned color, const float* uv, unsigned n);
+
 // The CPU skinning wrote these buffers (positions, normals; either may be
 // null): a display list drawn from them again in the same frame may reuse
 // the vertices it sent before only while they haven't been written since.
