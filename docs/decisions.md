@@ -171,6 +171,11 @@ combiners; ThinLTO + PGO for releases.
     mip count until any entry is added, dropped or moved. Revalidation of
     the texels runs as before. xemu's Main Plaza: ~6 million hits, none
     differing from the full lookup.
+  - Vertex programs that cover (`XGX_VP_COVER`, `-DXGX_VP_COVER=0`): a
+    draw may run a resident program that is its own with more texture units
+    fed (same key otherwise; the extra texgens write outputs no stage
+    samples) instead of loading its exact one. xemu's pirate fight: loads
+    25 -> 12 a frame, instructions loaded 1084 -> 464, switches 46 -> 28.
   - The rain's lines (M5): `GXPortRainLines` keeps its batch's box, and
     `clip_lines` tests the box's corners once; a batch wholly inside skips
     the per-line test (`-DXGX_LINE_BOX=0`). Same vertices drawn.
