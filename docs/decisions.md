@@ -110,7 +110,10 @@ combiners; ThinLTO + PGO for releases.
   when a 60 Hz frame (a tick's measured cost plus the frame's draw work)
   has been under 14 ms for 30 frames, after at least a second at 30
   (`port_debug.cpp`, `px_sim_frame` from vi.c's frame boundary). At 60 Hz it
-  is Fixed exactly. The Port Options row (Auto / Fixed / Flex) was removed
+  is Fixed exactly. At 720p it stays at 30 a second (2026-10-31, the user's
+  call: "at 720p keep the frame tick logic at 30 fps", "at 480 variable is
+  still preferred"): gold's 720p play ran 22-50 fps and Auto switched back
+  and forth, each switch a stutter. The Port Options row (Auto / Fixed / Flex) was removed
   the same day, the user's call: "Auto approved, make it default and remove
   options from settings". Fixed (retail: 60 a second, a slow frame runs
   more) stutters in fights; Flex (one update a frame, dt = the frame) moves
@@ -199,6 +202,16 @@ combiners; ThinLTO + PGO for releases.
     bucket so the list's draws stay unbracketed, and the list's time lands
     in render or dlist, whose sum is what Game Timing: Auto reads. A ship
     build's [PERF] split between the two is therefore not meaningful.
+  - 720p's vertex ring in the video library's framebuffer
+    (`XGX_RING_IN_VFB`, 2026-10-31, for the user's 720p hitching):
+    XVideoSetMode's 1800 KB buffer is idle once pbkit draws into its own;
+    only the crash, hang and fatal-error screens show it, and those end
+    the game. The 1.5 MB ring now lives there at 720p (480's buffer is
+    too small). Gold's 720p play had ~3.8 MB less free than 480 and
+    swapped ARAM to the disk throughout (432 chunks out, 346 read back),
+    each read a stall. 24-bit depth and triple buffering stay (visuals,
+    frame rate); the pushbuffer stays 1 MB (Melee-X hung the GPU when it
+    ran off a short one).
   - Rain on the GPU (M5.1, approved by the user 2026-10-30;
     `-DXGX_GPU_RAIN=0`, test builds' `env PX_GPU_RAIN=0`): each rain grid's
     streaks sit in a vertex buffer of their own (`GXPortRainGrid`), written
@@ -214,7 +227,15 @@ combiners; ThinLTO + PGO for releases.
     clipper, same drops, same ends within 1e-3, and the optimized rain
     programs against their unoptimized ones bit for bit. Vertex pool cost:
     ~6 KB a grid, 64 grids (~400 KB) while it rains, freed 600 frames
-    after the last draw.
+    after the last draw. Round hw16 on red: the CPU's render + draw at
+    the Landing Site 15 -> 10 ms, but the GPU's wait 1-3 -> 7 ms (the
+    clip is 46 instructions a vertex, ~18000 vertices a frame), so the
+    same frame rate. Since then each grid's box (its streaks' x and y,
+    the whole wrap in z) is tested against the planes on the CPU first:
+    wholly inside, a program without the clip (`VPRAIN_IN`, 8
+    instructions); wholly outside one plane, no draw at all (every streak
+    would be dropped). Host check: ~10000 streaks inside, the short
+    program's ends equal the clipping one's.
 
 - **Boot music inside the XBE** (round hw2, 2026-10-27): the first boot's
   music is appended to `default.xbe` (IMA ADPCM, 8.3 MB, footer "PXIN"),

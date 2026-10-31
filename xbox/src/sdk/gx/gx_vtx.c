@@ -513,10 +513,11 @@ typedef struct {
     uint32_t written;   /* streaks written, the first ones */
     uint32_t used;      /* frame of its last draw */
     uint8_t* mem;       /* 2 vertices a streak, 16 bytes each */
+    float lo[2], hi[2]; /* x and y of the streaks written (scaled) */
 } RainBuf;
 static RainBuf s_rain[RAIN_BUFS];
 static uint32_t s_rain_frame;
-static uint32_t s_st_rain_draws, s_st_rain_lines, s_st_rain_put, s_st_rain_cpu;
+static uint32_t s_st_rain_draws, s_st_rain_lines, s_st_rain_put, s_st_rain_cpu, s_st_rain_in, s_st_rain_out;
 
 /* The clip-space rows for the batch, once: cx, cy, cw and the near plane's
  * distance cz + cw, from the projection times the position matrix. 0 when
@@ -4336,10 +4337,11 @@ void gx_vtx_frame_end(void) {
                 for (k = 0; k < RAIN_BUFS; k++)
                     if (s_rain[k].owner) bufs++, kb += s_rain[k].cap * 32;
                 if (s_st_rain_draws || bufs)
-                    xhw_logf("[DLC] GPU rain: %u grids drawn (%u streaks), %u streaks written, %u to the CPU (no "
-                             "memory); %u buffers, %u KB",
-                             s_st_rain_draws, s_st_rain_lines, s_st_rain_put, s_st_rain_cpu, bufs, kb / 1024);
-                s_st_rain_draws = s_st_rain_lines = s_st_rain_put = s_st_rain_cpu = 0;
+                    xhw_logf("[DLC] GPU rain: %u grids drawn (%u streaks; %u without the clip), %u off the screen, "
+                             "%u streaks written, %u to the CPU (no memory); %u buffers, %u KB",
+                             s_st_rain_draws, s_st_rain_lines, s_st_rain_in, s_st_rain_out, s_st_rain_put,
+                             s_st_rain_cpu, bufs, kb / 1024);
+                s_st_rain_draws = s_st_rain_lines = s_st_rain_put = s_st_rain_cpu = s_st_rain_in = s_st_rain_out = 0;
             }
             memset(s_begin_n, 0, sizeof s_begin_n);
             memset(s_begin_who, 0, sizeof s_begin_who);
@@ -4638,6 +4640,8 @@ int GXPortRainGrid(const void* owner, unsigned gen, const short* xyz, unsigned n
         }
         rb->owner = owner;
         rb->gen = gen;
+        rb->lo[0] = rb->lo[1] = 3.4e38f;
+        rb->hi[0] = rb->hi[1] = -3.4e38f;
     }
     if (n < rb->written) rb->written = n;   /* (the game gives truncated ones a new gen) */
     for (i = rb->written; i < n; i++) {
@@ -4651,6 +4655,10 @@ int GXPortRainGrid(const void* owner, unsigned gen, const short* xyz, unsigned n
         o[5] = o[1];
         o[6] = o[2];
         ((uint32_t*)o)[7] = 0xFFFFFFFFu;   /* colour0 1: the end */
+        if (o[0] < rb->lo[0]) rb->lo[0] = o[0];
+        if (o[0] > rb->hi[0]) rb->hi[0] = o[0];
+        if (o[1] < rb->lo[1]) rb->lo[1] = o[1];
+        if (o[1] > rb->hi[1]) rb->hi[1] = o[1];
     }
     s_st_rain_put += n - rb->written;
     rb->written = n;
@@ -4690,8 +4698,35 @@ int GXPortRainGrid(const void* owner, unsigned gen, const short* xyz, unsigned n
     rows[XGX_RAIN_OFF][2] = 0.0f;
     rows[XGX_RAIN_OFF][3] = 1.0f;
 
+    /* The grid's box (its streaks' x and y, z the whole wrap and a streak
+     * more) against each plane: wholly inside all of them, the program
+     * without the clip (VPRAIN_IN); wholly outside one, every streak would
+     * be dropped, so no draw. Round hw16's Landing Site: the clip was ~5 ms
+     * a frame of the GPU's. */
     B.expected -= 2 * n;   /* the open batch: nothing of these */
-    xgx_rain_next(rows);
+    {
+        const float zw = 16384.0f * sc;
+        const float lo[3] = { rb->lo[0], rb->lo[1], (zw < 0.0f ? zw : 0.0f) + (dzs < 0.0f ? dzs : 0.0f) };
+        const float hi[3] = { rb->hi[0], rb->hi[1], (zw > 0.0f ? zw : 0.0f) + (dzs > 0.0f ? dzs : 0.0f) };
+        int in = 1;
+        for (q = 0; q < 5; q++) {
+            const float* pl = rows[q < 4 ? XGX_RAIN_GUARD + q : XGX_RAIN_NEAR];
+            float dlo = pl[3], dhi = pl[3];
+            int a;
+            for (a = 0; a < 3; a++) {
+                const float u = pl[a] * lo[a], v = pl[a] * hi[a];
+                dlo += u < v ? u : v;
+                dhi += u < v ? v : u;
+            }
+            if (dhi < 0.0f) {
+                s_st_rain_out++;
+                return 1;
+            }
+            if (!(dlo > 0.0f)) in = 0;
+        }
+        s_st_rain_in += in;
+        xgx_rain_next(rows, !in);
+    }
     xgx_vtx_use(rb->mem);
     xgx_draw(XGX_LINES, 2 * n, &lay, &g_xgx);
     g_xgx.dirty = 0;

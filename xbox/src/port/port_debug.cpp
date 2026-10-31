@@ -165,7 +165,7 @@ int Mode() {
 //   - at 30 Hz, the cost of a 60 Hz frame (ms per tick, from frames that ran
 //     one, plus the frame's draw work) under 14 ms for 30 frames running,
 //     and at least a second at 30: back to 60.
-// At 60 Hz it is Fixed exactly. Lockstep test runs (PX_LOCKSTEP) hold 60 Hz,
+// At 720p it stays at 30 Hz (px_sim_frame). At 60 Hz it is Fixed exactly. Lockstep test runs (PX_LOCKSTEP) hold 60 Hz,
 // so their frames don't depend on the host's speed; PX_SIM_RATE holds a step.
 constexpr uint32_t kOverUs = 16000, kUnderUs = 14000;
 constexpr int kUnderFrames = 30, kDwellFrames = 60;
@@ -430,6 +430,12 @@ extern "C" void px_sim_frame(void) {
   ++sFrames;
   if (sAuto30)
     ++sFrames30;
+  // 720p: 30 Hz ticks throughout (the user's call, 2026-10-31): gold's 720p
+  // play ran 22-50 fps and switched back and forth, each switch a stutter
+  if (xhw_video()->height >= 720) {
+    SetAuto30(true, cpu, est);
+    return;
+  }
   if (!sAuto30) {
     sOverBits = ((sOverBits << 1) | (cpu > kOverUs ? 1u : 0u)) & 0xFu;
     if (__builtin_popcount(sOverBits) >= 3)

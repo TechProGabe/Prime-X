@@ -2962,9 +2962,9 @@ _Static_assert(XGX_RAIN_ROWS == VPR_ROWS && XGX_RAIN_NEAR == VPR_NEAR && XGX_RAI
 static float s_rain_rows[VPR_ROWS][4];
 static int s_rain_req;
 
-void xgx_rain_next(const float rows[XGX_RAIN_ROWS][4]) {
+void xgx_rain_next(const float rows[XGX_RAIN_ROWS][4], int clip) {
     memcpy(s_rain_rows, rows, sizeof s_rain_rows);
-    s_rain_req = 1;
+    s_rain_req = clip ? VPRAIN_CLIP : VPRAIN_IN;
 }
 
 static uint32_t nv_prim(uint32_t gx) {
@@ -3797,7 +3797,7 @@ void xgx_draw(uint32_t prim, uint32_t count, const XgxLayout* layout, XgxState* 
     s_draw_force = 0;
     if (d & XGX_DIRTY_LIGHTS) s_lt_valid = 0;
     lay = (layout->off_nrm >= 0) | (layout->off_col[0] >= 0) << 1 | (layout->off_col[1] >= 0) << 2 |
-          (layout->off_mtx >= 0 ? (layout->tc_mtx & 0xFFu) << 3 : 0) | (uint32_t)s_rain_req << 30;   /* the rain's program: a key of its own */
+          (layout->off_mtx >= 0 ? (layout->tc_mtx & 0xFFu) << 3 : 0) | (uint32_t)s_rain_req << 30;   /* the rain's programs: keys of their own */
     /* Its inputs, without indirect stages: the TEV stages, swap tables and
      * Z texture (XGX_DIRTY_TEV), the texgens a bump pair uses (TEXGEN) and
      * which maps hold a texture. A draw that only rebinds textures (MAPS
@@ -4650,6 +4650,30 @@ static void setup_state(void) {
     pb_end(p);
 }
 
+/* The vertex ring in the video library's framebuffer where that is big
+ * enough (720p's, 1280x720 at 16 bits: 1800 KB). XVideoSetMode's buffer is
+ * shown only by the crash, hang and fatal-error screens
+ * (pb_show_debug_screen), which end the game, so it sat idle: gold's 720p
+ * play had ~3.8 MB less free than 480 and swapped ARAM to the disk all
+ * along (432 chunks out, 346 back), each fill a hitch. -DXGX_RING_IN_VFB=0
+ * turns it off. */
+#ifndef XGX_RING_IN_VFB
+#define XGX_RING_IN_VFB 1
+#endif
+static int s_ring_vfb;   /* s_ring is XVideoGetFB()'s: not ours to free */
+
+static uint8_t* ring_alloc(void) {
+    const VIDEO_MODE m = XVideoGetMode();
+    uint8_t* fb = XVideoGetFB();
+    s_ring_vfb = 0;
+    if (XGX_RING_IN_VFB && fb && (uint32_t)m.width * (uint32_t)m.height * (uint32_t)((m.bpp + 7) / 8) >= RING_BYTES &&
+        !((uintptr_t)fb & 0xFFFu) && MmGetPhysicalAddress(fb) + RING_BYTES <= MAXRAM) {
+        s_ring_vfb = 1;
+        return fb;
+    }
+    return (uint8_t*)MmAllocateContiguousMemoryEx(RING_BYTES, 0, MAXRAM, 0, PAGE_READWRITE | PAGE_WRITECOMBINE);
+}
+
 int xgx_init(void) {
     const xhw_video_mode* vm = xhw_video();
     uint32_t tex_pool_bytes = TEX_POOL_480, vb_pool_bytes = VB_POOL_480;
@@ -4691,12 +4715,12 @@ int xgx_init(void) {
         pb_size(PB_BYTES);
         err = pb_init();
         if (!err) {
-            s_ring = (uint8_t*)MmAllocateContiguousMemoryEx(RING_BYTES, 0, MAXRAM, 0, PAGE_READWRITE | PAGE_WRITECOMBINE);
+            s_ring = ring_alloc();
             while (s_ring && !pool_init(&s_tp, tex_pool_bytes) && tex_pool_bytes > TEX_POOL_MIN)
                 tex_pool_bytes -= 1024u * 1024;
             if (s_tp.base && s_ring) break;
             pool_release(&s_tp);
-            if (s_ring) MmFreeContiguousMemory(s_ring);
+            if (s_ring && !s_ring_vfb) MmFreeContiguousMemory(s_ring);
             s_ring = NULL;
             pb_kill();
         }
@@ -4738,8 +4762,8 @@ int xgx_init(void) {
         xhw_logf("[NV2A] layout: pushbuffer %08x +%x, fb %08x %08x %08x +%x, depth %08x +%x, video fb %08x",
                  l[0] & 0x03FFFFFFu, l[1], l[2] & 0x03FFFFFFu, l[3] & 0x03FFFFFFu, l[4] & 0x03FFFFFFu, l[5],
                  l[6] & 0x03FFFFFFu, l[7], (unsigned)(uintptr_t)xfb & 0x03FFFFFFu);
-        xhw_logf("[NV2A] layout: vertex ring %08x +%x, tex pool %08x +%x, vertex pool %08x +%x",
-                 (unsigned)(uintptr_t)s_ring & 0x03FFFFFFu, RING_BYTES, (unsigned)(uintptr_t)s_tp.base & 0x03FFFFFFu,
+        xhw_logf("[NV2A] layout: vertex ring %08x +%x%s, tex pool %08x +%x, vertex pool %08x +%x",
+                 (unsigned)(uintptr_t)s_ring & 0x03FFFFFFu, RING_BYTES, s_ring_vfb ? " (the video fb)" : "", (unsigned)(uintptr_t)s_tp.base & 0x03FFFFFFu,
                  s_tp.bytes, (unsigned)(uintptr_t)s_vb.base & 0x03FFFFFFu, s_vb.bytes);
     }
     xhw_mem_log("after nv2a");

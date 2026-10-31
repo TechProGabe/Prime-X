@@ -25,6 +25,10 @@
  * clip_lines does on the CPU (the near plane and the guard band,
  * Liang-Barsky): both ends see the same streak, so each works out its own
  * clipped end, and a streak wholly outside goes to a point off the screen.
+ * VPRAIN_IN: the grid is wholly inside the planes (GXPortRainGrid tests its
+ * box), so no streak needs the clip: the fall, the end's height and colour
+ * only (8 instructions where the clip takes 46; round hw16's Landing Site
+ * spent ~5 ms a frame of the GPU's on the clip).
  * The rows, from VPC_RAIN (object space: the grid's matrix folded in): */
 #define VPR_GUARD 0      /* 4 rows: the guard band's planes, 2 w + x, 2 w - x, 2 w + y, 2 w - y */
 #define VPR_NEAR 4       /* the near plane, cz + cw */
@@ -38,6 +42,7 @@
 #define VPR_DC 12        /* the end's colour minus the start's */
 #define VPR_OFF 13       /* where a dropped streak goes: clip (-64, -64, 0, 1), off the screen */
 #define VPR_ROWS 14
+enum { VPRAIN_CLIP = 1, VPRAIN_IN = 2 };   /* VpKey.rain */
 
 /* vertex inputs */
 #define VPI_POS 0
@@ -83,7 +88,7 @@ typedef struct {
      * angle a = (1, 0, 0) (infinite and point lights), distance k = (1, 0, 0)
      * (infinite lights); their factor is then 1 exactly, so it is left out */
     uint8_t ang_one, dist_one;
-    uint8_t rain;                 /* the rain's streaks (VPC_RAIN above) */
+    uint8_t rain;                 /* the rain's streaks (VPC_RAIN above): 0, VPRAIN_CLIP or VPRAIN_IN */
 } VpKey;
 
 #define VP_MAX_INSNS 136

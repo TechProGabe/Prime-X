@@ -426,7 +426,7 @@ int main(int argc, char** argv) {
      * streak (lines near a plane, where the two orders of operations may
      * decide differently, are left out) */
     {
-        int rfails = 0, rn = 0, vn = 0, vskip = 0, vdrop = 0, vclip = 0, maxlen = 0;
+        int rfails = 0, rn = 0, vn = 0, vskip = 0, vdrop = 0, vclip = 0, vin = 0, maxlen = 0;
         for (t = 0; t < nkeys / 10; t++) {
             VpKey k;
             VpIn in;
@@ -434,7 +434,7 @@ int main(int argc, char** argv) {
             int nun;
             rand_key(&k);
             if (k.copy) continue;
-            k.rain = 1;
+            k.rain = t & 1 ? VPRAIN_IN : VPRAIN_CLIP;
             if (!k.ntex) k.ntex = 1;
             k.tex[0].src = 0;
             vp_canon(&k);
@@ -460,7 +460,7 @@ int main(int argc, char** argv) {
             float pl[5][4], dzs, X, Y, Z0, d0[5], d1[5], t0 = 0, t1 = 1, want[2], wc[2];
             int q, e, x16, y16, z16, D, dz, o0 = 0, o1 = 0, drop = 0, near_edge = 0;
             memset(&k, 0, sizeof k);
-            k.rain = 1;
+            k.rain = VPRAIN_CLIP;
             k.nchans = 1;
             k.chan[0].mat_vtx = k.chan[1].mat_vtx = 1;   /* D0 = the vertex colour */
             k.ntex = 1;              /* oT0 = (x, z) of the streak's end */
@@ -576,10 +576,33 @@ int main(int argc, char** argv) {
                                t, e, dropped, drop, o[e].o[9][1], want[e], o[e].o[3][3], wc[e], o0, o1);
                 }
             }
+            /* a streak wholly inside: VPRAIN_IN's program must give the same ends */
+            if (!(o0 | o1)) {
+                VpOut oi;
+                k.rain = VPRAIN_IN;
+                vp_canon(&k);
+                vp_generate(&k, &cur);
+                vin++;
+                for (e = 0; e < 2; e++) {
+                    in.v[VPI_COL0][0] = in.v[VPI_COL0][1] = in.v[VPI_COL0][2] = in.v[VPI_COL0][3] = (float)e;
+                    run(cur.words, (int)cur.n, &in, 15000u + (unsigned)t, 0, &oi);
+                    if (oi.bad || fabsf(oi.o[9][1] - o[e].o[9][1]) > 1e-4f * (1 + fabsf(want[e])) ||
+                        fabsf(oi.o[0][0] - o[e].o[0][0]) > 1e-4f * (1 + fabsf(o[e].o[0][0])) ||
+                        fabsf(oi.o[0][1] - o[e].o[0][1]) > 1e-4f * (1 + fabsf(o[e].o[0][1])) ||
+                        fabsf(oi.o[3][3] - o[e].o[3][3]) > 1e-5f) {
+                        if (rfails++ < 10)
+                            printf("rain case %d end %d: VPRAIN_IN z %g pos %g %g alpha %g, clipped z %g pos %g %g "
+                                   "alpha %g\n",
+                                   t, e, oi.o[9][1], oi.o[0][0], oi.o[0][1], oi.o[3][3], o[e].o[9][1], o[e].o[0][0],
+                                   o[e].o[0][1], o[e].o[3][3]);
+                    }
+                }
+            }
         }
         printf("%d rain keys against their unoptimized program (longest %d instructions); %d streaks against "
-               "clip_lines (%d dropped, %d clipped; %d near a plane left out): %d failed\n",
-               rn, maxlen, vn, vdrop, vclip, vskip, rfails);
+               "clip_lines (%d dropped, %d clipped; %d near a plane left out), %d inside against VPRAIN_IN: %d "
+               "failed\n",
+               rn, maxlen, vn, vdrop, vclip, vskip, vin, rfails);
         fails += rfails;
     }
     printf("%d keys (%d longer than 136 before: %ld whole now, checked against their unoptimized program; %d cut by "

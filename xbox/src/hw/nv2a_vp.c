@@ -490,10 +490,22 @@ static void texgen(Gen* g, const VpKey* k, int u) {
 }
 
 /* VpKey.rain (nv2a_vp.h VPC_RAIN): the streak's end in model space into
- * RROBJ, its colour into RRCOL, keep / drop into RRKEEP. Two different
- * constant rows or inputs never meet in one op (one index each per
- * instruction). */
+ * RROBJ, its colour into RRCOL, keep / drop into RRKEEP (VPRAIN_CLIP). Two
+ * different constant rows or inputs never meet in one op (one index each
+ * per instruction). */
 static Src RC(int r) { return C(VPC_RAIN + r); }
+/* VPRAIN_IN: nothing to clip, so this end's t is colour0.x (0 or 1) */
+static void rain_in(Gen* g) {
+    MAD(T(RS, MX), sw(V(VPI_POS), ZZZZ), sw(RC(VPR_Z), YYYY), sw(RC(VPR_Z), XXXX));
+    EXPP(T(RS, MY), sw(R(RS), XXXX));
+    MUL(T(RROBJ, MZ), sw(R(RS), YYYY), sw(RC(VPR_Z), ZZZZ));
+    MOV(T(RROBJ, MX | MY), V(VPI_POS));
+    MOV(T(RROBJ, MW), K1());
+    MAD(T(RROBJ, MZ), sw(V(VPI_COL0), XXXX), sw(RC(VPR_DZ), XXXX), R(RROBJ));
+    MUL(T(RRCOL, MXYZW), sw(V(VPI_COL0), XXXX), RC(VPR_DC));
+    ADD(T(RRCOL, MXYZW), R(RRCOL), RC(VPR_C0));
+}
+#define RAIN_IN_LEN 8
 static void rain(Gen* g) {
     const int TG = RPOS, TN = RCLIP, AG = RL, AN = RD, BG = RT, BN = RNRM, NBG = RACC, NBN = RC0, AB = RS;
     /* z = (z + D) mod 0x4000: (z + D) / 0x4000 and D / 0x4000 are exact
@@ -569,7 +581,8 @@ static void gen_program(Gen* g, const VpKey* k) {
         if (i < k->nchans * 2 && k->chan[i].enable && k->chan[i].light_mask) needs_nrm = 1;
     needs_nrm = needs_nrm && k->has_nrm;
 
-    if (k->rain) rain(g);
+    if (k->rain == VPRAIN_IN) rain_in(g);
+    else if (k->rain) rain(g);
     /* position: a0 = PNMTXIDX (the current matrix when the vertex has none) */
     arl(g, sw(V(VPI_MTX), XXXX));
     {
@@ -584,9 +597,10 @@ static void gen_program(Gen* g, const VpKey* k) {
     DP4(T(RCLIP, MZ), R(RPOS), C(VPC_PROJ + 2));
     DP4(T(RCLIP, MW), R(RPOS), C(VPC_PROJ + 3));
     if (k->rain) {
-        /* a dropped streak: both ends at one point off the screen */
-        MUL(T(RCLIP, MXYZW), R(RCLIP), sw(R(RRKEEP), XXXX));
-        MAD(T(RCLIP, MXYZW), sw(R(RRKEEP), ZZZZ), RC(VPR_OFF), R(RCLIP));
+        if (k->rain == VPRAIN_CLIP) {   /* a dropped streak: both ends at one point off the screen */
+            MUL(T(RCLIP, MXYZW), R(RCLIP), sw(R(RRKEEP), XXXX));
+            MAD(T(RCLIP, MXYZW), sw(R(RRKEEP), ZZZZ), RC(VPR_OFF), R(RCLIP));
+        }
         /* the texgens read the streak's end before anything below writes RROBJ */
         for (i = 0; i < k->ntex && i < 4; i++) texgen(g, k, i);
     }
@@ -1190,7 +1204,7 @@ static int light_len(const VpChan* ch) {
 static int legacy_len(const VpKey* k) {
     int n, i, ci;
     if (k->copy) return 4;
-    n = 12 + (k->rain ? RAIN_LEN + 2 : 0) + (k->fog == VPF_LIN ? 4 : k->fog == VPF_EXP ? 9 : k->fog == VPF_EXP2 ? 10 : 0);
+    n = 12 + (k->rain == VPRAIN_CLIP ? RAIN_LEN + 2 : k->rain ? RAIN_IN_LEN : 0) + (k->fog == VPF_LIN ? 4 : k->fog == VPF_EXP ? 9 : k->fog == VPF_EXP2 ? 10 : 0);
     ci = 0;
     for (i = 0; i < 4; i++)
         if (i < k->nchans * 2 && k->chan[i].enable && k->chan[i].light_mask) ci = 1;
