@@ -4717,6 +4717,7 @@ int xgx_init(void) {
             tex_pool_bytes = TEX_POOL_480;
             vb_pool_bytes = VB_POOL_480;
         }
+        xhw_page0_guard("pb_init");
         pb_size(PB_BYTES);
         err = pb_init();
         if (!err) {

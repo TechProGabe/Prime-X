@@ -205,6 +205,7 @@ static void main_body(void* arg) {
     CreateDirectoryA("E:\\UDATA", NULL);
     CreateDirectoryA(XHW_UDATA_ROOT, NULL);
     xhw_log_open_file();
+    xhw_page0_guard("boot");
     log_save_folder();
     read_image_range();
     xhw_logf("[BOOT] image %08x-%08x %.*s", xhw_image_base, xhw_image_end, (int)XeImageFileName[0].Length,
