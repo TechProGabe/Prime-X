@@ -68,7 +68,18 @@ there is the limit). No audio fault in 21 chained scenes (hw11, hw12).
    720p** (+1.5 MB free; `XGX_RING_IN_VFB`, decisions.md). Next: a console
    round at 720p to see the swap counts (`[AR]` lines) and `[MEM] low`
    against gold's log; then, if it still swaps, the ARAM reclaimer's
-   choice of chunks.
+   choice of chunks. **Round hw17 ran on gold** (`logs-hw17`, 2f782e0):
+   swapping 0-32 chunks out, none back (was 432/346); [MEM] low 0-5;
+   but Main Plaza at 720p 13-15 fps (display lists decoded every call:
+   the 6 MB texture pool had no room for spilled lists) -> 720p's
+   texture pool 7 MB (xemu: as few decoded as 480). Every gold scene,
+   480 too, froze ~6 s once at its room load and stalled >1 s ~18
+   times, the game thread in ReadFile on the disc image (ARAM pages
+   read through `ar.c` `read_pages`, synchronously): gold's E: is 456 MB
+   free of 4881 (the ISO and aram.swp there, likely fragmented); red
+   (F:, 3.6 GB free on E:) has ~1 such stall a scene. Other 720p scenes:
+   pirates 27-30, Landing Site 31-49, Lava Lake 35-41, Phendrana 30-34
+   (GPU 12-14 ms a frame: fill).
 1. **Round hw16 ran on red** (2026-10-31, `logs-hw16`, all 11 scenes and
    their shots, no fault). Against hw15: pirates 34-35 -> 37-38, Main
    Plaza 43-44 -> 47-48, Lava Lake 44-45 (same), Landing Site 35-37 ->
