@@ -105,10 +105,18 @@ void xhw_fbdump(const void* fb, int w, int h, int bpp, int pitch) {
 }
 
 /* 24-bit bottom-up BMP, rows converted one at a time (the framebuffer is
- * write-combined: read each row once, in order) */
+ * write-combined: read each row once, in order). The file is given its full
+ * size first and written in 64 KB pieces: on a stock drive every WriteFile
+ * that grows a file cost ~60 ms (round hw18 on gold: a 720p shot, 721
+ * writes, froze the game 47 s); one row at a time if the 64 KB isn't there */
+#define SHOT_CHUNK (64 * 1024)
 void xhw_fbdump_file(const void* fb, int w, int h, int bpp, int pitch) {
     static unsigned s_n;
     static unsigned char row[1280 * 3 + 4];
+    unsigned char *buf, *d;
+    unsigned cap, have = 0;
+    LONG hi = 0;
+    uint64_t t0;
     char path[96];
     unsigned char hdr[54];
     unsigned stride = ((unsigned)w * 3 + 3) & ~3u, size = 54 + stride * (unsigned)h;
@@ -131,6 +139,10 @@ void xhw_fbdump_file(const void* fb, int w, int h, int bpp, int pitch) {
         return;
     }
     xhw_watchdog_busy(1);
+    t0 = xhw_time_ns();
+    buf = (unsigned char*)malloc(SHOT_CHUNK);
+    cap = buf ? SHOT_CHUNK : sizeof row;
+    if (!buf) buf = row;
     memset(hdr, 0, sizeof hdr);
     hdr[0] = 'B'; hdr[1] = 'M';
     memcpy(hdr + 2, &size, 4);
@@ -138,13 +150,28 @@ void xhw_fbdump_file(const void* fb, int w, int h, int bpp, int pitch) {
     memcpy(hdr + 18, &w, 4);
     memcpy(hdr + 22, &h, 4);
     hdr[26] = 1; hdr[28] = 24;
-    ok = WriteFile(f, hdr, sizeof hdr, &done, NULL) && done == sizeof hdr;
+    ok = SetFilePointer(f, (LONG)size, &hi, FILE_BEGIN) != INVALID_SET_FILE_POINTER && SetEndOfFile(f) &&
+         SetFilePointer(f, 0, NULL, FILE_BEGIN) == 0;
     if (!ok) err = GetLastError();
-    memset(row, 0, sizeof row);
+    if (ok && cap >= sizeof hdr + stride) {
+        memcpy(buf, hdr, sizeof hdr);
+        have = sizeof hdr;
+    } else if (ok) {
+        ok = WriteFile(f, hdr, sizeof hdr, &done, NULL) && done == sizeof hdr;
+        if (!ok) err = GetLastError();
+    }
     for (y = h - 1; y >= 0 && ok; y--) {
         const unsigned char* src = (const unsigned char*)fb + (size_t)y * (size_t)pitch;
+        if (have + stride > cap) {
+            if (!(ok = WriteFile(f, buf, have, &done, NULL) && done == have)) {
+                err = GetLastError();
+                break;
+            }
+            have = 0;
+        }
+        memset(buf + have + stride - 4, 0, 4);   /* the row's padding */
         for (x = 0; x < w; x++) {
-            unsigned char* d = row + x * 3;
+            d = buf + have + x * 3;
             if (bpp == 16) {
                 unsigned v = ((const unsigned short*)src)[x], r = v >> 11, g = (v >> 5) & 63, b = v & 31;
                 d[0] = (unsigned char)(b << 3 | b >> 2);
@@ -157,8 +184,10 @@ void xhw_fbdump_file(const void* fb, int w, int h, int bpp, int pitch) {
                 d[2] = (unsigned char)(v >> 16);
             }
         }
-        if (!(ok = WriteFile(f, row, stride, &done, NULL) && done == stride)) err = GetLastError();
+        have += stride;
     }
+    if (ok && have && !(ok = WriteFile(f, buf, have, &done, NULL) && done == have)) err = GetLastError();
+    if (buf != row) free(buf);
     CloseHandle(f);
     xhw_watchdog_busy(0);
     if (!ok) {   /* E: full: no half picture left behind */
@@ -167,6 +196,6 @@ void xhw_fbdump_file(const void* fb, int w, int h, int bpp, int pitch) {
         xhw_notice("Screenshot not saved: E: is full.", "Free some space on E: and try again.");
         return;
     }
-    xhw_logf("[SHOT] wrote %s", path);
+    xhw_logf("[SHOT] wrote %s (%u ms)", path, (unsigned)((xhw_time_ns() - t0) / 1000000));
     s_n++;
 }

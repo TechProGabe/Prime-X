@@ -104,6 +104,19 @@ there is the limit). No audio fault in 21 chained scenes (hw11, hw12).
    read-only and uncached (PTE 655/659, 663 on every other boot). The
    guard now also gives a read-only page 0 its write bit (claim first,
    then the PTE; checked in xemu with `env PX_PAGE0_RO=1`).
+   Round hw18d (0ff5ed0, `logs-hw18dred`, `logs-hw18dgold`): all 11
+   scenes on both ran through, no crash, watchdog or fault. Page 0 was
+   writable on every boot this time (PTE 663, gold's g18e 64f, g18f
+   66f), so the repair never had to act: not yet seen on hardware.
+   Red's stalls are room loads and its shots (~0.7 s each); r18d's rain
+   still ran ~1.65M streaks through the clip, ~3K without, ~60K culled.
+   Gold: `aram.swp` grew 4 -> 8 MB once (65 ms); `[MEM] low` reclaims
+   now 0-370 ms (were 1.1-1.7 s); the first world load ~4-5 s (red
+   ~0.8 s); every screenshot froze it 47 s at 720p, 27 s at 480p (one
+   WriteFile per row, each growing the file): the shot writer now sets
+   the file's size first and writes 64 KB at a time. Gold fps (median of the
+   5 s lines): Main Plaza 37, pirates 30, Landing Site 28, Lava Lake 34,
+   Phendrana 32, Main Plaza at 480p 46.
 0b. **Stock drives** (2026-10-31, the user: gold's drive is what most
    players have, little free space, "we should address it"). No hardware
    tests until truly needed (the user turned the consoles off). Done,

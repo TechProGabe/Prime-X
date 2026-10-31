@@ -105,6 +105,11 @@ over unless a line here says otherwise.
   8 MB (`xhw_file_open_rw_sized`), no longer created empty each boot:
   round hw18b's gold stalled ~1.1-1.7 s at each 1 MB reclaim, every
   slot's first swap-out growing the file on its nearly full partition.
+  Screenshots (`xhw_fbdump.c`: test builds, or Port Options' Screen
+  Capture) get their whole size first and go out in 64 KB writes, no
+  longer a row at a time: round hw18d's gold took 47 s for a 720p shot
+  (721 writes each growing the file, ~60 ms apiece) and 27 s at 480p;
+  red 0.7 s.
 - **No boot.log in release builds unless asked** (2026-10-31, the user:
   "It's possible logging is adding to hdd problems, let's make sure on
   official release logging is on port settings with default off"):
