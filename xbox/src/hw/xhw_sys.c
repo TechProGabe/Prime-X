@@ -1107,6 +1107,23 @@ void* xhw_file_create_rw(const char* path) {
     return h == INVALID_HANDLE_VALUE ? NULL : (void*)h;
 }
 
+void* xhw_file_open_rw_sized(const char* path, uint32_t min_bytes) {
+    HANDLE h = CreateFileA(path, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ, NULL, OPEN_ALWAYS,
+                           FILE_ATTRIBUTE_NORMAL, NULL);
+    DWORD size;
+    if (h == INVALID_HANDLE_VALUE) return NULL;
+    size = GetFileSize(h, NULL);
+    if (size != INVALID_FILE_SIZE && size < min_bytes) {
+        const uint64_t t = xhw_time_ns();
+        LONG hi = 0;
+        int ok = SetFilePointer(h, (LONG)min_bytes, &hi, FILE_BEGIN) != INVALID_SET_FILE_POINTER && SetEndOfFile(h);
+        xhw_logf("[FILE] %s: %u -> %u KB %s (%u ms)", path, (unsigned)(size / 1024), (unsigned)(min_bytes / 1024),
+                 ok ? "set aside" : "not available", (unsigned)((xhw_time_ns() - t) / 1000000));
+        if (!ok) SetEndOfFile(h);   /* (the pointer is past the end if only SetEndOfFile failed) */
+    }
+    return (void*)h;
+}
+
 int xhw_file_write(void* file, uint32_t off, const void* src, uint32_t len) {
     const uint8_t* s = (const uint8_t*)src;
     LONG hi = 0;
