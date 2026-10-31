@@ -88,12 +88,13 @@ there is the limit). No audio fault in 21 chained scenes (hw11, hw12).
    reclaimer's swap writes on the ARQ worker (decisions.md "The hard
    drive stays off the game thread", "No boot.log in release builds").
    xemu with every boot.log write slowed to 300 ms: the same stalls and
-   frame rates as without; room sweep clean. ARQ copies on the worker
-   are written but off: with them on the title's Port Options frame had
-   no text (some ARAM reader expects the copy done at post time; find it
-   with `env PX_ARQ_ASYNC=1`, then they would take the room loads' image
-   reads off the game thread). hw17b (staged, not uploaded) predates all
-   this: restage before the next gold round.
+   frame rates as without; room sweep clean. Then the freezes (the
+   user: "fix the freezes as much as you can without hw testing"): ARQ
+   copies on the worker (on; the "no text" scare was the script's
+   drift), the DVD queue 64 -> 1024 (the room-streaming freezes: xemu with
+   40 ms image reads, 17 s -> none). Left: the first load into a world
+   waits for its reads. hw17b (staged, not uploaded) predates all this:
+   restage before the next gold round.
 1. **Round hw16 ran on red** (2026-10-31, `logs-hw16`, all 11 scenes and
    their shots, no fault). Against hw15: pirates 34-35 -> 37-38, Main
    Plaza 43-44 -> 47-48, Lava Lake 44-45 (same), Landing Site 35-37 ->

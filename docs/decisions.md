@@ -86,14 +86,23 @@ over unless a line here says otherwise.
   the reclaimer's swap-file writes run on the ARQ worker thread (`ar.c`),
   the game thread keeps only the no-I/O pass; ARQ completions are a list
   through the requests' `next` (the GameCube's queue has no bound: a
-  128-entry array overflowed with slow reads). ARQ copies themselves on
-  that worker are written but OFF (`XSDK_ARQ_ASYNC`): with them on,
-  xemu's title-screen Port Options frame came up without text, so some
-  reader still counts on a copy being done when ARQPostRequest returns;
-  until that is found the image reads behind room loads stay on the game
-  thread. Test builds: `env PX_IMG_DELAY_MS=n` (each image read waits n
-  ms), `env PX_LOG_DELAY_MS=n` (each boot.log write), `env
-  PX_ARQ_ASYNC=1`. xemu, every boot.log write slowed to 300 ms: the same
+  128-entry array overflowed with slow reads). ARQ copies with a callback
+  run on that worker too, in the order posted, the callbacks still on the
+  game thread (`XSDK_ARQ_ASYNC`; a first look blamed them for a title
+  Port Options frame without text, but the script's presses had landed
+  elsewhere: in lockstep both ways draw the same). The DVD read queue
+  holds 1024 reads, waiting and done (`dvd.c`): at 64 a room load's
+  hundreds of async resource reads (`CResLoader::LoadResourceAsync`,
+  `CGameArea::StartStreamIn` streaming the next rooms) left the game
+  thread waiting in `enqueue` for the drive. xemu, Main Plaza with every
+  image read slowed to 40 ms: the queue at 64 froze the game 17 s twice
+  while it streamed the rooms around (and 1-5 s more); at 512 no stall
+  past 0.3 s after the world's first load (the room sweep peaks at 671
+  reads, the Chozo temple: hence 1024). The
+  first load from the menu into a world still waits for its reads, as on
+  the GameCube. Test builds: `env PX_IMG_DELAY_MS=n` (each image read
+  waits n ms), `env PX_LOG_DELAY_MS=n` (each boot.log write), `env
+  PX_ARQ_ASYNC=0`. xemu, every boot.log write slowed to 300 ms: the same
   stalls and frame rates as without.
 - **No boot.log in release builds unless asked** (2026-10-31, the user:
   "It's possible logging is adding to hdd problems, let's make sure on

@@ -31,6 +31,7 @@ void xsdk_disc_forget(void);         /* Options: the next start checks every fil
 typedef int (*xsdk_disc_progress)(float f, const char* file, u32 crc, int ok, const u8* sample, u32 off);
 int xsdk_disc_full_check(int force, xsdk_disc_progress progress, char* first_bad, size_t cap, u32* bad_off);
 void xsdk_dvd_deliver(void);
+void xsdk_dvd_log(void);   /* the read queue's depth since the last call ([DVD] queue) */
 void xsdk_dvd_free_dol(void);
 /* On the DVD worker, inside a read's completion callback: 1 if [p, p + len)
  * holds bytes that read just brought from the disc image, and where from. */

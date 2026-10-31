@@ -247,7 +247,13 @@ int xsdk_dvd_disc_source(const void* p, u32 len, u32* image_off) {
  * again would recurse */
 int xsdk_dvd_image_read(u32 image_off, void* dst, u32 len) { return img_read_committed(image_off, dst, len); }
 
-#define QUEUE 64
+/* reads waiting plus reads done but not yet delivered. A room load posts
+ * hundreds of resource reads at once (CResLoader::LoadResourceAsync); at
+ * 64 the game thread waited in enqueue for the drive to catch up, so on a
+ * slow stock drive "async" loads froze the game (xemu, image reads slowed
+ * to 40 ms: 17 s; round hw17's gold: ~6 s). The GameCube's queue is a
+ * list with no bound. 1024: ~60 KB (xemu's room sweep peaked at 671, the temple). */
+#define QUEUE 1024
 static Req s_q[QUEUE];
 static volatile int s_qhead, s_qcount;
 /* reads done, waiting for the game thread to finish them */
@@ -261,6 +267,7 @@ void xsdk_dvd_deliver(void);
 static xhw_mutex* s_qlock;
 static xhw_event* s_qevent;
 static volatile int s_inflight;
+static int s_q_peak, s_q_waits;   /* the deepest the queue got, enqueues that found it full */
 
 static void worker(void* arg) {
     (void)arg;
@@ -302,10 +309,12 @@ static BOOL enqueue(const Req* r) {
     for (;;) {
         xhw_mutex_lock(s_qlock);
         if (s_qcount + s_dcount < QUEUE) break;
+        s_q_waits++;
         xhw_mutex_unlock(s_qlock);
         xsdk_dvd_deliver();
         xhw_sleep_ms(1);
     }
+    if (s_qcount + s_dcount + 1 > s_q_peak) s_q_peak = s_qcount + s_dcount + 1;
     cb->state = DVD_STATE_BUSY;
     cb->addr = r->addr;
     cb->length = (u32)r->length;
@@ -343,6 +352,11 @@ int DVDReadAbsAsyncPrio(DVDCommandBlock* block, void* addr, s32 length, s32 offs
     r.offset = offset;
     r.bcb = callback;
     return enqueue(&r);
+}
+
+void xsdk_dvd_log(void) {
+    if (s_q_peak) xhw_logf("[DVD] queue: at most %d reads (of %d), %d waits for room", s_q_peak, QUEUE, s_q_waits);
+    s_q_peak = s_q_waits = 0;
 }
 
 int aurora_dvd_inflight(void) { return __atomic_load_n(&s_inflight, __ATOMIC_ACQUIRE); }
