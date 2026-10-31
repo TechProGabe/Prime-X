@@ -192,6 +192,12 @@ combiners; ThinLTO + PGO for releases.
     and at the present and logs `[GPUT]` per segment of the frame (the
     wait, the CPU time before it). It serializes the frame, so only its
     per-segment waits mean anything; off unless asked for.
+  - Ship builds read no clock around a display-list call
+    (`GXCallDisplayList`): test builds keep "dlist" in [PERF] (two `rdtsc`
+    a call, ~1500 calls a frame in Main Plaza); a ship build only tags the
+    bucket so the list's draws stay unbracketed, and the list's time lands
+    in render or dlist, whose sum is what Game Timing: Auto reads. A ship
+    build's [PERF] split between the two is therefore not meaningful.
   - Rain on the GPU (M5.1, approved by the user 2026-10-30;
     `-DXGX_GPU_RAIN=0`, test builds' `env PX_GPU_RAIN=0`): each rain grid's
     streaks sit in a vertex buffer of their own (`GXPortRainGrid`), written
