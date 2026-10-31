@@ -171,6 +171,10 @@ combiners; ThinLTO + PGO for releases.
     mip count until any entry is added, dropped or moved. Revalidation of
     the texels runs as before. xemu's Main Plaza: ~6 million hits, none
     differing from the full lookup.
+  - [PERF]'s buckets: a cached list's draws stay in "dlist" (no nested
+    "draw" bracket, two `rdtsc` and their bookkeeping a draw less); "draw"
+    is the immediate-mode draws' back end. Frame totals and Auto's
+    decisions are unchanged.
   - Vertex programs that cover (`XGX_VP_COVER`, `-DXGX_VP_COVER=0`): a
     draw may run a resident program that is its own with more texture units
     fed (same key otherwise; the extra texgens write outputs no stage

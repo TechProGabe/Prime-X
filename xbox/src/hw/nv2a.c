@@ -3624,7 +3624,15 @@ void xgx_draw(uint32_t prim, uint32_t count, const XgxLayout* layout, XgxState* 
         return;
     }
 #endif
+#if !defined(XHW_PMC) || !XHW_PMC
+    /* a cached list's draw (GXCallDisplayList) stays in the list's bucket:
+     * two rdtsc and their bookkeeping less on ~2000 draws a frame. [PERF]'s
+     * "draw" is then the immediate-mode draws' back end, "dlist" the lists
+     * with theirs (2026-10-30; before, the lists' draws were in "draw") */
+    pf = xhw_perf_cur == XHW_PERF_DLIST ? -1 : xhw_perf_enter(XHW_PERF_DRAW);
+#else
     pf = xhw_perf_enter(XHW_PERF_DRAW);
+#endif
     s_st_verts += count;
     s_pf_verts += count;
     frame_open();
@@ -3665,7 +3673,7 @@ void xgx_draw(uint32_t prim, uint32_t count, const XgxLayout* layout, XgxState* 
                 pb_close();
                 s_mrg_end = NULL;
             }
-            xhw_perf_leave(pf);
+            if (pf >= 0) xhw_perf_leave(pf);
             return;
         }
         s_st_nomrg[4]++;
@@ -3795,7 +3803,7 @@ void xgx_draw(uint32_t prim, uint32_t count, const XgxLayout* layout, XgxState* 
     s_draws++;
     s_st_draws++;
     s_st_prim[(prim >> 3) & 7]++;
-    xhw_perf_leave(pf);
+    if (pf >= 0) xhw_perf_leave(pf);
 }
 
 /* ======================================================================

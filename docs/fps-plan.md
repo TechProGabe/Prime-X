@@ -183,7 +183,10 @@ hw10. "sim" is the `[PERF]` bucket: on Prime it holds the game ticks
 culling, `CCubeMaterial::SetCurrent`, every GX state call), because
 nothing enters `XHW_PERF_RENDER` (vi.c's `xsdk_perf_render_begin` is
 Melee's hook and Prime never calls it). "dlist" is `GXCallDisplayList`,
-"draw" is the NV2A back end (`xgx_draw`).
+"draw" is the NV2A back end (`xgx_draw`). Since 2026-10-30 (after round
+hw15) a cached list's draws count in "dlist" with the list (two `rdtsc` a
+draw less); "draw" is then the immediate-mode draws' back end. Compare
+dlist + draw across that change, not each alone.
 
 | scene | fps | sim ms | dlist | draw | draws/frame | ticks per render |
 |---|---|---|---|---|---|---|
