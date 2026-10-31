@@ -9,6 +9,9 @@
 #include "Kyoto/Graphics/CModelFlags.hpp"
 #include "Kyoto/Graphics/CTevCombiners.hpp"
 #include "Kyoto/Graphics/CTexture.hpp"
+#ifdef TARGET_XBOX
+#include "port_xbox_gx.h" // PORT_XBOX: GXPortVertices3fC2f
+#endif
 #include "Kyoto/Math/CAABox.hpp"
 #include "Kyoto/Math/CMatrix3f.hpp"
 #include "Kyoto/Math/CRelAngle.hpp"
@@ -2956,6 +2959,19 @@ void CElementGen::RenderParticles() {
             float x = (particle.x2c_lineLengthOrSize * 0.5f) + viewPoint.GetX();
             float y = viewPoint.GetY();
             float z = (particle.x2c_lineLengthOrSize * 0.5f) + viewPoint.GetZ();
+#ifdef TARGET_XBOX
+            int written = 0;
+            {
+              // PORT_XBOX: the quad's four vertices in one call (port_xbox_gx.h),
+              // the twelve calls below as the fallback
+              const float size = particle.x2c_lineLengthOrSize;
+              const float x1 = x - size, z2 = z - size;   /* the calls' running sums, exactly */
+              const float xyz[12] = {x, y, z, x1, y, z, x1, y, z2, x1 + size, y, z2};
+              const float uv[8] = {uvs.xMax, uvs.yMax, uvs.xMin, uvs.yMax, uvs.xMin, uvs.yMin, uvs.xMax, uvs.yMin};
+              written = GXPortVertices3fC2f(xyz, color, uv, 4);
+            }
+            if (!written) {
+#endif
 
             GXPosition3f32(x, y, z);
             GXColor1u32(color);
@@ -2975,6 +2991,9 @@ void CElementGen::RenderParticles() {
             GXPosition3f32(x, y, z);
             GXColor1u32(color);
             GXTexCoord2f32(uvs.xMax, uvs.yMin);
+#ifdef TARGET_XBOX
+            }
+#endif
           } else {
             float halfSize = 0.5f * particle.x2c_lineLengthOrSize;
             float theta = particle.x30_lineWidthOrRota * (M_PIF / 180.f);
@@ -2990,6 +3009,16 @@ void CElementGen::RenderParticles() {
             float vpY = viewPoint.GetY();
             float vpZ = viewPoint.GetZ();
 
+#ifdef TARGET_XBOX
+            // PORT_XBOX: as the unrotated quad, its four vertices in one call
+            // (port_xbox_gx.h) with the calls' own sums; the calls as the fallback
+            const float rxyz[12] = {sinPlusCos + vpX,    vpY, cosMinusSin + vpZ,
+                                    sinMinusCos + vpX,   vpY, sinPlusCos + vpZ,
+                                    vpX - sinPlusCos,    vpY, vpZ - cosMinusSin,
+                                    negSinPlusCos + vpX, vpY, (-cosT - sinT) + vpZ};
+            const float ruv[8] = {uvs.xMax, uvs.yMax, uvs.xMin, uvs.yMax, uvs.xMin, uvs.yMin, uvs.xMax, uvs.yMin};
+            if (!GXPortVertices3fC2f(rxyz, color, ruv, 4)) {
+#endif
             GXPosition3f32(sinPlusCos + vpX, vpY, cosMinusSin + vpZ);
             GXColor1u32(color);
             GXTexCoord2f32(uvs.xMax, uvs.yMax);
@@ -3005,6 +3034,9 @@ void CElementGen::RenderParticles() {
             GXPosition3f32(negSinPlusCos + vpX, vpY, (-cosT - sinT) + vpZ);
             GXColor1u32(color);
             GXTexCoord2f32(uvs.xMax, uvs.yMin);
+#ifdef TARGET_XBOX
+            }
+#endif
           }
         } else if (noRota) {
           float x = (particle.x2c_lineLengthOrSize * 0.5f) + viewPoint.GetX();
@@ -3222,6 +3254,14 @@ void CElementGen::RenderParticles() {
             float x = (0.5f * particle->x2c_lineLengthOrSize) + viewPoint.GetX();
             float y = viewPoint.GetY();
             float z = (0.5f * particle->x2c_lineLengthOrSize) + viewPoint.GetZ();
+#ifdef TARGET_XBOX
+            // PORT_XBOX: one call for the quad (port_xbox_gx.h), the calls' own sums
+            const float size = particle->x2c_lineLengthOrSize;
+            const float x1 = x - size, z2 = z - size;
+            const float qxyz[12] = {x, y, z, x1, y, z, x1, y, z2, x1 + size, y, z2};
+            const float quv[8] = {uvs.xMax, uvs.yMax, uvs.xMin, uvs.yMax, uvs.xMin, uvs.yMin, uvs.xMax, uvs.yMin};
+            if (!GXPortVertices3fC2f(qxyz, color, quv, 4)) {
+#endif
 
             GXPosition3f32(x, y, z);
             GXColor1u32(color);
@@ -3241,6 +3281,9 @@ void CElementGen::RenderParticles() {
             GXPosition3f32(x, y, z);
             GXColor1u32(color);
             GXTexCoord2f32(uvs.xMax, uvs.yMin);
+#ifdef TARGET_XBOX
+            }
+#endif
           }
         } else {
           for (int j = 0; j < mbspVal; ++j) {
@@ -3261,6 +3304,16 @@ void CElementGen::RenderParticles() {
             float vpY = viewPoint.GetY();
             float vpZ = viewPoint.GetZ();
 
+#ifdef TARGET_XBOX
+            // PORT_XBOX: as the unrotated quad, its four vertices in one call
+            // (port_xbox_gx.h) with the calls' own sums; the calls as the fallback
+            const float rxyz[12] = {sinPlusCos + vpX,    vpY, cosMinusSin + vpZ,
+                                    sinMinusCos + vpX,   vpY, sinPlusCos + vpZ,
+                                    vpX - sinPlusCos,    vpY, vpZ - cosMinusSin,
+                                    negSinPlusCos + vpX, vpY, (-cosT - sinT) + vpZ};
+            const float ruv[8] = {uvs.xMax, uvs.yMax, uvs.xMin, uvs.yMax, uvs.xMin, uvs.yMin, uvs.xMax, uvs.yMin};
+            if (!GXPortVertices3fC2f(rxyz, color, ruv, 4)) {
+#endif
             GXPosition3f32(sinPlusCos + vpX, vpY, cosMinusSin + vpZ);
             GXColor1u32(color);
             GXTexCoord2f32(uvs.xMax, uvs.yMax);
@@ -3276,6 +3329,9 @@ void CElementGen::RenderParticles() {
             GXPosition3f32(negSinPlusCos + vpX, vpY, (-cosT - sinT) + vpZ);
             GXColor1u32(color);
             GXTexCoord2f32(uvs.xMax, uvs.yMin);
+#ifdef TARGET_XBOX
+            }
+#endif
           }
         }
       } else if (noRota) {
