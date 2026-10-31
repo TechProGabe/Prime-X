@@ -75,10 +75,12 @@ there is the limit). No audio fault in 21 chained scenes (hw11, hw12).
    35-38, Phendrana visors 59-60 (vsync). Full LTO (r16h-i) and the
    16384-word kick (r16j-k) were no faster: dropped, ThinLTO and 8192
    stay. GPU rain (r16d against r16e): the CPU's render + draw 15 -> 10
-   ms, the GPU's wait 1-3 -> 7 ms, so the same frame rate; since then the
-   grids' box test (`VPRAIN_IN`, no draw for a grid off the screen), but
-   in xemu's Landing Site only 3-40% of the grids skip the clip and ~5%
-   are culled (a grid's box spans its whole fall). [GPUT] in Phendrana:
+   ms, the GPU's wait 1-3 -> 7 ms, so the same frame rate; since then
+   each grid's streaks sorted into 4 x 4 columns, each column tested on
+   the CPU (`VPRAIN_IN` without the clip, none drawn off the screen):
+   xemu's Landing Site, a steady minute: 43% of the streaks clipped, 48%
+   on the short program, 9% not drawn (was 100% clipped), ~35% less of
+   the GPU's vertex work. Round hw17 (gold, 720p) carries it. [GPUT] in Phendrana:
    the pass before the first EFB copy is 7-10 ms of GPU a frame.
 1. **M6a on JUMPs** (hw15: both pushbuffer tests passed on red; hw14's
    CALL failure fell on the boot's one context switch). hw15: Main Plaza
