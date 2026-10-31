@@ -185,11 +185,12 @@ static void arl(Gen* g, Src a) { Dst d = { 0, 0, 0 }; emit(g, MAC_ARL, ILU_NOP, 
 #define MAX(d, a, b) mac2(g, MAC_MAX, d, a, b)
 #define MIN(d, a, b) mac2(g, MAC_MIN, d, a, b)
 #define SGE(d, a, b) mac2(g, MAC_SGE, d, a, b)
+#define SLT(d, a, b) mac2(g, MAC_SLT, d, a, b)
 #define ADD(d, a, c) add(g, d, a, c)
 #define MAD(d, a, b, c) mad(g, d, a, b, c)
 #define RCP(d, c) ilu(g, ILU_RCP, d, c)
 #define RSQ(d, c) ilu(g, ILU_RSQ, d, c)
-#define EXPP(d, c) ilu(g, ILU_EXP, d, c)   /* .z = 2^c (partial precision) */
+#define EXPP(d, c) ilu(g, ILU_EXP, d, c)   /* .y = c - floor(c), .z = 2^c (partial precision) */
 
 static Insn op_insn(const Op* o) {
     Insn in;
@@ -284,6 +285,12 @@ void vp_test_program(VpProgram* p) {
 
 /* temporaries, as the generator names them */
 enum { RPOS = 0, RNRM = 1, RCLIP = 2, RS = 3, RL = 4, RD = 5, RACC = 6, RA = 7, RB = 8, RC0 = 9, RC1 = 10, RT = 11 };
+/* the rain's (rain()): its streak end in model space until the position and
+ * the texgens have read it, x = keep (1) or drop (0) and z its complement
+ * until the clip position has, its colour until channel 0 has. None of the
+ * three is written before then: the texgens come first, and channel 0 reads
+ * its colour before channel 1 writes RC1. */
+enum { RROBJ = RA, RRKEEP = RB, RRCOL = RC1 };
 
 static Src K0(void) { return sw(C(VPC_K), XXXX); }
 static Src K1(void) { return sw(C(VPC_K), YYYY); }
@@ -365,7 +372,7 @@ static void lights(Gen* g, const VpKey* k, const VpChan* ch, int mask) {
 static void channel(Gen* g, const VpKey* k, int ci, int out_reg) {
     const VpChan* cc = &k->chan[ci * 2];
     const VpChan* ca = &k->chan[ci * 2 + 1];
-    Src vcol = V(ci ? VPI_COL1 : VPI_COL0);
+    Src vcol = ci == 0 && k->rain ? R(RRCOL) : V(ci ? VPI_COL1 : VPI_COL0);
     Src cmat = C(VPC_CHAN + ci * 2), camb = C(VPC_CHAN + ci * 2 + 1);
     int rres = ci ? RC1 : RC0;
     int same = cc->enable == ca->enable && cc->light_mask == ca->light_mask && cc->attn == ca->attn &&
@@ -411,7 +418,7 @@ static void texgen(Gen* g, const VpKey* k, int u) {
      * three components, so the vertex's own w is 1 */
     switch (t->src) {
         case 0: /* GX_TG_POS: model-space position */
-            src = V(VPI_POS);
+            src = k->rain ? R(RROBJ) : V(VPI_POS);
             break;
         case 1: /* GX_TG_NRM */
             if (k->has_nrm) {
@@ -482,6 +489,71 @@ static void texgen(Gen* g, const VpKey* k, int u) {
     MOV(O(O_T0 + u, MXYZW), R(RT));
 }
 
+/* VpKey.rain (nv2a_vp.h VPC_RAIN): the streak's end in model space into
+ * RROBJ, its colour into RRCOL, keep / drop into RRKEEP. Two different
+ * constant rows or inputs never meet in one op (one index each per
+ * instruction). */
+static Src RC(int r) { return C(VPC_RAIN + r); }
+static void rain(Gen* g) {
+    const int TG = RPOS, TN = RCLIP, AG = RL, AN = RD, BG = RT, BN = RNRM, NBG = RACC, NBN = RC0, AB = RS;
+    /* z = (z + D) mod 0x4000: (z + D) / 0x4000 and D / 0x4000 are exact
+     * (z, D < 0x4000), and so is the fraction of their sum */
+    MAD(T(RS, MX), sw(V(VPI_POS), ZZZZ), sw(RC(VPR_Z), YYYY), sw(RC(VPR_Z), XXXX));
+    EXPP(T(RS, MY), sw(R(RS), XXXX));
+    MUL(T(RROBJ, MZ), sw(R(RS), YYYY), sw(RC(VPR_Z), ZZZZ));
+    MOV(T(RROBJ, MX | MY), V(VPI_POS));
+    MOV(T(RROBJ, MW), K1());
+    SGE(T(RRKEEP, MY), sw(V(VPI_COL0), XXXX), sw(C(VPC_K), ZZZZ));   /* 1: this is the streak's end */
+    /* each plane's distance at the start (d0), at the end (d1 = d0 + delta);
+     * outside where < 0. The near plane in x of the second vector, its other
+     * lanes 1 (inside at both ends) */
+    DP4(T(AG, MX), R(RROBJ), RC(VPR_GUARD));
+    DP4(T(AG, MY), R(RROBJ), RC(VPR_GUARD + 1));
+    DP4(T(AG, MZ), R(RROBJ), RC(VPR_GUARD + 2));
+    DP4(T(AG, MW), R(RROBJ), RC(VPR_GUARD + 3));
+    DP4(T(AN, MX), R(RROBJ), RC(VPR_NEAR));
+    MOV(T(AN, MY | MZ | MW), K1());
+    ADD(T(NBG, MXYZW), R(AG), RC(VPR_DG));
+    ADD(T(NBN, MXYZW), R(AN), RC(VPR_DN));
+    /* where it crosses each plane: t = d0 / (d0 - d1) = d0 x (-1 / delta) */
+    MUL(T(TG, MXYZW), R(AG), RC(VPR_IG));
+    MUL(T(TN, MXYZW), R(AN), RC(VPR_IN));
+    SLT(T(AG, MXYZW), R(AG), K0());     /* a: the start outside */
+    SLT(T(AN, MXYZW), R(AN), K0());
+    SLT(T(BG, MXYZW), R(NBG), K0());    /* b: the end outside */
+    SLT(T(BN, MXYZW), R(NBN), K0());
+    SGE(T(NBG, MXYZW), R(NBG), K0());   /* 1 - b */
+    SGE(T(NBN, MXYZW), R(NBN), K0());
+    /* both ends outside one plane: dropped */
+    MUL(T(AB, MXYZW), R(AG), R(BG));
+    MAD(T(AB, MXYZW), R(AN), R(BN), R(AB));
+    DP4(T(RRKEEP, MX), R(AB), K1());
+    /* clip_lines' t0 = the largest t where the start is outside (0: none),
+     * t1 = the smallest where the end is (1: none) */
+    MUL(T(AG, MXYZW), R(TG), R(AG));
+    MUL(T(AN, MXYZW), R(TN), R(AN));
+    MAD(T(BG, MXYZW), R(TG), R(BG), R(NBG));
+    MAD(T(BN, MXYZW), R(TN), R(BN), R(NBN));
+    MAX(T(AG, MXYZW), R(AG), R(AN));
+    MIN(T(BG, MXYZW), R(BG), R(BN));
+    MAX(T(AG, MX | MY), R(AG), sw(R(AG), SWZ(2, 3, 2, 3)));
+    MAX(T(AG, MX), sw(R(AG), XXXX), sw(R(AG), YYYY));
+    MIN(T(BG, MX | MY), R(BG), sw(R(BG), SWZ(2, 3, 2, 3)));
+    MIN(T(AG, MY), sw(R(BG), XXXX), sw(R(BG), YYYY));
+    /* t0 >= t1: nothing left, dropped too */
+    SGE(T(RRKEEP, MZ), sw(R(AG), XXXX), sw(R(AG), YYYY));
+    ADD(T(RRKEEP, MX), sw(R(RRKEEP), XXXX), sw(R(RRKEEP), ZZZZ));
+    SLT(T(RRKEEP, MX), sw(R(RRKEEP), XXXX), sw(C(VPC_K), ZZZZ));
+    ADD(T(RRKEEP, MZ), K1(), neg(sw(R(RRKEEP), XXXX)));
+    /* this end's t (t0 at the start, t1 at the end), its height and colour */
+    ADD(T(AG, MZ), sw(R(AG), YYYY), neg(sw(R(AG), XXXX)));
+    MAD(T(AG, MW), sw(R(AG), ZZZZ), sw(R(RRKEEP), YYYY), sw(R(AG), XXXX));
+    MAD(T(RROBJ, MZ), sw(R(AG), WWWW), sw(RC(VPR_DZ), XXXX), R(RROBJ));
+    MUL(T(RRCOL, MXYZW), sw(R(AG), WWWW), RC(VPR_DC));
+    ADD(T(RRCOL, MXYZW), R(RRCOL), RC(VPR_C0));
+}
+#define RAIN_LEN 44   /* rain()'s ops (legacy_len) */
+
 static void gen_program(Gen* g, const VpKey* k) {
     int needs_nrm = 0, i;
     g->n = g->overflow = g->approximated = 0;
@@ -497,16 +569,27 @@ static void gen_program(Gen* g, const VpKey* k) {
         if (i < k->nchans * 2 && k->chan[i].enable && k->chan[i].light_mask) needs_nrm = 1;
     needs_nrm = needs_nrm && k->has_nrm;
 
+    if (k->rain) rain(g);
     /* position: a0 = PNMTXIDX (the current matrix when the vertex has none) */
     arl(g, sw(V(VPI_MTX), XXXX));
-    DP4(T(RPOS, MX), V(VPI_POS), CA(VPC_POS));
-    DP4(T(RPOS, MY), V(VPI_POS), CA(VPC_POS + 1));
-    DP4(T(RPOS, MZ), V(VPI_POS), CA(VPC_POS + 2));
+    {
+        const Src p = k->rain ? R(RROBJ) : V(VPI_POS);
+        DP4(T(RPOS, MX), p, CA(VPC_POS));
+        DP4(T(RPOS, MY), p, CA(VPC_POS + 1));
+        DP4(T(RPOS, MZ), p, CA(VPC_POS + 2));
+    }
     MOV(T(RPOS, MW), K1());
     DP4(T(RCLIP, MX), R(RPOS), C(VPC_PROJ));
     DP4(T(RCLIP, MY), R(RPOS), C(VPC_PROJ + 1));
     DP4(T(RCLIP, MZ), R(RPOS), C(VPC_PROJ + 2));
     DP4(T(RCLIP, MW), R(RPOS), C(VPC_PROJ + 3));
+    if (k->rain) {
+        /* a dropped streak: both ends at one point off the screen */
+        MUL(T(RCLIP, MXYZW), R(RCLIP), sw(R(RRKEEP), XXXX));
+        MAD(T(RCLIP, MXYZW), sw(R(RRKEEP), ZZZZ), RC(VPR_OFF), R(RCLIP));
+        /* the texgens read the streak's end before anything below writes RROBJ */
+        for (i = 0; i < k->ntex && i < 4; i++) texgen(g, k, i);
+    }
     /* screen space: xyz / w, w kept for perspective-correct interpolation */
     RCP(T(RS, MX), sw(R(RCLIP), WWWW));
     MUL(O(O_POS, MXYZ), R(RCLIP), sw(R(RS), XXXX));
@@ -547,7 +630,8 @@ static void gen_program(Gen* g, const VpKey* k) {
     if (k->nchans >= 2) channel(g, k, 1, O_D1);
     else MOV(O(O_D1, MXYZW), K0());
 
-    for (i = 0; i < k->ntex && i < 4; i++) texgen(g, k, i);
+    if (!k->rain)
+        for (i = 0; i < k->ntex && i < 4; i++) texgen(g, k, i);
 }
 
 /* ======================================================================
@@ -1106,7 +1190,7 @@ static int light_len(const VpChan* ch) {
 static int legacy_len(const VpKey* k) {
     int n, i, ci;
     if (k->copy) return 4;
-    n = 12 + (k->fog == VPF_LIN ? 4 : k->fog == VPF_EXP ? 9 : k->fog == VPF_EXP2 ? 10 : 0);
+    n = 12 + (k->rain ? RAIN_LEN + 2 : 0) + (k->fog == VPF_LIN ? 4 : k->fog == VPF_EXP ? 9 : k->fog == VPF_EXP2 ? 10 : 0);
     ci = 0;
     for (i = 0; i < 4; i++)
         if (i < k->nchans * 2 && k->chan[i].enable && k->chan[i].light_mask) ci = 1;
@@ -1183,7 +1267,6 @@ void vp_canon(VpKey* k) {
         if (k->chan[i].enable && k->chan[i].attn == VPL_SPOT) ci |= k->chan[i].light_mask;
     k->ang_one &= (uint8_t)ci;
     k->dist_one &= (uint8_t)ci;
-    k->pad = 0;
 }
 
 void vp_generate(const VpKey* key, VpProgram* out) {

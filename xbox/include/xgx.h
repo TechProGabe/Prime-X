@@ -277,6 +277,15 @@ uint32_t xgx_vbuf_offset(const void* p);   /* bytes from the pool's start: draws
 uint32_t xgx_vbuf_pool_kb(void);
 uint32_t xgx_vbuf_pool_free_kb(void);
 void xgx_vtx_use(const void* verts);
+/* The next xgx_draw is the rain's streaks (gx_vtx.c GXPortRainGrid): its
+ * vertex program adds the fall and clips each streak itself, from these
+ * rows (nv2a_vp.h VPC_RAIN, VPR_*) */
+#define XGX_RAIN_ROWS 14
+enum {   /* the rows, as nv2a_vp.h's VPR_* (described there) */
+    XGX_RAIN_GUARD = 0, XGX_RAIN_NEAR = 4, XGX_RAIN_DG, XGX_RAIN_DN, XGX_RAIN_IG, XGX_RAIN_IN, XGX_RAIN_Z,
+    XGX_RAIN_DZ, XGX_RAIN_C0, XGX_RAIN_DC, XGX_RAIN_OFF,
+};
+void xgx_rain_next(const float rows[XGX_RAIN_ROWS][4]);
 /* EFB -> texture: copies the logical rect into a texture of dst_w x dst_h
  * (point-sampled). mode: XGX_COPY_*, what the copy format keeps.
  * reuse: the texture the previous copy to the same destination made; when it

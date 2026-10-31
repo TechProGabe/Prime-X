@@ -499,6 +499,24 @@ static int list_prim(uint32_t prim, uint32_t n) {
 #define CLIP_PLANES 5
 static uint32_t s_st_lines, s_st_line_drop, s_st_line_clip, s_st_line_box;
 
+/* GXPortRainGrid's vertex buffers, one a rain grid (below) */
+#ifndef XGX_GPU_RAIN
+#define XGX_GPU_RAIN 1
+#endif
+#define RAIN_BUFS 80    /* the 64 grids, and room for a second manager's */
+#define RAIN_IDLE 600   /* frames a buffer stays without a draw */
+typedef struct {
+    const void* owner;  /* the grid, NULL: free */
+    uint32_t gen;       /* its particles' generation the buffer holds */
+    uint32_t cap;       /* streaks it has room for */
+    uint32_t written;   /* streaks written, the first ones */
+    uint32_t used;      /* frame of its last draw */
+    uint8_t* mem;       /* 2 vertices a streak, 16 bytes each */
+} RainBuf;
+static RainBuf s_rain[RAIN_BUFS];
+static uint32_t s_rain_frame;
+static uint32_t s_st_rain_draws, s_st_rain_lines, s_st_rain_put, s_st_rain_cpu;
+
 /* The clip-space rows for the batch, once: cx, cy, cw and the near plane's
  * distance cz + cw, from the projection times the position matrix. 0 when
  * the batch can't be clipped here. */
@@ -4312,6 +4330,16 @@ void gx_vtx_frame_end(void) {
             s_st_gs_regs = s_st_gs_calls = s_st_gs_draws = s_st_gs_builds = s_st_gs_cpu = 0;
 #endif
             s_st_lines = s_st_line_drop = s_st_line_clip = s_st_line_box = 0;
+            {
+                uint32_t k, bufs = 0, kb = 0;
+                for (k = 0; k < RAIN_BUFS; k++)
+                    if (s_rain[k].owner) bufs++, kb += s_rain[k].cap * 32;
+                if (s_st_rain_draws || bufs)
+                    xhw_logf("[DLC] GPU rain: %u grids drawn (%u streaks), %u streaks written, %u to the CPU (no "
+                             "memory); %u buffers, %u KB",
+                             s_st_rain_draws, s_st_rain_lines, s_st_rain_put, s_st_rain_cpu, bufs, kb / 1024);
+                s_st_rain_draws = s_st_rain_lines = s_st_rain_put = s_st_rain_cpu = 0;
+            }
             memset(s_begin_n, 0, sizeof s_begin_n);
             memset(s_begin_who, 0, sizeof s_begin_who);
         }
@@ -4525,6 +4553,148 @@ int GXPortRainLines(const short* xyz, unsigned n, short dz, unsigned short c0, u
     }
     B.done += 2 * n;
     if (n && B.done < B.expected) memset(B.cur, 0, s);   /* after_attr's clear of the next vertex */
+    return 1;
+}
+
+/* port_xbox_gx.h: the rain's streaks of one grid drawn from a vertex buffer
+ * kept for it (fps plan M5.1). The streaks' positions are written once, when
+ * the grid's particles change (gen) or grow (appended, written from where
+ * the last call stopped); the fall since then (zoff, the grid's own sum of
+ * CEnvFxManager::UpdateRainParticles' steps) is added by the vertex program,
+ * which also clips each streak as clip_lines does (nv2a_vp.h VPC_RAIN). The
+ * CPU's part per frame is the rows below: no vertices written, no clip
+ * test, no copy. GXPortRainLines and clip_lines were ~10% of a rainy frame
+ * on the console (round hw11's Landing Site). -DXGX_GPU_RAIN=0 turns it
+ * off, and test builds' env PX_GPU_RAIN=0. */
+
+static int rain_gpu_on(void) {
+#if XGX_GPU_RAIN
+    static int on = -1;
+    if (on < 0) {
+        const char* e = XHW_TEST_BUILD ? getenv("PX_GPU_RAIN") : NULL;
+        on = e ? atoi(e) != 0 : 1;
+        if (!on) xhw_logf("[DLC] GPU rain off (PX_GPU_RAIN)");
+    }
+    return on;
+#else
+    return 0;
+#endif
+}
+
+static void rain_free(RainBuf* rb) {
+    if (rb->mem) xgx_vbuf_free(rb->mem);   /* deferred: the GPU may still draw from it */
+    memset(rb, 0, sizeof *rb);
+}
+
+int GXPortRainGrid(const void* owner, unsigned gen, const short* xyz, unsigned n, short zoff, short dz,
+                   unsigned short c0, unsigned short c1) {
+    /* position (x and y scaled, z the stored 8.8 height), then colour0: 0 at
+     * a streak's start, 1 at its end (nv2a_vp.h VpKey.rain) */
+    static const XgxLayout lay = { 16, 0, -1, { 12, -1 }, -1, { -1, -1, -1, -1, -1, -1, -1, -1 }, 0 };
+    const Slot *ps, *cs;
+    float r[4][4], rows[XGX_RAIN_ROWS][4], sc, dzs;
+    RainBuf* rb = NULL;
+    uint32_t i, q, frame;
+    if (!rain_gpu_on() || !n || n > 0x7FFFu) return 0;
+    if (!B.open || !B.base || B.cursor != 0 || B.done != 0 || B.prim != XGX_LINES || B.plan.n != 2 ||
+        B.expected < 2 * n)
+        return 0;
+    ps = &B.plan.slot[0];
+    cs = &B.plan.slot[1];
+    if (ps->attr != GX_VA_POS || ps->type != GX_DIRECT || ps->kind != SK_S16_3 || ps->dst < 0) return 0;
+    if (cs->attr != GX_VA_CLR0 || cs->type != GX_DIRECT || cs->dsize != 2 || cs->fmt.type != GX_RGBA4 ||
+        cs->dst < 0)
+        return 0;
+    if (!clip_rows(r)) return 0;
+    sc = ps->scale;
+    frame = xgx_present_count();
+    if (frame != s_rain_frame) {   /* buffers of grids no longer drawn (another room, no rain) go back */
+        s_rain_frame = frame;
+        for (i = 0; i < RAIN_BUFS; i++)
+            if (s_rain[i].owner && frame - s_rain[i].used > RAIN_IDLE) rain_free(&s_rain[i]);
+    }
+    for (i = 0; i < RAIN_BUFS && !rb; i++)
+        if (s_rain[i].owner == owner) rb = &s_rain[i];
+    /* other particles, or more than it holds: new memory (the GPU may still
+     * be drawing the last frame's from the old) */
+    if (rb && (rb->gen != gen || n > rb->cap)) rain_free(rb);
+    if (!rb || !rb->owner) {
+        if (!rb) {   /* a free one, or the one drawn longest ago */
+            for (i = 0; i < RAIN_BUFS; i++)
+                if (!s_rain[i].owner || !rb || (int32_t)(s_rain[i].used - rb->used) < 0) {
+                    rb = &s_rain[i];
+                    if (!rb->owner) break;
+                }
+            rain_free(rb);
+        }
+        rb->cap = n < 192 ? 192 : (n + 63) & ~63u;
+        rb->mem = (uint8_t*)xgx_vbuf_alloc(rb->cap * 32);
+        if (!rb->mem) {
+            memset(rb, 0, sizeof *rb);
+            s_st_rain_cpu++;
+            return 0;
+        }
+        rb->owner = owner;
+        rb->gen = gen;
+    }
+    if (n < rb->written) rb->written = n;   /* (the game gives truncated ones a new gen) */
+    for (i = rb->written; i < n; i++) {
+        const short* p = xyz + 3 * i;
+        float* o = (float*)(rb->mem + i * 32);
+        o[0] = p[0] * sc;
+        o[1] = p[1] * sc;
+        o[2] = (float)p[2];
+        o[3] = 0.0f;   /* colour0 0: the start */
+        o[4] = o[0];
+        o[5] = o[1];
+        o[6] = o[2];
+        ((uint32_t*)o)[7] = 0xFFFFFFFFu;   /* colour0 1: the end */
+    }
+    s_st_rain_put += n - rb->written;
+    rb->written = n;
+    rb->used = frame;
+
+    /* the rows: clip_rows' planes in the grid's model space (clip_dist's
+     * near plane and guard band), how each changes from a streak's start to
+     * its end, the fall and the colours (put16's RGBA4 decode) */
+    dzs = (float)dz * sc;
+    for (q = 0; q < 4; q++) {
+        rows[XGX_RAIN_GUARD][q] = LINE_GUARD * r[2][q] + r[0][q];
+        rows[XGX_RAIN_GUARD + 1][q] = LINE_GUARD * r[2][q] - r[0][q];
+        rows[XGX_RAIN_GUARD + 2][q] = LINE_GUARD * r[2][q] + r[1][q];
+        rows[XGX_RAIN_GUARD + 3][q] = LINE_GUARD * r[2][q] - r[1][q];
+        rows[XGX_RAIN_NEAR][q] = r[3][q];
+        rows[XGX_RAIN_DN][q] = rows[XGX_RAIN_IN][q] = 0.0f;
+    }
+    for (q = 0; q < 5; q++) {
+        const float d = rows[q < 4 ? XGX_RAIN_GUARD + q : XGX_RAIN_NEAR][2] * dzs;
+        const float inv = d > 1e-30f || d < -1e-30f ? -1.0f / d : 0.0f;
+        if (q < 4) rows[XGX_RAIN_DG][q] = d, rows[XGX_RAIN_IG][q] = inv;
+        else rows[XGX_RAIN_DN][0] = d, rows[XGX_RAIN_IN][0] = inv;
+    }
+    rows[XGX_RAIN_Z][0] = (float)(zoff & 0x3FFF) * (1.0f / 16384.0f);
+    rows[XGX_RAIN_Z][1] = 1.0f / 16384.0f;
+    rows[XGX_RAIN_Z][2] = 16384.0f * sc;
+    rows[XGX_RAIN_Z][3] = 0.0f;
+    rows[XGX_RAIN_DZ][0] = dzs;
+    rows[XGX_RAIN_DZ][1] = rows[XGX_RAIN_DZ][2] = rows[XGX_RAIN_DZ][3] = 0.0f;
+    for (q = 0; q < 4; q++) {
+        const float a = (float)((c0 >> (12 - 4 * q)) & 15) * 17.0f / 255.0f;
+        const float b = (float)((c1 >> (12 - 4 * q)) & 15) * 17.0f / 255.0f;
+        rows[XGX_RAIN_C0][q] = a;
+        rows[XGX_RAIN_DC][q] = b - a;
+    }
+    rows[XGX_RAIN_OFF][0] = rows[XGX_RAIN_OFF][1] = -64.0f;
+    rows[XGX_RAIN_OFF][2] = 0.0f;
+    rows[XGX_RAIN_OFF][3] = 1.0f;
+
+    B.expected -= 2 * n;   /* the open batch: nothing of these */
+    xgx_rain_next(rows);
+    xgx_vtx_use(rb->mem);
+    xgx_draw(XGX_LINES, 2 * n, &lay, &g_xgx);
+    g_xgx.dirty = 0;
+    s_st_rain_draws++;
+    s_st_rain_lines += n;
     return 1;
 }
 
