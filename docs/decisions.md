@@ -230,12 +230,18 @@ combiners; ThinLTO + PGO for releases.
     after the last draw. Round hw16 on red: the CPU's render + draw at
     the Landing Site 15 -> 10 ms, but the GPU's wait 1-3 -> 7 ms (the
     clip is 46 instructions a vertex, ~18000 vertices a frame), so the
-    same frame rate. Since then each grid's box (its streaks' x and y,
-    the whole wrap in z) is tested against the planes on the CPU first:
-    wholly inside, a program without the clip (`VPRAIN_IN`, 8
-    instructions); wholly outside one plane, no draw at all (every streak
-    would be dropped). Host check: ~10000 streaks inside, the short
-    program's ends equal the clipping one's.
+    same frame rate. Since then a grid's streaks are kept sorted into 4 x 4
+    columns (`rain_sort`, rewritten whenever the count changes: the GPU
+    has finished the last frame at `frame_open`), and each column's box
+    (its streaks' x and y, the whole wrap in z) is tested against the
+    planes on the CPU: wholly inside, a program without the clip
+    (`VPRAIN_IN`, 8 instructions); wholly outside one plane, not drawn
+    (every streak would be dropped); neighbouring columns of one kind are
+    one draw. The order doesn't show: the rain is added to the frame
+    (`SRCALPHA, ONE`) without depth writes. A whole grid's box alone let
+    only 3-40% of xemu's Landing Site grids skip the clip. Host check:
+    ~10000 streaks inside, the short program's ends equal the clipping
+    one's.
 
 - **Boot music inside the XBE** (round hw2, 2026-10-27): the first boot's
   music is appended to `default.xbe` (IMA ADPCM, 8.3 MB, footer "PXIN"),
