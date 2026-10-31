@@ -2,11 +2,14 @@
 # host tests. No game data is involved: the XBE reads the user's own disc
 # image at runtime. With a release tag it also packages the build
 # (tools/xbox/package_release.py) and publishes a GitHub release under that
-# tag. From Melee-X's workflow.
+# tag, replacing a release already there. From Melee-X's workflow.
 name: build
 
-# Manual runs only.
+# Pushing a tag v* builds and publishes that release; a manual run builds
+# and tests, and publishes when given a tag.
 on:
+  push:
+    tags: ["v*"]
   workflow_dispatch:
     inputs:
       release:
@@ -36,6 +39,7 @@ jobs:
           sudo apt-get update -q
           sudo apt-get install -yq build-essential cmake ninja-build git bison flex \
             libzstd-dev zlib1g-dev libxml2-dev python3-pip python3-pil ffmpeg
+          pip install --user --break-system-packages nv2a-vsh   # test_vp_encoder.py's reference assembler
 
       # LLVM and nxdk take most of the time; they only change with setup.sh
       - name: Toolchain cache
@@ -77,12 +81,15 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+      # A full release (not a pre-release), marked latest. A release already
+      # under the tag is deleted first (the tag itself stays).
       - name: Release
-        if: inputs.release != ''
+        if: github.ref_type == 'tag' || inputs.release != ''
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ inputs.release }}
+          TAG: ${{ github.ref_type == 'tag' && github.ref_name || inputs.release }}
         run: |
           python3 tools/xbox/package_release.py "$TAG"
-          gh release create "$TAG" "dist/Prime-X-$TAG.zip" --target "$GITHUB_SHA" \
+          if gh release view "$TAG" >/dev/null 2>&1; then gh release delete "$TAG" --yes; fi
+          gh release create "$TAG" "dist/Prime-X-$TAG.zip" --target "$GITHUB_SHA" --latest \
             --title "Prime-X $TAG" --notes-file .github/release-notes.md
