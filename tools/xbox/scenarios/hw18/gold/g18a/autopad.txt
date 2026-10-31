@@ -1,0 +1,57 @@
+# g18a: Main Plaza at 720p: against r17a (13-15, lists decoded); profiler image, gold (E:\Applications)
+env PX_NEXT_XBE=E:\Applications\Prime-X-g18b\default.xbe
+env PX_VIDEO=720
+env MP_BOOT_WORLD=83F6FF6F:D5CDB809
+1500 SHOT
+2150 SHOT
+2200 SU for 60
+2220 A
+2262 SL for 25
+2290 A for 40
+2335 SR for 25
+2370 SD for 30
+2450 SU for 60
+2600 SU for 60
+2620 A
+2662 SL for 25
+2690 A for 40
+2735 SR for 25
+2770 SD for 30
+2850 SU for 60
+3000 SU for 60
+3020 A
+3062 SL for 25
+3090 A for 40
+3135 SR for 25
+3170 SD for 30
+3250 SU for 60
+3400 SU for 60
+3420 A
+3462 SL for 25
+3490 A for 40
+3535 SR for 25
+3570 SD for 30
+3650 SU for 60
+3800 SU for 60
+3820 A
+3862 SL for 25
+3890 A for 40
+3935 SR for 25
+3970 SD for 30
+4050 SU for 60
+4200 SU for 60
+4220 A
+4262 SL for 25
+4290 A for 40
+4335 SR for 25
+4370 SD for 30
+4450 SU for 60
+4600 SU for 60
+4620 A
+4662 SL for 25
+4690 A for 40
+4735 SR for 25
+4770 SD for 30
+4850 SU for 60
+5000 SHOT
+5400 NEXT
