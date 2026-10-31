@@ -187,6 +187,11 @@ combiners; ThinLTO + PGO for releases.
     `-DXGX_LINE_SSE=0`), the same operations in the same order: a check
     build compared its codes with the scalar ones on ~24 million lines of
     xemu's rainy fight, none different.
+  - The visor passes' GPU time (M5.6's measurement; test builds' `env
+    PX_GPU_TIME=1`): the back end waits for the GPU before each EFB copy
+    and at the present and logs `[GPUT]` per segment of the frame (the
+    wait, the CPU time before it). It serializes the frame, so only its
+    per-segment waits mean anything; off unless asked for.
   - Rain on the GPU (M5.1, approved by the user 2026-10-30;
     `-DXGX_GPU_RAIN=0`, test builds' `env PX_GPU_RAIN=0`): each rain grid's
     streaks sit in a vertex buffer of their own (`GXPortRainGrid`), written

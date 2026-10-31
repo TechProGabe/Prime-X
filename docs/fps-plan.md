@@ -46,6 +46,7 @@ The user's policy for this plan (asked 2026-10-30):
 | M5.2 snow | drawn between ticks in one call too (`GXPortSnowQuads` with stepped copies) |
 | M5.3 particle quads | built: `GXPortVertices3fC2f` for the textured quads, `GXPortVertices3fC1s16` for the untextured ones |
 | M5.4 particles at the tick period | dropped: frame-keyed elements, a visible rewrite |
+| M5.6 visor passes | measuring first: `env PX_GPU_TIME=1` (test builds) waits for the GPU at each EFB copy and the present, `[GPUT]` per segment (round hw16's r16g) |
 | M6a recorded pushbuffers | JUMP/CALL proven on red (hw15); its shape is the user's call (M6a below) |
 | compiler | `-O3` (hw13), full LTO ready as an A/B (`PX_LTO_MODE=full`), PGO retrained (98d6793) |
 
