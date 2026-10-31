@@ -178,7 +178,11 @@ combiners; ThinLTO + PGO for releases.
     25 -> 12 a frame, instructions loaded 1084 -> 464, switches 46 -> 28.
   - The rain's lines (M5): `GXPortRainLines` keeps its batch's box, and
     `clip_lines` tests the box's corners once; a batch wholly inside skips
-    the per-line test (`-DXGX_LINE_BOX=0`). Same vertices drawn.
+    the per-line test (`-DXGX_LINE_BOX=0`). Same vertices drawn. The test
+    itself runs four 16-byte vertices at a time in SSE (`clip_codes4`,
+    `-DXGX_LINE_SSE=0`), the same operations in the same order: a check
+    build compared its codes with the scalar ones on ~24 million lines of
+    xemu's rainy fight, none different.
 
 - **Boot music inside the XBE** (round hw2, 2026-10-27): the first boot's
   music is appended to `default.xbe` (IMA ADPCM, 8.3 MB, footer "PXIN"),
