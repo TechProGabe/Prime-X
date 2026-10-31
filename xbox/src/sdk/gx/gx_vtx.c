@@ -115,6 +115,7 @@ static const Plan* B_plan_of;        /* the cached plan B.plan is a copy of (set
 static uint32_t B_plan_gen;
 #if XGX_DYN_VERIFY
 static uint32_t s_snowv_quads, s_snowv_bad;   /* GXPortSnowQuads checked against the per-vertex calls */
+static uint32_t s_c1sv_verts, s_c1sv_bad;     /* GXPortVertices3fC1s16 the same way */
 #endif
 static void skin_keep_init(void);
 
@@ -4351,6 +4352,7 @@ void gx_vtx_frame_end(void) {
                  "calls whose ring bytes changed since kept: %u",
                  s_dynv_draws, s_dynv_bad, s_dynv_moved, s_dynv_ring_moved);
         xhw_logf("[DLC] snow verify: %u quads, %u calls differ", s_snowv_quads, s_snowv_bad);
+        xhw_logf("[DLC] untextured particle verify: %u vertices, %u calls differ", s_c1sv_verts, s_c1sv_bad);
 #endif
     }
 }
@@ -4737,6 +4739,76 @@ int GXPortVertices3fC2f(const float* xyz, unsigned color, const float* uv, unsig
         if (B.done < B.expected)   /* after_attr's clear of the next vertex */
             for (w = 0; w < s / 4; w++) ((uint32_t*)B.cur)[w] = 0;
     }
+    return 1;
+}
+
+/* port_xbox_gx.h: the untextured particle quads' vertices, as their
+ * GXPosition3f32, GXColor1u32 and GXTexCoord1s16 calls store them (put16:
+ * the 16 bits are two S8 texture coordinates with the format's fraction).
+ * Lava Lake's particles made ~4% of the console's CPU in those calls
+ * (round hw15). */
+int GXPortVertices3fC1s16(const float* xyz, unsigned color, const unsigned short* st, unsigned n) {
+    const Slot *ps, *cs, *ts;
+    uint32_t i, w, s;
+    float sc;
+    if (!B.open || !B.base || B.cursor != 0 || B.plan.n != 3 || B.done > B.expected || B.expected - B.done < n)
+        return 0;
+    ps = &B.plan.slot[0];
+    cs = &B.plan.slot[1];
+    ts = &B.plan.slot[2];
+    if (ps->attr != GX_VA_POS || ps->type != GX_DIRECT || ps->kind != SK_F32_3 || ps->dst < 0) return 0;
+    if (cs->attr != GX_VA_CLR0 || cs->type != GX_DIRECT || cs->kind != SK_RGBA8 || cs->dst < 0) return 0;
+    if (ts->attr < GX_VA_TEX0 || ts->attr > GX_VA_TEX7 || ts->type != GX_DIRECT || ts->dsize != 2 ||
+        ts->fmt.type != GX_S8 || ts->fmt.cnt != GX_TEX_ST || ts->dst < 0)
+        return 0;
+    sc = 1.0f / (float)(1u << ts->fmt.frac);
+    s = B.plan.layout.stride;
+#if XGX_DYN_VERIFY
+    uint8_t* v_start = B.cur;
+    uint32_t v_done = B.done;
+    const float* xyz0 = xyz;
+#endif
+    for (i = 0; i < n; i++, xyz += 3) {
+        /* the vertex was cleared by the last after_attr */
+        float* o = (float*)(B.cur + ps->dst);
+        uint8_t* c = B.cur + cs->dst;
+        o[0] = xyz[0];
+        o[1] = xyz[1];
+        o[2] = xyz[2];
+        c[0] = (uint8_t)(color >> 24);
+        c[1] = (uint8_t)(color >> 16);
+        c[2] = (uint8_t)(color >> 8);
+        c[3] = (uint8_t)color;
+        o = (float*)(B.cur + ts->dst);
+        o[0] = (float)(int8_t)(st[i] >> 8) * sc;
+        o[1] = (float)(int8_t)st[i] * sc;
+        B.done++;
+        B.cur += s;
+        if (B.done < B.expected)   /* after_attr's clear of the next vertex */
+            for (w = 0; w < s / 4; w++) ((uint32_t*)B.cur)[w] = 0;
+    }
+#if XGX_DYN_VERIFY
+    {   /* the same vertices again through the calls, compared */
+        uint32_t bytes = n * s;
+        uint8_t* mine = (uint8_t*)malloc(bytes);
+        if (mine) {
+            uint8_t* v_end = B.cur;
+            memcpy(mine, v_start, bytes);
+            B.cur = v_start;
+            B.done = v_done;
+            B.cursor = 0;
+            memset(B.cur, 0, s);
+            for (i = 0; i < n; i++) {
+                GXPosition3f32(xyz0[3 * i], xyz0[3 * i + 1], xyz0[3 * i + 2]);
+                GXColor1u32(color);
+                GXTexCoord1s16((s16)st[i]);
+            }
+            s_c1sv_verts += n;
+            if (B.cur != v_end || memcmp(mine, v_start, bytes) != 0) s_c1sv_bad++;
+            free(mine);
+        }
+    }
+#endif
     return 1;
 }
 
