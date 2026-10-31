@@ -10,6 +10,7 @@
  * of the batch's vertex format, into a vertex slot the back end handed out. */
 #include <stdlib.h>
 #include <string.h>
+#include <xmmintrin.h>
 
 #include "gx_cull.h"
 #include "gx_internal.h"
@@ -533,6 +534,36 @@ static inline uint32_t clip_dist(const uint8_t* v, const XgxLayout* l, const flo
     return (d[0] < 0.0f) | (d[1] < 0.0f) << 1 | (d[2] < 0.0f) << 2 | (d[3] < 0.0f) << 3 | (d[4] < 0.0f) << 4;
 }
 
+/* clip_dist's outcodes for four 16-byte vertices with the position first
+ * (the rain's lines), four at a time in SSE: the same products and sums in
+ * the same order as clip_dist's scalar ones (no FMA: -ffp-contract=off), so
+ * the same codes. Round hw15's rainy fight: clip_dist was most of
+ * gx_vtx_flush, ~3% of the console's CPU. -DXGX_LINE_SSE=0 turns it off. */
+#ifndef XGX_LINE_SSE
+#define XGX_LINE_SSE 1
+#endif
+static inline void clip_codes4(const uint8_t* v, const float r[4][4], uint32_t code[4]) {
+    __m128 x = _mm_loadu_ps((const float*)v), y = _mm_loadu_ps((const float*)(v + 16));
+    __m128 z = _mm_loadu_ps((const float*)(v + 32)), w = _mm_loadu_ps((const float*)(v + 48));
+    __m128 cx, cy, gw, d0, zero = _mm_setzero_ps();
+    int m0, m1, m2, m3, m4, k;
+    _MM_TRANSPOSE4_PS(x, y, z, w);   /* x, y, z: four positions; w: their colours, unused */
+#define ROW(i) _mm_add_ps(_mm_add_ps(_mm_add_ps(_mm_mul_ps(_mm_set1_ps(r[i][0]), x), _mm_mul_ps(_mm_set1_ps(r[i][1]), y)),                                      _mm_mul_ps(_mm_set1_ps(r[i][2]), z)), _mm_set1_ps(r[i][3]))
+    cx = ROW(0);
+    cy = ROW(1);
+    gw = _mm_mul_ps(_mm_set1_ps(LINE_GUARD), ROW(2));
+    d0 = ROW(3);
+#undef ROW
+    m0 = _mm_movemask_ps(_mm_cmplt_ps(d0, zero));
+    m1 = _mm_movemask_ps(_mm_cmplt_ps(_mm_add_ps(gw, cx), zero));
+    m2 = _mm_movemask_ps(_mm_cmplt_ps(_mm_sub_ps(gw, cx), zero));
+    m3 = _mm_movemask_ps(_mm_cmplt_ps(_mm_add_ps(gw, cy), zero));
+    m4 = _mm_movemask_ps(_mm_cmplt_ps(_mm_sub_ps(gw, cy), zero));
+    for (k = 0; k < 4; k++)
+        code[k] = (uint32_t)((m0 >> k & 1) | (m1 >> k & 1) << 1 | (m2 >> k & 1) << 2 | (m3 >> k & 1) << 3 |
+                             (m4 >> k & 1) << 4);
+}
+
 static void lerp_vertex(uint8_t* dst, const uint8_t* a, const uint8_t* b, float t, const XgxLayout* l) {
     uint32_t w;
     for (w = 0; w < l->stride / 4; w++) {
@@ -564,6 +595,8 @@ static void clip_lines(void) {
     uint32_t i, out = 0;
     if (!clip_rows(r)) return;
     uint32_t rg = 0;
+    const int sse = XGX_LINE_SSE && s == 16 && l->off_pos == 0;
+    uint32_t c4[4], c4_at = 0xFFFFFFFFu;   /* clip_codes4 of vertices c4_at .. c4_at + 3 */
     for (i = 0; i + 1 < B.done; i += 2) {
         uint8_t* v0 = base + i * s;
         uint8_t* v1 = v0 + s;
@@ -574,6 +607,20 @@ static void clip_lines(void) {
         if (XGX_LINE_BOX && rg < B.n_in && i >= B.in_lo[rg]) {
             s_st_line_box++;
             o0 = o1 = 0;
+        } else if (sse && (i & ~3u) + 3 < B.done) {
+            /* the codes four vertices at a time (their positions are read
+             * before this line's or the one before's moves overwrite them:
+             * out <= i); the distances only for a line that crosses a plane */
+            if (c4_at != (i & ~3u)) {
+                c4_at = i & ~3u;
+                clip_codes4(base + c4_at * 16, r, c4);
+            }
+            o0 = c4[i & 3];
+            o1 = c4[(i & 3) + 1];
+            if ((o0 | o1) && !(o0 & o1)) {
+                o0 = clip_dist(v0, l, r, d0);
+                o1 = clip_dist(v1, l, r, d1);
+            }
         } else {
             o0 = clip_dist(v0, l, r, d0);
             o1 = clip_dist(v1, l, r, d1);
