@@ -1,0 +1,14 @@
+# r18e: Phendrana, visors: against r16f; then the dashboard; profiler image, red (F:\Applications)
+env PX_NEXT_XBE=dashboard
+env MP_BOOT_WORLD=A8BE6291
+env PX_ALL_ITEMS=1
+2000 SHOT
+2050 RIGHT for 10
+2400 SHOT
+2450 DOWN for 10
+2800 SHOT
+2850 LEFT for 10
+3200 SHOT
+3250 UP for 10
+3600 SHOT
+4000 NEXT
