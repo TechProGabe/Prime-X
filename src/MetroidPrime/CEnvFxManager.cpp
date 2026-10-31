@@ -152,6 +152,26 @@ void CEnvFxManagerGrid::RenderSnowParticles(const CTransform4f& camXf) {
       CGX::End();
       return;
     }
+    // PORT_XBOX: drawn between ticks (Game Timing: Auto at 30 Hz, most of
+    // Phendrana's frames) the flakes are stepped back first, here as below
+    // (PortStepBack, the same force index), into a scratch copy for the
+    // same one call; the per-vertex calls were ~5% of Phendrana's CPU
+    // (round hw14)
+    static const int kStepMax = 2048;
+    static short sStepped[kStepMax * 3];
+    if (sPortSnowSteps != nullptr && particleCount > 0 && particleCount <= kStepMax) {
+      for (int i = 0; i < particleCount; ++i) {
+        const CVectorFixed8_8& p = x1c_particles[i];
+        const CVectorFixed8_8& step = sPortSnowSteps[(sPortSnowFirst + (particleCount - 1 - i)) & 0xff];
+        sStepped[i * 3] = PortStepBack(p.x, step.x);
+        sStepped[i * 3 + 1] = PortStepBack(p.y, step.y);
+        sStepped[i * 3 + 2] = PortStepBack(p.z, step.z);
+      }
+      if (GXPortSnowQuads(sStepped, static_cast< unsigned >(particleCount), up, right)) {
+        CGX::End();
+        return;
+      }
+    }
   }
 #endif
   for (int i = particleCount - 1; i >= 0; --i) {
