@@ -328,7 +328,11 @@ void CParticleDatabase::UpdateParticleGenDB(float dt, const CPoseAsTransforms& p
       switch (info.GetType()) {
       case kPGT_Normal: {
         const CParticleData::EParentedMode mode = info.GetParentedMode();
+#ifdef TARGET_XBOX
+        const CSegId seg = info.PortLocatorSeg(layout); // PORT_XBOX: looked up once
+#else
         const CSegId seg = layout.GetSegIdFromString(info.GetLocatorName());
+#endif
         if (seg == CSegId::Invalid()) {
           ++it;
           continue;

@@ -4,6 +4,9 @@
 #include "MetroidPrime/CStateManager.hpp"
 
 #include "Kyoto/Particles/CParticleGen.hpp"
+#ifdef TARGET_XBOX
+#include "Kyoto/Animation/CCharLayoutInfo.hpp"
+#endif
 
 CParticleGenInfo::CParticleGenInfo(const SObjectTag& part, int frameCount,
                                    const rstl::string& boneName, const CVector3f& scale,
@@ -21,7 +24,23 @@ CParticleGenInfo::CParticleGenInfo(const SObjectTag& part, int frameCount,
 , x40_grabInitialData(false)
 , x44_transform(CTransform4f::Identity())
 , x74_offset(0.f, 0.f, 0.f)
-, x80_type(type) {}
+, x80_type(type)
+#ifdef TARGET_XBOX
+, xPortSegLayout(nullptr)
+, xPortSeg(CSegId::Invalid())
+#endif
+{
+}
+
+#ifdef TARGET_XBOX
+CSegId CParticleGenInfo::PortLocatorSeg(const CCharLayoutInfo& layout) {
+  if (xPortSegLayout != &layout) {
+    xPortSeg = layout.GetSegIdFromString(x10_boneName);
+    xPortSegLayout = &layout;
+  }
+  return xPortSeg;
+}
+#endif
 
 TUniqueId _initializeLight(const rstl::ncrc_ptr< CParticleGen >& system, CStateManager& stateMgr,
                            TAreaId areaId, int lightId) {
