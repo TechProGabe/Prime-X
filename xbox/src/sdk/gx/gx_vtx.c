@@ -4887,12 +4887,26 @@ int GXPortSnowQuads(const short* xyz, unsigned n, const short up[3], const short
     return 1;
 }
 
+/* Test builds charge each list call to [PERF]'s "dlist" (two rdtsc a call,
+ * ~1500 calls a frame in Main Plaza). Ship builds only tag the bucket, for
+ * xgx_draw to leave the list's draws unbracketed too: the list's time goes
+ * to whichever of render and dlist is current at the next charge, and
+ * their sum (what Game Timing: Auto reads, port_debug.cpp) stays right. */
 void GXCallDisplayList(const void* list, u32 nbytes) {
+#if XHW_TEST_BUILD
     int pf = xhw_perf_enter(XHW_PERF_DLIST);
+#else
+    int pf = xhw_perf_cur;
+    xhw_perf_cur = XHW_PERF_DLIST;
+#endif
     gx_vtx_flush();
     if (!list || !nbytes || !dlc_call((const uint8_t*)list, nbytes)) {
         s_st_dl_direct++;
         call_display_list(list, nbytes);
     }
+#if XHW_TEST_BUILD
     xhw_perf_leave(pf);
+#else
+    xhw_perf_cur = pf;
+#endif
 }
