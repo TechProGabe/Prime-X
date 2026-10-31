@@ -3704,6 +3704,11 @@ static uint32_t unit_rect_key(const XgxState* st, int u) {
     return t && t->rect ? 0x80000000u | (uint32_t)t->w << 16 | (uint32_t)t->h : 0;
 }
 
+#if XHW_TEST_BUILD || (defined(XHW_PMC) && XHW_PMC)
+#define DRAW_PF_LEAVE(pf) do { if ((pf) >= 0) xhw_perf_leave(pf); } while (0)
+#else
+#define DRAW_PF_LEAVE(pf) do { if ((pf) >= 0) xhw_perf_cur = (pf); } while (0)
+#endif
 void xgx_draw(uint32_t prim, uint32_t count, const XgxLayout* layout, XgxState* st) {
     int i, pf, units_new = 0, maps_only, lay_new;
     uint32_t first, d, lay;
@@ -3723,7 +3728,13 @@ void xgx_draw(uint32_t prim, uint32_t count, const XgxLayout* layout, XgxState* 
      * two rdtsc and their bookkeeping less on ~2000 draws a frame. [PERF]'s
      * "draw" is then the immediate-mode draws' back end, "dlist" the lists
      * with theirs (2026-10-30; before, the lists' draws were in "draw") */
+#if XHW_TEST_BUILD
     pf = xhw_perf_cur == XHW_PERF_DLIST ? -1 : xhw_perf_enter(XHW_PERF_DRAW);
+#else
+    /* ship builds: the bucket tagged, no clock read (as GXCallDisplayList) */
+    pf = xhw_perf_cur == XHW_PERF_DLIST ? -1 : xhw_perf_cur;
+    if (pf >= 0) xhw_perf_cur = XHW_PERF_DRAW;
+#endif
 #else
     pf = xhw_perf_enter(XHW_PERF_DRAW);
 #endif
@@ -3767,7 +3778,7 @@ void xgx_draw(uint32_t prim, uint32_t count, const XgxLayout* layout, XgxState* 
                 pb_close();
                 s_mrg_end = NULL;
             }
-            if (pf >= 0) xhw_perf_leave(pf);
+            DRAW_PF_LEAVE(pf);
             return;
         }
         s_st_nomrg[4]++;
@@ -3902,7 +3913,7 @@ void xgx_draw(uint32_t prim, uint32_t count, const XgxLayout* layout, XgxState* 
     s_draws++;
     s_st_draws++;
     s_st_prim[(prim >> 3) & 7]++;
-    if (pf >= 0) xhw_perf_leave(pf);
+    DRAW_PF_LEAVE(pf);
 }
 
 /* ======================================================================
