@@ -69,8 +69,17 @@ there is the limit). No audio fault in 21 chained scenes (hw11, hw12).
    - covering vertex programs (`XGX_VP_COVER`: fight loads 25 -> 12/frame),
    - the rain's line clip test in SSE (`XGX_LINE_SSE`, verified),
    - the audio deadlock fix (`CMemory` without the interrupt lock), on red
-     and gold already as the free-play build.
-   Measure all against hw15 in the same four scenes.
+     and gold already as the free-play build,
+   - snow drawn between ticks in one call (was 8 calls a flake under Auto),
+   - particles' textured quads in one call (`GXPortVertices3fC2f`, verified),
+   - a cached list's draws counted in [PERF]'s "dlist" (compare dlist + draw),
+   - the PGO profile retrained on this code (98d6793).
+   Measure all against hw15 in the same four scenes plus Phendrana. Ready
+   as an A/B too: full LTO (`XBOX_CMAKE_ARGS=-DPX_LTO_MODE=full`), and the
+   busy-GPU pushbuffer kick (8192 words now; 16384 is the candidate).
+   Questions for the user: GPU rain (drops streaks crossing the near plane
+   instead of clipping them, a small visible difference) and M6a's shape
+   (`docs/fps-plan.md` M6a "Where it stands").
 1. **M6a on JUMPs** (hw15: both pushbuffer tests passed on red; hw14's
    CALL failure fell on the boot's one context switch). hw15: Main Plaza
    38-39 -> 43-44, pirates 33 -> 34-35, Lava Lake 42 -> 44-45 with
