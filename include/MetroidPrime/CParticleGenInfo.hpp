@@ -7,6 +7,9 @@
 
 #include "Kyoto/Math/CTransform4f.hpp"
 #include "Kyoto/SObjectTag.hpp"
+#ifdef TARGET_XBOX
+#include "Kyoto/Animation/CSegId.hpp"
+#endif
 
 #include "rstl/optional_object.hpp"
 #include "rstl/rc_ptr.hpp"
@@ -18,6 +21,9 @@ class CStateManager;
 class CColor;
 class CAABox;
 class CParticleGen;
+#ifdef TARGET_XBOX
+class CCharLayoutInfo;
+#endif
 
 class CParticleGenInfo {
 public:
@@ -65,6 +71,12 @@ public:
   void ResetTime() { x20_curTime = 0.f; }
   void OffsetTime(float dt) { x20_curTime += dt; }
   void MarkFinishTime() { x3c_finishTime = x20_curTime; }
+#ifdef TARGET_XBOX
+  // PORT_XBOX: the locator's segment in this layout, looked up by name once
+  // (CParticleDatabase::UpdateParticleGenDB did a string-map lookup per
+  // generator per tick; the name never changes)
+  CSegId PortLocatorSeg(const CCharLayoutInfo& layout);
+#endif
 
 private:
   SObjectTag x4_part;
@@ -80,6 +92,10 @@ private:
   CTransform4f x44_transform;
   CVector3f x74_offset;
   EParticleGenType x80_type;
+#ifdef TARGET_XBOX
+  const CCharLayoutInfo* xPortSegLayout;
+  CSegId xPortSeg;
+#endif
 };
 CHECK_SIZEOF(CParticleGenInfo, 0x84)
 
