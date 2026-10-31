@@ -1,0 +1,616 @@
+#include "MetroidPrime/Player/CGameState.hpp"
+
+#include "Kyoto/CSimplePool.hpp"
+#include "Kyoto/Math/CMath.hpp"
+#include "Kyoto/Streams/CInputStream.hpp"
+#include "Kyoto/Streams/CMemoryInStream.hpp"
+#include "Kyoto/Streams/CMemoryStreamOut.hpp"
+#include "Kyoto/Streams/COutputStream.hpp"
+#include "Kyoto/TToken.hpp"
+#include "MetroidPrime/CMemoryCard.hpp"
+#include "MetroidPrime/CMain.hpp"
+#include "MetroidPrime/PortSaveFormat.hpp"
+#include "MetroidPrime/CWorldSaveGameInfo.hpp"
+#include "MetroidPrime/Tweaks/CTweakGame.hpp"
+#include "rstl/algorithm.hpp"
+#include "rstl/math.hpp"
+#include "dolphin/os.h"
+
+#ifdef TARGET_PC
+#include "port_beam_doors.h"
+#include "port_debug.h"
+
+#include <cstring>
+#endif
+
+union SGameTime {
+  double value;
+  u64 bits;
+};
+
+uint CSystemState::GetBitCount(uint value) {
+  uint count = 0;
+  for (; value != 0; value >>= 1)
+    ++count;
+  return count;
+}
+
+#ifdef TARGET_PC
+// The system options live in CMemoryCardDriver's 174-byte x30_systemData.
+// 1.00's worlds have few enough skippable cinematics for their bits to fit
+// after the fixed fields, but other discs (PAL) have more, and reading past the
+// buffer threw on file create. Cinematics past the cap are not remembered.
+static int CapCinematicBits(int count) {
+  // NES state, x68_, frozen fps/ball counts (2 + 2), power bomb ammo (1),
+  // log scan percent (7), five flags, auto-mapper key state (2).
+  const int fixedBits = 98 * 8 + 64 * 8 + 2 + 2 + 1 + 7 + 5 + 2;
+  const int maxBits = 174 * 8 - fixedBits;
+  static bool sReported = false;
+  if (count > maxBits && !sReported) {
+    sReported = true;
+    OSReport("CSystemState: %d cinematic bits, %d fit in the system options\n", count, maxBits);
+  }
+  return count > maxBits ? maxBits : count;
+}
+
+// PAL's system options keep the selected language (0x803c3788: ENGL GERM FREN
+// SPAN ITAL DUTC JAPN), which the PAL game applies at boot. Write the port's
+// text language so the save opens in it on a GameCube or Dolphin. The PAL disc
+// has no Dutch text (its GetLanguage maps Dutch to English), so Dutch is 0.
+static int PalSaveLanguage() {
+  const char* code = PortDebug::TextLanguage();
+  if (strcmp(code, "EUGE") == 0)
+    return 1;
+  if (strcmp(code, "EUFR") == 0 || strcmp(code, "USFR") == 0)
+    return 2;
+  if (strcmp(code, "EUSP") == 0 || strcmp(code, "USSP") == 0)
+    return 3;
+  if (strcmp(code, "EUIT") == 0)
+    return 4;
+  return 0;
+}
+#endif
+
+CSystemState::CSystemState() : x0_nesState(static_cast< uchar >(0))
+, x68_(static_cast< uchar >(0))
+, xbc_autoMapperKeyState(0)
+, xc0_frozenFpsCount(0)
+, xc4_frozenBallCount(0)
+, xc8_powerBombAmmoCount(0)
+, xcc_logScanPercent(0)
+, xd0_24_fusionLinked(false)
+, xd0_25_normalModeBeat(false)
+, xd0_26_hardModeBeat(false)
+, xd0_27_fusionBeat(false)
+, xd0_28_fusionSuitActive(false)
+#ifdef TARGET_PC
+, xd0_29_allItemsCollected(false)
+, xd1_palField(0) {
+#else
+, xd0_29_allItemsCollected(false) {
+#endif
+}
+
+CSystemState::CSystemState(CInputStream& in) : x0_nesState(static_cast< uchar >(0))
+, x68_(static_cast< uchar >(0))
+, xbc_autoMapperKeyState(0)
+, xc0_frozenFpsCount(0)
+, xc4_frozenBallCount(0)
+, xc8_powerBombAmmoCount(0)
+, xcc_logScanPercent(0)
+, xd0_24_fusionLinked(false)
+, xd0_25_normalModeBeat(false)
+, xd0_26_hardModeBeat(false)
+, xd0_27_fusionBeat(false)
+, xd0_28_fusionSuitActive(false)
+#ifdef TARGET_PC
+, xd0_29_allItemsCollected(false)
+, xd1_palField(0) {
+#else
+, xd0_29_allItemsCollected(false) {
+#endif
+#ifdef TARGET_PC
+  // PAL keeps an 18-byte NES state where USA has 98.
+  const bool pal = PortSaveFormat::IsPal();
+  const int nesBytes = pal ? 18 : 98;
+#else
+  const int nesBytes = 98;
+#endif
+  for (int i = 0; i < nesBytes; ++i)
+    x0_nesState[i] = in.ReadBits(8);
+  for (int i = 0; i < 64; ++i)
+    x68_[i] = in.ReadBits(8);
+  xc0_frozenFpsCount = in.ReadBits(GetBitCount(3));
+  xc4_frozenBallCount = in.ReadBits(GetBitCount(3));
+  xc8_powerBombAmmoCount = in.ReadBits(GetBitCount(1));
+  xcc_logScanPercent = in.ReadBits(GetBitCount(100));
+  xd0_24_fusionLinked = in.ReadBits(1) != 0;
+  xd0_25_normalModeBeat = in.ReadBits(1) != 0;
+  xd0_26_hardModeBeat = in.ReadBits(1) != 0;
+  xd0_27_fusionBeat = in.ReadBits(1) != 0;
+  xd0_29_allItemsCollected = in.ReadBits(1) != 0;
+  xbc_autoMapperKeyState = in.ReadBits(2);
+#ifdef TARGET_PC
+  if (pal)
+    xd1_palField = in.ReadBits(GetBitCount(7));
+#endif
+
+  const rstl::vector< CMemoryCard::MemoryWorld >& worlds = gpMemoryCard->GetMemoryWorlds();
+  int cinematicCount = 0;
+  for (AUTO(it, worlds.begin()); it != worlds.end(); ++it) {
+    TLockedToken< CWorldSaveGameInfo > saveWorld = gpSimplePool->GetObj(
+        SObjectTag('SAVW', it->second.GetSaveWorldAssetId()));
+    cinematicCount += saveWorld->GetCinematicCount();
+  }
+  rstl::vector< bool > cinematicStates(cinematicCount, false);
+#ifdef TARGET_PC
+  const int storedCount = pal ? cinematicCount : CapCinematicBits(cinematicCount);
+#else
+  const int storedCount = cinematicCount;
+#endif
+  for (int i = 0; i < storedCount; ++i)
+    cinematicStates[i] = in.ReadBits(1) != 0;
+  int stateIdx = 0;
+  for (AUTO(it, worlds.begin()); it != worlds.end(); ++it) {
+    CAssetId worldId = it->first;
+    TLockedToken< CWorldSaveGameInfo > saveWorld = gpSimplePool->GetObj(
+        SObjectTag('SAVW', it->second.GetSaveWorldAssetId()));
+    const CWorldSaveGameInfo& world = **saveWorld;
+    const rstl::vector< TEditorId >& cinematics = world.GetCinematics();
+    for (int i = 0; i < cinematics.size(); ++i) {
+      if (cinematicStates[stateIdx])
+        SetCinematicState(rstl::pair< CAssetId, TEditorId >(worldId, cinematics[i]), true);
+      ++stateIdx;
+    }
+  }
+}
+
+void CSystemState::PutTo(COutputStream& out) {
+#ifdef TARGET_PC
+  const bool pal = PortSaveFormat::IsPal();
+  const int nesBytes = pal ? 18 : 98;
+#else
+  const int nesBytes = 98;
+#endif
+  for (int i = 0; i < nesBytes; ++i)
+    out.WriteBits(x0_nesState[i], 8);
+  for (int i = 0; i < 64; ++i)
+    out.WriteBits(x68_[i], 8);
+  out.WriteBits(xc0_frozenFpsCount, GetBitCount(3));
+  out.WriteBits(xc4_frozenBallCount, GetBitCount(3));
+  out.WriteBits(xc8_powerBombAmmoCount, GetBitCount(1));
+  out.WriteBits(xcc_logScanPercent, GetBitCount(100));
+  out.WriteBits(xd0_24_fusionLinked ? 1 : 0, 1);
+  out.WriteBits(xd0_25_normalModeBeat ? 1 : 0, 1);
+  out.WriteBits(xd0_26_hardModeBeat ? 1 : 0, 1);
+  out.WriteBits(xd0_27_fusionBeat ? 1 : 0, 1);
+  out.WriteBits(xd0_29_allItemsCollected ? 1 : 0, 1);
+  out.WriteBits(xbc_autoMapperKeyState, 2);
+#ifdef TARGET_PC
+  if (pal)
+    out.WriteBits(PalSaveLanguage(), GetBitCount(7));
+#endif
+  const rstl::vector< CMemoryCard::MemoryWorld >& worlds = gpMemoryCard->GetMemoryWorlds();
+  int cinematicCount = 0;
+  for (AUTO(it, worlds.begin()); it != worlds.end(); ++it) {
+    TLockedToken< CWorldSaveGameInfo > saveWorld = gpSimplePool->GetObj(
+        SObjectTag('SAVW', it->second.GetSaveWorldAssetId()));
+    cinematicCount += saveWorld->GetCinematicCount();
+  }
+  rstl::vector< bool > cinematicStates;
+  cinematicStates.reserve(cinematicCount);
+  for (AUTO(it, worlds.begin()); it != worlds.end(); ++it) {
+    CAssetId worldId = it->first;
+    TLockedToken< CWorldSaveGameInfo > saveWorld = gpSimplePool->GetObj(
+        SObjectTag('SAVW', it->second.GetSaveWorldAssetId()));
+    const CWorldSaveGameInfo& world = **saveWorld;
+    for (int i = 0; i < world.GetCinematicCount(); ++i)
+      cinematicStates.push_back(GetCinematicState(
+          rstl::pair< CAssetId, TEditorId >(worldId, world.GetCinematics()[i])));
+  }
+#ifdef TARGET_PC
+  if (!pal)
+    cinematicCount = CapCinematicBits(cinematicCount);
+#endif
+  for (int i = 0; i < cinematicCount; ++i)
+    out.WriteBits(cinematicStates[i] ? 1 : 0, 1);
+}
+
+bool CSystemState::GetCinematicState(rstl::pair< CAssetId, TEditorId > cineId) const {
+  for (AUTO(it, xac_cinematicStates.begin()); it != xac_cinematicStates.end(); ++it) {
+    if (*it == cineId)
+      return true;
+  }
+  return false;
+}
+
+void CSystemState::SetCinematicState(rstl::pair< CAssetId, TEditorId > cineId, bool state) {
+  for (AUTO(it, xac_cinematicStates.begin()); it != xac_cinematicStates.end(); ++it) {
+    if (*it == cineId) {
+      if (!state)
+        xac_cinematicStates.erase(it);
+      return;
+    }
+  }
+  if (state) {
+    xac_cinematicStates.reserve(xac_cinematicStates.size() + 1);
+    xac_cinematicStates.push_back(cineId);
+  }
+}
+
+bool CSystemState::GetShowFrozenFpsMessage() const { return xc0_frozenFpsCount < 3u; }
+void CSystemState::IncNumFreezeInstructionsPrintedFirstPerson() {
+  xc0_frozenFpsCount = rstl::min_val(xc0_frozenFpsCount + 1, 3);
+}
+bool CSystemState::GetShowFrozenBallMessage() const { return xc4_frozenBallCount < 3u; }
+void CSystemState::IncrementFrozenBallCount() {
+  xc4_frozenBallCount = rstl::min_val(xc4_frozenBallCount + 1, 3);
+}
+bool CSystemState::GetShowPowerBombAmmoMessage() const { return xc8_powerBombAmmoCount < 1u; }
+void CSystemState::IncrementPowerBombAmmoCount() {
+  xc8_powerBombAmmoCount = rstl::min_val(xc8_powerBombAmmoCount + 1, 1);
+}
+void CSystemState::SetFusionLinked(bool v) { xd0_24_fusionLinked = v; }
+int CSystemState::GetLogScanCount() const { return xcc_logScanPercent; }
+void CSystemState::SetLogScanCount(int count) { xcc_logScanPercent = count; }
+void CSystemState::SetHasHardMode(bool v) { xd0_25_normalModeBeat = v; }
+void CSystemState::SetHardModeBeat(bool v) { xd0_26_hardModeBeat = v; }
+void CSystemState::SetFusionBeat(bool v) { xd0_27_fusionBeat = v; }
+void CSystemState::SetHasFusion(bool v) { xd0_28_fusionSuitActive = v; }
+void CSystemState::SetAllItemsCollected(bool v) { xd0_29_allItemsCollected = v; }
+void CSystemState::SetAutoMapperKeyState(int state) { xbc_autoMapperKeyState = state; }
+
+CWorldState::CWorldState(CAssetId worldId) : x0_worldId(worldId)
+, x4_areaId(0)
+, x8_mailbox(rs_new CScriptMailbox)
+, xc_mapWorldInfo(rs_new CMapWorldInfo)
+, x10_desiredAreaAssetId(kInvalidAssetId)
+, x14_layerState(rs_new CScriptLayerManager) {}
+
+CWorldState::CWorldState(CInputStream& in, CAssetId worldId,
+                         const CWorldSaveGameInfo& saveWorld)
+: x0_worldId(worldId)
+, x4_areaId(-1)
+, x8_mailbox(nullptr)
+, xc_mapWorldInfo(nullptr)
+, x10_desiredAreaAssetId(kInvalidAssetId)
+, x14_layerState(nullptr) {
+  x4_areaId = TAreaId(in.ReadBits(32));
+  x10_desiredAreaAssetId = in.ReadBits(32);
+  x8_mailbox = rs_new CScriptMailbox(in, saveWorld);
+  xc_mapWorldInfo = rs_new CMapWorldInfo(in, saveWorld, x0_worldId);
+  x14_layerState = rs_new CScriptLayerManager(in, saveWorld);
+}
+
+void CWorldState::PutTo(COutputStream& out, CWorldSaveGameInfo& saveWorld) {
+  out.WriteBits(x4_areaId.Value(), 32);
+  out.WriteBits(x10_desiredAreaAssetId, 32);
+  x8_mailbox->PutTo(out, saveWorld);
+  xc_mapWorldInfo->PutTo(out, saveWorld, x0_worldId);
+  x14_layerState->PutTo(out, saveWorld);
+}
+
+CAssetId CWorldState::GetWorldAssetId() const { return x0_worldId; }
+rstl::ncrc_ptr< CScriptMailbox >& CWorldState::Mailbox() { return x8_mailbox; }
+rstl::ncrc_ptr< CMapWorldInfo >& CWorldState::MapWorldInfo() { return xc_mapWorldInfo; }
+rstl::rc_ptr< CMapWorldInfo > CWorldState::GetMapWorldInfo() const { return xc_mapWorldInfo; }
+TAreaId CWorldState::GetCurrentArea() const { return x4_areaId; }
+void CWorldState::SetAreaId(TAreaId id) { x4_areaId = id; }
+CAssetId CWorldState::GetDesiredAreaAssetId() const { return x10_desiredAreaAssetId; }
+void CWorldState::SetDesiredAreaAssetId(CAssetId id) { x10_desiredAreaAssetId = id; }
+rstl::ncrc_ptr< CScriptLayerManager >& CWorldState::GetLayerState() { return x14_layerState; }
+
+#ifdef TARGET_PC
+// Marks the Archipelago trailer after the retail save data ("APX4"; "APX3"
+// before the ammo counts were kept, "APX2" before the broken blast shields
+// were, "APIX" before the checked locations were). The unused tail of a retail save is zero, so it cannot
+// match by accident.
+static const uint kPortApMagic = 0x41505834;
+static const uint kPortApMagicV3 = 0x41505833;
+static const uint kPortApMagicV2 = 0x41505832;
+static const uint kPortApMagicV1 = 0x41504958;
+// The seen-pickups trailer ("PKSN") after it: the magic and four 32-bit words.
+static const uint kPortSeenMagic = 0x504B534E;
+#endif
+
+CGameState::CGameState() : x0_(static_cast< uchar >(0))
+, x84_mlvlId(kInvalidAssetId)
+, x98_playerState(rs_new CPlayerState)
+, x9c_transManager(rs_new CWorldTransManager)
+, xa0_playTime(0.0)
+, x20c_saveIdx(0)
+, x210_cardSerial(0)
+, x228_24_hardMode(false)
+, x228_25_initPowerupsAtFirstSpawn(true) {
+#ifdef TARGET_PC
+  // A new game holds no received items, whichever session it ends up in.
+  xpc_apProgress.recorded = true;
+  xpc_apProgress.identity = 0;
+  xpc_apProgress.appliedIndex = 0;
+  for (int i = 0; i < 4; ++i) {
+    xpc_apProgress.checked[i] = 0;
+    xpc_apProgress.shields[i] = 0;
+  }
+  xpc_apProgress.reconciled = false;
+  for (int i = 0; i < kPortSeenWords; ++i)
+    xpc_seenPickups[i] = 0;
+  xpc_mapMarks = PortMapMarks::List();
+  for (int i = 0; i < PortBeamDoors::kWords; ++i) {
+    xpc_beamDoors[i] = 0;
+    xpc_backupBeamDoors[i] = 0;
+  }
+#endif
+  if (gpMemoryCard != nullptr)
+    InitializeMemoryStates();
+}
+
+CGameState::CGameState(CInputStream& in, int saveIdx) : x0_(static_cast< uchar >(0))
+, x84_mlvlId(kInvalidAssetId)
+, x98_playerState(nullptr)
+, x9c_transManager(rs_new CWorldTransManager)
+, xa0_playTime(0.0)
+, x20c_saveIdx(saveIdx)
+, x210_cardSerial(0)
+, x228_24_hardMode(false)
+, x228_25_initPowerupsAtFirstSpawn(false) {
+  for (int i = 0; i < x0_.size(); ++i)
+    x0_[i] = in.ReadBits(8);
+  in.ReadBits(32);
+  x228_24_hardMode = in.ReadBits(1) != 0;
+  x228_25_initPowerupsAtFirstSpawn = in.ReadBits(1) != 0;
+  x84_mlvlId = in.ReadBits(32);
+  CMain::EnsureWorldPakReady(x84_mlvlId);
+  uint high = in.ReadBits(32);
+  uint low = in.ReadBits(32);
+  SGameTime time;
+  time.bits = high;
+  time.bits <<= 32;
+  time.bits |= low;
+  xa0_playTime = time.value;
+  x98_playerState = rs_new CPlayerState(in);
+  x17c_gameOptions = CGameOptions(in);
+  x1f8_hintOptions = CHintOptions(in);
+
+  const rstl::vector< CMemoryCard::MemoryWorld >& worlds = gpMemoryCard->GetMemoryWorlds();
+  x88_worldStates.reserve(worlds.size());
+  for (AUTO(it, worlds.begin()); it != worlds.end(); ++it) {
+    const CAssetId worldId = it->first;
+    TLockedToken< CWorldSaveGameInfo > saveWorld = gpSimplePool->GetObj(
+        SObjectTag('SAVW', it->second.GetSaveWorldAssetId()));
+    x88_worldStates.push_back(CWorldState(in, worldId, **saveWorld));
+  }
+#ifdef TARGET_PC
+  for (int i = 0; i < kPortSeenWords; ++i)
+    xpc_seenPickups[i] = 0;
+  xpc_mapMarks = PortMapMarks::List();
+  for (int i = 0; i < PortBeamDoors::kWords; ++i) {
+    xpc_beamDoors[i] = 0;
+    xpc_backupBeamDoors[i] = 0;
+  }
+  {
+    // The first trailer had no checked locations, the second no shields.
+    uint magic = in.ReadBits(32);
+    const bool hasShields = magic == kPortApMagic || magic == kPortApMagicV3;
+    const bool hasChecked = hasShields || magic == kPortApMagicV2;
+    xpc_apProgress.recorded = hasChecked || magic == kPortApMagicV1;
+    xpc_apProgress.identity = xpc_apProgress.recorded ? in.ReadBits(32) : 0;
+    xpc_apProgress.appliedIndex = xpc_apProgress.recorded ? in.ReadBits(32) : 0;
+    for (int i = 0; i < 4; ++i)
+      xpc_apProgress.checked[i] = hasChecked ? in.ReadBits(32) : 0;
+    for (int i = 0; i < 4; ++i)
+      xpc_apProgress.shields[i] = hasShields ? in.ReadBits(32) : 0;
+    if (magic == kPortApMagic) {
+      // A seed may hold more ammo than the retail fields above can.
+      static const CPlayerState::EItemType kAmmo[] = {CPlayerState::kIT_Missiles,
+                                                      CPlayerState::kIT_PowerBombs};
+      for (int i = 0; i < 2; ++i) {
+        const int amount = in.ReadBits(16);
+        const int capacity = in.ReadBits(16);
+        x98_playerState->PortRestoreAmmo(kAmmo[i], amount, capacity);
+      }
+    }
+    // The Archipelago trailer is optional, so the seen one follows either it
+    // or the retail data; anything else (an old save's zeros) leaves it empty.
+    if (xpc_apProgress.recorded)
+      magic = in.ReadBits(32);
+    if (magic == kPortSeenMagic) {
+      for (int i = 0; i < kPortSeenWords; ++i)
+        xpc_seenPickups[i] = in.ReadBits(32);
+      // The room marks follow it; an older save has zeros here.
+      if (in.ReadBits(32) == PortMapMarks::kMagic) {
+        xpc_mapMarks = PortMapMarks::Get([&in](unsigned bits) { return static_cast< uint >(in.ReadBits(bits)); });
+      }
+    }
+  }
+  xpc_apProgress.reconciled = false;
+#endif
+  InitializeMemoryWorlds();
+  WriteBackupBuf();
+}
+
+void CGameState::InitializeMemoryStates() {
+  x98_playerState->InitializeScanTimes();
+  x1f8_hintOptions.InitializeMemoryState();
+  InitializeMemoryWorlds();
+  WriteBackupBuf();
+}
+
+void CGameState::InitializeMemoryWorlds() {
+  const rstl::vector< CMemoryCard::MemoryWorld >& worlds = gpMemoryCard->GetMemoryWorlds();
+  for (AUTO(it, worlds.begin()); it != worlds.end(); ++it) {
+    rstl::rc_ptr< CScriptLayerManager > layers = StateForWorld(it->first).GetLayerState();
+    rstl::rc_ptr< rstl::vector< rstl::string > > names;
+    rstl::rc_ptr< rstl::vector< int > > offsets;
+    layers->InitializeWorldLayers(it->second.GetDefaultLayerStates(), names, offsets);
+  }
+}
+
+CGameState::GameFileStateInfo CGameState::LoadGameFileState(const void* data) {
+  GameFileStateInfo result;
+  CMemoryInStream in(data, 4096);
+  for (int i = 0; i < 128; ++i)
+    in.ReadBits(8);
+  uint timestamp = in.ReadBits(32);
+  result.x20_hardMode = in.ReadBits(1) != 0;
+  in.ReadBits(1);
+  result.x8_mlvlId = in.ReadBits(32);
+  uint high = in.ReadBits(32);
+  uint low = in.ReadBits(32);
+  SGameTime time;
+  time.bits = high;
+  time.bits <<= 32;
+  time.bits |= low;
+  result.x0_playTime = time.value;
+  CPlayerState player(in);
+  result.xc_health = player.GetHealthInfo().GetHP();
+  result.x10_energyTanks = player.GetItemCapacity(CPlayerState::kIT_EnergyTanks);
+  result.x14_timestamp = timestamp;
+  uint itemPercent;
+  if (result.x8_mlvlId == 0x158efe17)
+    itemPercent = 0;
+  else
+    itemPercent = player.CalculateItemCollectionRate() * 100 / player.GetTotalPickupCount();
+  result.x18_itemPercent = itemPercent;
+  float scanPercent;
+  if (player.GetTotalLogScans() == 0)
+    scanPercent = 0.f;
+  else
+    scanPercent = 100.f * (float(player.GetLogScans()) / float(player.GetTotalLogScans()));
+  result.x1c_scanPercent = scanPercent;
+  return result;
+}
+
+void CGameState::PutTo(COutputStream& out) {
+  for (int i = 0; i < x0_.size(); ++i)
+    out.WriteBits(x0_[i], 8);
+  out.WriteBits(OSTicksToSeconds(OSGetTime()), 32);
+  out.WriteBits(x228_24_hardMode ? 1 : 0, 1);
+  out.WriteBits(x228_25_initPowerupsAtFirstSpawn ? 1 : 0, 1);
+  out.WriteBits(x84_mlvlId, 32);
+  u64 time = *reinterpret_cast< const u64* >(&xa0_playTime);
+  out.WriteBits(time >> 32, 32);
+  out.WriteBits(time & 0xffffffff, 32);
+  x98_playerState->PutTo(out);
+  x17c_gameOptions.PutTo(out);
+  x1f8_hintOptions.PutTo(out);
+  const rstl::vector< CMemoryCard::MemoryWorld >& worlds = gpMemoryCard->GetMemoryWorlds();
+  for (AUTO(it, worlds.begin()); it != worlds.end(); ++it) {
+    const CAssetId worldId = it->first;
+    TLockedToken< CWorldSaveGameInfo > saveWorld = gpSimplePool->GetObj(
+        SObjectTag('SAVW', it->second.GetSaveWorldAssetId()));
+    CWorldSaveGameInfo& world = **saveWorld;
+    CWorldState& state = StateForWorld(worldId);
+    state.PutTo(out, world);
+  }
+#ifdef TARGET_PC
+  if (xpc_apProgress.recorded) {
+    out.WriteBits(kPortApMagic, 32);
+    out.WriteBits(xpc_apProgress.identity, 32);
+    out.WriteBits(xpc_apProgress.appliedIndex, 32);
+    for (int i = 0; i < 4; ++i)
+      out.WriteBits(xpc_apProgress.checked[i], 32);
+    for (int i = 0; i < 4; ++i)
+      out.WriteBits(xpc_apProgress.shields[i], 32);
+    out.WriteBits(x98_playerState->GetItemAmount(CPlayerState::kIT_Missiles), 16);
+    out.WriteBits(x98_playerState->GetItemCapacity(CPlayerState::kIT_Missiles), 16);
+    out.WriteBits(x98_playerState->GetItemAmount(CPlayerState::kIT_PowerBombs), 16);
+    out.WriteBits(x98_playerState->GetItemCapacity(CPlayerState::kIT_PowerBombs), 16);
+  }
+  out.WriteBits(kPortSeenMagic, 32);
+  for (int i = 0; i < kPortSeenWords; ++i)
+    out.WriteBits(xpc_seenPickups[i], 32);
+  {
+    // The room marks that still fit the stream, after the seen ones.
+    const size_t fit = PortMapMarks::Fit(xpc_mapMarks.count, out.PortCapacityBits(),
+                                         out.PortBitsWritten());
+    if (fit != 0) {
+      PortMapMarks::Put(xpc_mapMarks, fit,
+                        [&out](uint value, unsigned bits) { out.WriteBits(value, bits); });
+    }
+  }
+#endif
+}
+
+void CGameState::ReadSystemOptions(CInputStream& in) { xa8_systemState = CSystemState(in); }
+void CGameState::WriteSystemOptions(COutputStream& out) { xa8_systemState.PutTo(out); }
+
+void CGameState::ImportPersistentOptions(const CSystemState& options) {
+  if (options.GetFusionLinked())
+    SystemState().SetFusionLinked(true);
+  if (options.GetFusionBeat())
+    SystemState().SetFusionBeat(true);
+  SystemState().x0_nesState = options.x0_nesState;
+  SystemState().SetLogScanCount(options.GetLogScanCount());
+  SystemState().SetAllItemsCollected(options.GetAllItemsCollected());
+  SystemState().SetHasHardMode(options.GetNormalModeBeat());
+  SystemState().SetHardModeBeat(options.GetHardModeBeat());
+}
+
+void CGameState::ExportPersistentOptions(CSystemState& options) {
+  if (SystemState().GetFusionLinked())
+    options.SetFusionLinked(true);
+  if (SystemState().GetFusionBeat())
+    options.SetFusionBeat(true);
+  options.x0_nesState = SystemState().x0_nesState;
+  options.SetHasFusion(SystemState().GetHasFusion());
+  options.x0_nesState = SystemState().x0_nesState;
+}
+
+void CGameState::WriteBackupBuf() {
+#ifdef TARGET_PC
+  const int slotBytes = PortSaveFormat::SlotBytes();
+#else
+  const int slotBytes = 940;
+#endif
+  x218_backupBuf.assign(slotBytes);
+  CMemoryStreamOut out(x218_backupBuf.data(), slotBytes);
+  PutTo(out);
+#ifdef TARGET_PC
+  PortBackUpBeamDoors();
+#endif
+}
+
+CWorldState& CGameState::StateForWorld(CAssetId worldId) {
+  AUTO(it, x88_worldStates.begin());
+  for (; it != x88_worldStates.end(); ++it) {
+    if (worldId == it->GetWorldAssetId())
+      break;
+  }
+  if (it != x88_worldStates.end())
+    return *it;
+  x88_worldStates.reserve(x88_worldStates.size() + 1);
+  x88_worldStates.push_back(CWorldState(worldId));
+  return x88_worldStates.back();
+}
+
+CAssetId CGameState::CurrentWorldAssetId() const { return x84_mlvlId; }
+CWorldState& CGameState::CurrentWorldState() { return StateForWorld(x84_mlvlId); }
+const CWorldState& CGameState::GetCurrentWorldState() const {
+  return const_cast< CGameState* >(this)->StateForWorld(x84_mlvlId);
+}
+
+void CGameState::SetCurrentWorldId(CAssetId worldId) {
+  StateForWorld(worldId);
+  x84_mlvlId = worldId;
+  CMain::EnsureWorldPakReady(worldId);
+}
+
+rstl::ncrc_ptr< CPlayerState >& CGameState::PlayerState() { return x98_playerState; }
+rstl::rc_ptr< CPlayerState > CGameState::GetPlayerState() const { return x98_playerState; }
+rstl::ncrc_ptr< CWorldTransManager >& CGameState::WorldTransitionManager() {
+  return x9c_transManager;
+}
+
+void CGameState::SetTotalPlayTime(double time) {
+  static const double kMaxPlayTime = 359999.0;
+  xa0_playTime = CMath::Clamp(0.0, time, kMaxPlayTime);
+}
+
+void CGameState::SetHardMode(bool hardMode) { x228_24_hardMode = hardMode; }
+float CGameState::GetHardModeDamageMultiplier() const {
+  return gpTweakGame->GetHardModeDamageMultiplier();
+}
+float CGameState::GetHardModeWeaponMultiplier() const {
+  return gpTweakGame->GetHardModeWeaponMultiplier();
+}
+void CGameState::SetDeferPowerupInit(bool defer) { x228_25_initPowerupsAtFirstSpawn = defer; }

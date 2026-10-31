@@ -13,6 +13,17 @@ Measured on the consoles only (xemu's timing is not the console's). A room
 or above it. Hardware: a stock 733 MHz console is the bar; upgraded CPUs
 just get more frames (`docs/boot-safety.md`).
 
+## Where it stands (RC1c, round hw18d, 2026-10-31)
+
+Medians of the profiler's 5 s lines: red at 480i 39-51 fps (pirates 39,
+Main Plaza 49, Lava Lake 43, Landing Site 50, Phendrana 51); gold at
+720p 28-37 (Main Plaza 37, pirates 30, Landing Site 28, Lava Lake 34,
+Phendrana 32), Main Plaza at 480p 46. 720p runs 30 Hz ticks (each one
+1/30 s of game time), 480 Game Timing: Auto. Neither target is met; each
+round's numbers: `roadmap.md` "Performance per build", `fps-plan.md`
+section 0, `history.md`. The sections below are the measurements and
+plans as they were made.
+
 ## Where it starts
 
 Melee-X on the same hardware: menus at 60, 4-player matches 30-60 at 720p
@@ -51,13 +62,250 @@ Each run at 480p 4:3, 480p 16:9 and 720p. Results go in a table in
 - `[NV2A]` frame census: draws, vertices, texture uploads, EFB copies,
   program loads per frame (`tools/xbox/census_report.py`).
 - The sampling profiler (`-DXHW_PROF=1`, `tools/xbox/prof_report.py`) and
-  instruction counts in xemu (`-icount`).
+  instruction counts in xemu (`-icount`). Trust a function's own samples;
+  the "one frame up" table scans the stack for return addresses and
+  catches stale ones. `[PROFT]` (2026-10-30) keeps only the samples of
+  frames of 150 ms or more (`XHW_PROF_STALL_MS`): hitches, with how much
+  of them the game thread spent waiting (reads, locks) or outside the
+  image. A SHOT frame is one too (its zlib).
 - Console rounds (`tools/xbox/console_round.py`): many A/B builds in one
   launch on the real console.
 - `simh` lockstep hashes (`tools/xbox/simh_diff.py`): an optimisation must
   not change the simulation.
-- Releases: ThinLTO + PGO and the profile-ordered link (`xbox/order.txt`),
-  which gave Melee-X +13%.
+- Releases: ThinLTO + PGO (`docs/pgo.md`: `XBOX_LTO=1`,
+  `XBOX_PGO=xbox/prime.profdata`) and later the profile-ordered link
+  (`xbox/order.txt`), which gave Melee-X +13%.
+- `[DLC] immediate batches begun from:` the return addresses of the game's
+  `GXBegin` calls with their counts per period (symbolize with
+  `tools/xbox/sym.py`): who makes the immediate-mode draws.
+
+## Measured so far (xemu, Landing Site, 2026-10-27)
+
+xemu's CPU is faster than the console's and its GPU slower, so only the
+ratios mean anything; console numbers come from console rounds. Same frames
+on both sides (`env PX_LOCKSTEP=1`, `/c/xemu/px/scen-perf`), averages of
+ten `[PERF]` periods:
+
+| build | draws/frame | game ms | display lists ms |
+|---|---|---|---|
+| hw1's code (profile run) | 2900-4300 | 46-54 | 19-27 |
+| + strip/fan joining, GUI subtree, builtins | ~410 | 21.6 | 5.4 |
+| + ThinLTO, PGO, link order | ~375 | 17.8 | 2.7 |
+
+2026-10-28, LTO + PGO, same scene: the line clipper (`gx_vtx.c`
+`clip_lines`, needed for the rain's lines that cross the camera) first
+cost ~12% of the CPU in xemu, in `gx_vtx_flush`. xemu runs the guest's
+float maths through softfloat, so float-heavy code looks several times
+dearer there than on a Pentium III. It now tests outcodes first and
+divides only for the few lines that cross a plane (~2% of them), and the
+rain and snow grids wholly outside the view are skipped before their
+vertices are built (`CEnvFxManagerGrid::Render`, `GXPortBoxCulled`): xemu
+~27 -> ~30 fps. Most grids touch the view (the camera is inside the rain
+volume), so about half of the rain's lines are still built and then
+dropped as off-screen.
+
+The profile of the last (LTO + PGO) build: `GXCallDisplayList` 16.6%
+(skinned models' lists decoded on every call; the dynamic-list budget is
+full) and 5% more in its copies, the rain's immediate-mode calls ~9% (it
+draws now: `GXTexCoord1s16` was its colour), `BuildBoneRange` 2.3%,
+`pb_busy` 15% (xemu's GPU). Next: the decoder's fast path per format
+(`gx_vtx.c` `store_fast`, done), then GPU or SSE skinning.
+
+Console (round hw4, Landing Site in rain): hw1 ~10 fps; plain build with
+the batching ~24-31; ThinLTO + PGO ~27-41.
+
+Console (round hw5, profiler builds, ThinLTO + PGO, 480i): front end 32-45,
+Landing Site 37-46, Main Plaza 21-46, Frigate 26-43, Phendrana 36-43. The
+console's profile of the Landing Site: `GXCallDisplayList` 13%, `memcpy`
+10%, the rain's immediate-mode vertices ~11%, `CEnvFxManager::Update`
+3.5% (the rain's simulation, on the CPU), `BuildBoneRange` 3.3%. Main
+Plaza: display lists 13%, `xgx_draw` 8%. Next: the skinned models' display
+lists (decoded on every call), the memcpy callers, and the rain.
+
+2026-10-28 (night), from round hw5's Main Plaza profile read against the
+profiler build's code (`stage-hw5/prof`: the XBE's bytes disassembled at
+the hot 64-byte buckets): `GXCallDisplayList`'s time is cache misses on
+the cache entries (`DlEntry`, 184 bytes with the chain's `next` at the
+end: four 32-byte lines a call) and on each list's batch table. Done, not
+yet measured on a console: the entry's hot fields in its first 64 bytes,
+32-byte aligned; `xhw_time_ns` without an I/O-port read per call (~3%);
+`xhw_perf_enter/leave` inline (~1.2%); no PBR-record parse per material
+set (`CCubeMaterial::SetCurrent`, ~1%); 48-byte `VpKey` compares inline;
+normals as CMP (4 bytes: 13% more of Main Plaza's lists fit the vertex
+pool); only lists unused for 3 frames evicted (hw6's 34 ms of display
+lists with the pool full were LRU turning the whole cache over). Left:
+the batch table (a separate allocation per list), the dynamic lists'
+template copies, `CStateManager::Update`'s inlined callees.
+
+2026-10-29, from the same hw5 logs (`[PROFL]`: memcpy's callers):
+`GXCallDisplayList` made half of memcpy's 10% in the Landing Site, where
+the dynamic (skinned) lists hold ~800 KB of templates and fetch positions
+and normals on every call. Each batch is now staged through a 16 KB
+scratch buffer (template read once, fetched there, copied to the ring)
+instead of fetched into the template and the whole template copied after:
+about half the bus traffic. `-DXGX_DYN_VERIFY=1` makes every dynamic draw
+the old way too and compares. A list of one draw (most of them, after
+merging) keeps that draw in its entry's hot 64 bytes with the layout in
+a shared table: no batch table, so no miss for it on the call. Not yet
+measured on a console.
+
+The front end (title, file select) runs over a 640x480 THP movie: its
+decode was 60% of a frame (float AAN IDCT with a double-precision FMA on an
+SSE1 CPU) and the planes' GX-tile conversion 18%. An integer IDCT
+(libjpeg's jidctfst arrangement, `THPDec.cpp`) and whole-tile I8 copies
+(`gx_tex.c`) halved it in xemu: 68 -> 33 ms a frame (11.8 -> 26 fps).
+
+Chozo Ruins' Main Plaza (hw1: ~5 fps on the console, 7000 draws): its
+cached display lists need ~6 MB and the vertex pool is 4 MB, so ~130 lists
+were evicted and rebuilt every frame (display lists 53-58 ms in xemu). The
+texture pool had ~5.6 MB idle there: display lists now spill into it,
+keeping 2 MB free for textures, and the texture allocator gives spilled
+lists back before it drops a texture (`nv2a.c` `xgx_vbuf_alloc`,
+`gx_dlc_evict_spilled`). Main Plaza in xemu: display lists ~3 ms, game
+~20 ms, 7 -> ~29 fps.
+
+The Frigate's opening: 58 skinned lists went volatile (decoded on every
+call) because the same list is drawn from the CPU-skinned workspace and
+from the disc's arrays in one frame, and the cache key ignored the arrays'
+strides and byte orders. With them in the key (`fmt_key`): 7 volatile,
+display lists ~10.5 -> ~8.3 ms in xemu. Still the heaviest scene measured
+(2000+ draws, game ~35 ms in xemu); the dynamic-list budget (1 MB, full)
+is the next limit, and memory is tight for raising it (Main Plaza: ~2.6 MB
+free).
+
+2026-10-29 (evening), from round hw9 (profiler chain r9a-r9e and the
+user's ship-build free play through the Frigate to Parasite Queen); none
+of it measured on a console (no console round after hw9, the user's call):
+
+- **The game clock** (`OSGetTime`, `os.c`): whole seconds plus the rest at
+  40 ticks a microsecond (`OS_TIMER_CLOCK / 1000000`, 40.5 truncated), so
+  it ran 1.2% slow through each second and jumped 12.3 ms at the next. The
+  game's tick clock (`CStopwatch`, `UpdateTicks`) took the jump as an extra
+  simulation tick once a second: a periodic hitch. Now one 32.32 fixed-point
+  multiply (no `__aulldiv`); lockstep frames are exactly 675000 ticks.
+- **memcpy's small copies**: Main Plaza had 8% of the CPU on the `rep
+  movs` of copies under 2 KB (three microcode starts a call). Under 64
+  bytes it is a loop now; zero-length `rep`s are skipped; 256 B-2 KB
+  copies prefetch their source first. `copy_prim`/`seg_list` copy vertices
+  as words (three memcpy calls a quad before: every particle and flake).
+- **Dynamic (skinned) lists' fetch**: positions and normals are native
+  floats from the skinning; a loop each (12-byte move, CMP pack) instead
+  of `store()`'s per-element switch through the stack (~5% in Main
+  Plaza). `-DXGX_DYN_VERIFY=1`: 0 of 125k draws differ (Landing Site,
+  Main Plaza, Phendrana).
+- **Index-only dynamic lists**: a skinned list that doesn't fit the
+  dynamic budget kept no dynamic form and was parsed and decoded from the
+  list on every call (free play: up to 16 such lists in the Frigate's
+  fights, display lists 15-28 ms, 10-15 fps). It now keeps its indices and
+  plans without a template (every array fetched each call, a few bytes a
+  vertex; their own 256 KB allowance past the budget, and batches over
+  the 16 KB scratch go through a buffer reserved up to 128 KB).
+  `-DXGX_DYN_INDEX_ONLY=0` restores the old behaviour. A volatile list's
+  log line now says which limit refused it.
+- **Failed builds back off**: with the vertex pool full, a list that found
+  no room scanned, decoded and tried evictions on every call, then was
+  decoded again to draw. It tries again 30 frames on (`DLC_BUILD_RETRY`).
+- `derive_vk`'s scan of the eight lights' attenuation (48 float compares a
+  draw, xgx_draw's busiest spot) runs only after a light changed.
+- A dynamic list's checks (its own bytes once a frame, each array not yet
+  seen changing on every call: 64 sampled words each, cache misses, ~50
+  a frame in Main Plaza) follow the cached lists' policy: after 120
+  passes, every eighth frame with 16 samples. `fmt_key` (two hash mixes a
+  call) is cached until the descriptor, a format or an array's stride
+  changes; `GXColor1u32` (every particle corner) takes `GXColor4u8`'s
+  fast path.
+- **Snow** (Phendrana ~10%): `GXPortSnowQuads`, one call for a grid's
+  flakes; `GXTexCoord2u8` & co. take a fast path when the next slot is a
+  direct texture coordinate.
+- **Cache misses in the game's walks**: prefetches four world models
+  ahead in `DrawUnsortedGeometry`'s cull loop (~3%), three entities ahead
+  in the state manager's object-list walks (~4%), and ~8 vertices ahead
+  in `BuildBoneRange`'s streams (the Pentium III has no hardware
+  prefetcher).
+- More misses taken off: the next surface's header (`CCubeModel`'s draw
+  loops), the particle two ahead (`UpdateExistingParticles`), the rain and
+  snow grids' arrays (rewritten whole every tick; the loops also reloaded
+  the vector's pointer per particle: ~3% of a rainy or snowy frame).
+  `PortHasHudInterference` (every HUD model's materials, three times a
+  frame) is kept per frame; the vertex constants' and programs' method
+  headers are written inline (pbkit's `pb_push` is two unoptimised calls).
+- Each `GXBegin` built its vertex plan again (a loop over the 21
+  attributes) and copied its ~400 bytes into the batch, a few hundred times
+  a frame: plans are cached per vertex format until the descriptor or a
+  format changes (`cached_plan`), and the copy skipped when the batch
+  already holds it.
+- An actor drawn twice a frame (its body and its projected shadow, or its
+  unsorted and sorted parts) was skinned twice: `CSkinnedModel::Calculate`
+  now skips the skin when its workspace already holds the same virtual-bone
+  transforms over the same source arrays (a hash a model; not for owned
+  workspaces or morphs). Lockstep shots of the Frigate-crash pirate show
+  its pose changing frame to frame as before.
+- Two dynamic-list calls in three in Main Plaza (the arm cannon's
+  instances and passes) drew a list already drawn that frame, fetching and
+  copying the same skinned vertices again. The skinning now reports the
+  buffers it writes (`GXPortSkinWritten`, a generation each); a call from
+  the same arrays, unwritten since, in the same frame and ring generation,
+  draws the earlier call's ring vertices (four kept a list, by arrays).
+  xemu: 9600 of 11400 repeat calls reused in Main Plaza, verify 0 differ.
+  `-DXGX_DYN_REUSE=0` turns it off.
+- Characters (every `CCharacterFactory` model is "owned") skinned into
+  the shared skinning ring, given back with a draw sync token that passes
+  at once here: every model skinned to the ring's first bytes, so a
+  pirate drawn again in the frame was skinned again (another model had
+  used the ring in between) and its lists couldn't reuse their vertices.
+  An owned model can ask once for a workspace of its own
+  (`GXPortSkinKeep`: `XGX_SKIN_KEEP_KB` in all, and only while 6 MB stays
+  free; else the ring as before) and keep it; the skin skip and the list
+  reuse then work for it (xemu: pirate room 1011 reused calls a run). On
+  since 2026-10-30 with 1 MB in all (`XGX_SKIN_KEEP_KB`, 0: off). Memory
+  running short (a reclaimer, asked first) gives every kept workspace back
+  at its model's next skin (`GXPortSkinKeepEpoch`) and keeps none for 30 s;
+  test builds force it with `env PX_SKIN_REVOKE_AT=<frame>`.
+  The verify build's few reused calls a run one bit off in a packed normal
+  (2026-10-29's reason to leave it off) are xemu's: with the workspace's
+  bytes unchanged (checksummed after each skin and at every draw) and the
+  same MXCSR, two references made back to back from the same array bytes
+  differ in the same way ("arrays changed during the call", now logged
+  with the array bytes hashed). The ring's buffers count for their frame
+  only (`GXPortSkinWrittenThisFrame`); the skin registry holds 1024
+  buffers.
+- Found, not changed: the HUD minimap (`CMapWorld::Draw`) is 150-300
+  immediate draws every frame of play (each surface's fill and outline,
+  alternating triangles and lines, a `GXSetTevKColor` between each).
+  pbkit is built without optimisation (as on Melee-X); its hot spots are
+  waits, and `-O2` would turn `while (pb_BackBufferbReady[...])` into a
+  hang.
+
+2026-10-30 (night), xemu only, the pirate room (`39F2DE28:B9ABCD56`,
+profiler builds, six 1 ms-sample reports):
+
+- Per-model skin workspaces on (above): `BuildBoneRange` 5.2 -> 3.4% of
+  the samples, the skinned fetch 6.7 -> 5.4.
+- `TriBoxOverlap` rejects on the triangle's bounds before the edge axes:
+  2.2 -> 1.1%.
+- A skinned list's position and normal fetches in one pass
+  (`dyn_fetch_pos_nrm`, also for index-only lists): the fetch 6.1 -> 5.4%.
+  Verify: pirate room, Main Plaza, Frigate, and both again with the
+  budget forced down (`-DDLC_DYN_BUDGET=196608u -DDLC_DYN_EXTRA=0u`).
+- `CHierarchyPoseBuilder::BuildTransform` (every locator query: weapons,
+  head tracking, effects) walked the segment's chain from the root each
+  time; each link's running state is now kept by builder, tree version
+  and segment, and a walk resumes from the deepest one kept (same
+  operations, same order, same bits; a check build recomputing every
+  call agreed but for one call in 24576, xemu's float noise). Its own
+  samples 0.8 -> 0.1%. (The report's "one frame up" table had put 3.7% on
+  it: that table finds callers by scanning the stack for return
+  addresses and picks up stale ones from deep recursions; trust the
+  functions' own samples. It puts 8-10% of Main Plaza "under"
+  `RecursivelyBuild` the same way, whose own samples are small.)
+- `RecursivelyBuild` makes its children's rotation matrix once instead
+  of once per child (at scale 1 the node's own matrix): same values.
+- `CFrustumPlanes::BoxInFrustumPlanes` tests the plane that rejected the
+  last box first (neighbouring boxes fail the same side): 1.4 -> 0.9% in
+  the Frigate, 1.3 -> 0.8% in Main Plaza.
+- `[PERF]`'s "ticks per render" now counts the game updates: Game Timing
+  Fixed runs 3.4 a drawn frame there at ~17 fps; most of a slow fight
+  frame is catch-up. Flex runs one.
 
 ## Levers, roughly in the order to try them
 
@@ -66,7 +314,7 @@ Each run at 480p 4:3, 480p 16:9 and 720p. Results go in a table in
 | everything Melee-X already has | GX/NV2A layer | display-list vertex cache, fewer bigger draws, generated and cached vertex programs, native texture formats, word-wide `memcpy`, kernel disc reads |
 | **skinning on the GPU** | `CSkinnedModel`/`CSkinRules` | Prime skins every animated model on the CPU into workspace arrays (Flipper had no skinning). Melee-X already skins in NV2A vertex programs (matrix palette, `a0` indexing): feed Prime's bone matrices to the same path and skip the CPU pass. Likely the biggest CPU win |
 | SSE (SSE1 only) for what stays on the CPU | skinning fallback, `CElementGen` particle updates, `Kyoto/Math` (`CMatrix4f`, `CTransform4f`, vector code), the audio mixer | `-march=pentium3`; no SSE2 (boot-safety) |
-| particle batching | `CElementGen`, `CParticleSwoosh`, `CParticleElectric` | immediate-mode `GXBegin` per particle: merge into one draw per emitter (Melee-X's merge) |
+| particle batching | `CElementGen`, `CParticleSwoosh`, `CParticleElectric` | immediate-mode `GXBegin` per particle: merge into one draw per emitter (Melee-X's merge). First step done: strips, fans and line strips of up to 64 vertices become lists and join (`gx_vtx.c` `seg_list`): every text glyph was its own 4-vertex strip, one draw each. The Landing Site had ~705 immediate draws a frame, none joined |
 | audio mixing cost | MusyX synth and the DSP-ADPCM music streams | was the GameCube DSP's job; mix at 32 kHz with SSE, cap voices if needed, measure first |
 | EFB copies | visors, blur, shadows, transitions | copy only the rectangle used, at the size used; reuse targets; skip the pause blur's copies when nothing moved |
 | culling | `CCubeRenderer` area octree, actors | check the game's culling isn't defeated by the widescreen frustum; Melee-X's off-screen DL culling |

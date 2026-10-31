@@ -1,0 +1,27 @@
+# r1b: Tallon Overworld's Landing Site: walk, fire, charge, jump, visor, pause, map
+env MP_BOOT_WORLD=39F2DE28
+env PX_NEXT_XBE=F:\Applications\Prime-X-r1c\default.xbe
+900 SHOT
+2150 SHOT
+2200 SU for 120
+2330 SHOT
+2340 A
+2346 SHOT
+2400 X
+2412 SHOT
+2460 SR for 60
+2530 SHOT
+2560 A for 100
+2650 SHOT
+2670 UP
+2730 SHOT
+2760 UP
+2800 START
+2860 SHOT
+2900 START
+2960 WHITE
+3060 SHOT
+3100 WHITE
+3200 SD for 60
+3300 SHOT
+3500 NEXT

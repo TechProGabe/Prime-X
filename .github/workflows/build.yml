@@ -1,0 +1,88 @@
+# Builds default.xbe (ThinLTO + PGO with the committed profile) and runs the
+# host tests. No game data is involved: the XBE reads the user's own disc
+# image at runtime. With a release tag it also packages the build
+# (tools/xbox/package_release.py) and publishes a GitHub release under that
+# tag. From Melee-X's workflow.
+name: build
+
+# Manual runs only.
+on:
+  workflow_dispatch:
+    inputs:
+      release:
+        description: "Release tag to publish (e.g. v1); empty = build and test only"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  xbe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      LLVM: /home/runner/toolchain/llvm21
+      NXDK_DIR: /home/runner/toolchain/nxdk
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Host packages
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -yq build-essential cmake ninja-build git bison flex \
+            libzstd-dev zlib1g-dev libxml2-dev python3-pip python3-pil ffmpeg
+
+      # LLVM and nxdk take most of the time; they only change with setup.sh
+      - name: Toolchain cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            /home/runner/toolchain/llvm21
+            /home/runner/toolchain/nxdk
+          key: toolchain-${{ runner.os }}-${{ hashFiles('tools/xbox/setup.sh') }}
+
+      - name: Toolchain
+        run: tools/xbox/setup.sh
+
+      # ThinLTO + PGO with the committed profile and link order (docs/pgo.md)
+      - name: Build default.xbe
+        env:
+          XBOX_LTO: "1"
+          XBOX_PGO: xbox/prime.profdata
+        run: xbox/build.sh
+
+      # $$XTIMAGE section, title ID 50580001, default.tbn, then the boot
+      # screen's music appended (as tools/xbox/msys/build.sh does)
+      - name: Dashboard icon and music
+        run: |
+          python3 tools/xbox/xbe_title_image.py build-xbox-lto-pgo/xbe/default.xbe xbox/assets/logo.png build-xbox-lto-pgo/xbe/default.tbn
+          python3 tools/xbox/make_intro.py build-xbox-lto-pgo/xbe/default.xbe
+
+      - name: Tests
+        run: |
+          for t in tools/xbox/test_*.py; do echo "== $t"; python3 "$t"; done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: default.xbe
+          path: |
+            build-xbox-lto-pgo/xbe/default.xbe
+            build-xbox-lto-pgo/xbe/default.tbn
+            build-xbox-lto-pgo/prime_x.map
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Release
+        if: inputs.release != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.release }}
+        run: |
+          python3 tools/xbox/package_release.py "$TAG"
+          gh release create "$TAG" "dist/Prime-X-$TAG.zip" --target "$GITHUB_SHA" \
+            --title "Prime-X $TAG" --notes-file .github/release-notes.md

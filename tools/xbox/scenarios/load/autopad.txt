@@ -1,0 +1,16 @@
+# load: after save/, on the same xemu slot: title, main menu, file A, Continue
+env PX_DISC_CHECK=quick
+600 SHOT
+700 START
+1300 SHOT
+1350 A
+1600 SHOT
+1650 A
+1800 SHOT
+1850 A
+2000 SHOT
+2050 A
+2200 SHOT
+2500 SHOT
+2800 SHOT
+3200 SHOT
