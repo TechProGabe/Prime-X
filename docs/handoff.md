@@ -74,6 +74,9 @@ there is the limit). No audio fault in 21 chained scenes (hw11, hw12).
    - particles' textured quads in one call (`GXPortVertices3fC2f`, verified),
    - a cached list's draws counted in [PERF]'s "dlist" (compare dlist + draw),
    - the PGO profile retrained on this code (98d6793).
+   xemu's room sweep at 588573a (all of the above): 14 rooms, 28 shots, no
+   FATAL/THROW, every shot drawn right (snow in the Ice Ruins, rain at the
+   Landing Site and the temple, lava, the crater's lit debris).
    Measure all against hw15 in the same four scenes plus Phendrana. Ready
    as an A/B too: full LTO (`XBOX_CMAKE_ARGS=-DPX_LTO_MODE=full`), and the
    busy-GPU pushbuffer kick (8192 words now; 16384 is the candidate).
