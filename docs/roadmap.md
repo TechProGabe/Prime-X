@@ -52,8 +52,9 @@ line under it says how far it got.
         (pirates 39, Main Plaza 49, Landing Site 50); gold at 720p (30 Hz
         ticks) 28-37 fps. Neither target met yet
 - [ ] Phase 7: full playthrough and burn test on hardware; v1 on `main`
-      - release candidate 1 (RC1c, 0ff5ed0, 2026-10-31) on red and gold
-        for the user's free play
+      - v1.0 beta (2026-10-31): RC1c (0ff5ed0) passed the user's free play
+        on red and gold; `main` tagged `v1.0-beta`. No full playthrough
+        or burn test on hardware yet
 
 ## Known issues
 

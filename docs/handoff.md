@@ -3,7 +3,7 @@
 Update this at the end of every session: what was done, what's next,
 what's broken, anything the next agent would otherwise rediscover.
 
-## Where it stands (2026-10-31): release candidate 1
+## Where it stands (2026-10-31): v1.0 beta (release candidate 1c)
 
 **RC1c is 0ff5ed0.** Its release build (`stage-hw18d/ship`) is in
 `Prime-X` on both consoles (red `F:\Applications`, gold
@@ -53,10 +53,13 @@ and their files: `C:\xemu\hw\prime\ROUNDS.md`; older sessions and rounds
 
 ## Next session, in order
 
-0. **The user's free play of RC1c** on both consoles. If they call it,
-   tag 0ff5ed0 (and merge to `main` only when asked: the release branch).
-   Their reports come first; the free-play build writes no boot.log
-   unless they turn Log File on.
+0. **v1.0 beta is out** (2026-10-31): RC1c passed the user's free play;
+   dev merged into `main` (fd6264c), tagged `v1.0-beta`. The release zip
+   (`dist/Prime-X-v1.0-beta.zip`, from `tools/xbox/package_release.py`)
+   holds RC1c's own binary (MD5 7b0273f0...), not a rebuild of main: main
+   also has 6963d15 (screenshots) and docs. The GitHub release itself is
+   the user's to post (`gh` isn't logged in here). Bug reports from
+   players come with a boot.log only if they turn Log File on.
 1. **Watch in the next round** (none planned: hardware only when truly
    needed, the user):
    - the page-0 repair: a `[MEM] page 0 at 0x80000000 read-only ...
