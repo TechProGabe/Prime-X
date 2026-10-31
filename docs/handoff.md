@@ -63,7 +63,7 @@ there is the limit). No audio fault in 21 chained scenes (hw11, hw12).
    PGO) r16a-g, F (full LTO) r16h-i, K (16384-word busy kick) r16j-k.
    `C:\xemu\hw\prime\stage-hw16` holds prof/, prof-full/, prof-kick/, ship/
    and console/ (the upload tree; each scene folder has its image's XBE),
-   NOT uploaded; built from 2fccc3f, xemu's room sweep on image P clean
+   NOT uploaded; built from e41cffc, xemu's room sweep on image P clean
    (14 rooms, 28 shots, rain drawn at the Landing Site and the temple).
    Since hw15, all checked in xemu only:
    - a room's geometry as static memory (no content checks on its lists),
@@ -85,6 +85,8 @@ there is the limit). No audio fault in 21 chained scenes (hw11, hw12).
      all. Host-checked against the CPU clipper (test_vp_opt.py); xemu's
      Landing Site: render 12-15 -> 6-7 ms, shots alike. Off switch for an
      A/B on red: `env PX_GPU_RAIN=0` (profiler/autopad builds),
+   - an attached particle effect's locator looked up once (not every tick),
+     the back end's two per-draw divides and the merge check's memcmp gone,
    - a GPU-per-pass probe for the visors (`env PX_GPU_TIME=1`: waits for
      the GPU at each EFB copy and the present, `[GPUT]` lines; frame
      rates are not valid with it on), for M5.6's first step,
