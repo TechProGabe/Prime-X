@@ -27,6 +27,14 @@ void GXPortStaticAdd(const void* key, const void* lo, unsigned bytes);
 void GXPortStaticRemove(const void* key);
 
 int GXPortRainLines(const short* xyz, unsigned n, short dz, unsigned short c0, unsigned short c1);
+// The same streaks (n particles, as GXPortRainLines takes them, with each
+// z the stored height before the grid's fall zoff: (z + zoff) & 0x3fff is
+// the game's) from a vertex buffer kept per owner (the grid): written again
+// only when gen changes (a new set of particles, or fewer), the new ones
+// when n grows. The fall and the clip happen on the GPU. 0: not drawn this
+// way (draw them as before).
+int GXPortRainGrid(const void* owner, unsigned gen, const short* xyz, unsigned n, short zoff, short dz,
+                   unsigned short c0, unsigned short c1);
 
 // The snow's (or the underwater flakes') n quads into the open GX_QUADS
 // batch, last particle first: corners p, p + up, p + up + right, p + right

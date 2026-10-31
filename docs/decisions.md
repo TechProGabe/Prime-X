@@ -187,6 +187,22 @@ combiners; ThinLTO + PGO for releases.
     `-DXGX_LINE_SSE=0`), the same operations in the same order: a check
     build compared its codes with the scalar ones on ~24 million lines of
     xemu's rainy fight, none different.
+  - Rain on the GPU (M5.1, approved by the user 2026-10-30;
+    `-DXGX_GPU_RAIN=0`, test builds' `env PX_GPU_RAIN=0`): each rain grid's
+    streaks sit in a vertex buffer of their own (`GXPortRainGrid`), written
+    when the grid's particles change and appended to when they grow. The
+    fall is a per-grid sum (`CEnvFxManagerGrid::xPortRainZ`) the vertex
+    program adds (z = (z + D) mod 0x4000, exact in floats), and the program
+    clips each streak itself as `clip_lines` did (near plane and guard
+    band, Liang-Barsky: both ends know the whole streak, so each works out
+    its own clipped end; a streak wholly outside goes to one point off the
+    screen). The user had approved dropping near-plane streaks; with the
+    clip in the program none are dropped. Host check
+    (`tools/xbox/test_vp_opt.py`): ~50000 random streaks against the CPU
+    clipper, same drops, same ends within 1e-3, and the optimized rain
+    programs against their unoptimized ones bit for bit. Vertex pool cost:
+    ~6 KB a grid, 64 grids (~400 KB) while it rains, freed 600 frames
+    after the last draw.
 
 - **Boot music inside the XBE** (round hw2, 2026-10-27): the first boot's
   music is appended to `default.xbe` (IMA ADPCM, 8.3 MB, footer "PXIN"),
@@ -282,6 +298,7 @@ One line per edit to `src/`, `include/`, `extern/musyx` or
 | `src/MetroidPrime/CEnvFxManager.cpp` | `CEnvFxManagerGrid::Render` skips a rain/snow grid whose box is wholly outside the view (`GXPortBoxCulled`, `port_xbox_gx.h`) | speed: every particle is a vertex call each frame, about half of them off screen; the GPU would clip them all anyway |
 | `src/MetroidPrime/CEnvFxManager.cpp` | `RenderSnowParticles` and `RenderUnderwaterParticles` write their quads with one `GXPortSnowQuads` call (`port_xbox_gx.h`), the eight calls a flake as the fallback; drawn between ticks (Auto at 30 Hz) the snow's flakes are stepped back into a scratch copy first (the fallback's `PortStepBack`, same force index) for the same one call | speed: Phendrana's snow was ~10% of the console's CPU in those calls (round hw9: `GXTexCoord2u8` 7%, `GXPosition3s16` 3%); the same vertices |
 | `src/Kyoto/Graphics/CCubeModel.cpp` | `DrawSurfaces`, `DrawNormalSurfaces`, `DrawAlphaSurfaces` prefetch the next surface's header, its material's first lines and the header after it | speed: `DrawSurface` waited on each header's line (~1.4% of Main Plaza's CPU, round hw9), it and `SetCurrent` on the material (~13% of Main Plaza's draw, round hw15); hints only |
+| `src/MetroidPrime/CEnvFxManager.cpp`, `include/MetroidPrime/CEnvFxManager.hpp` | Rain on the GPU: `UpdateRainParticles` adds each tick's fall to the grid (`xPortRainZ`) instead of to every particle; new particles are stored before it, a grid's particles get a new `xPortRainGen` when they change other than by growing, any other effect folds the fall back into them (`PortRainFold`); `RenderRainParticles` draws through `GXPortRainGrid`, with `GXPortRainLines` (fall added in a scratch copy) and the per-vertex calls as fallbacks; `PortRenderEnvFx` adds the fall | speed: the rain's per-frame vertex writes, clip and copy (~10% of a rainy frame, round hw11) and its per-tick particle loop; the same streaks (fps plan M5.1) |
 | `src/MetroidPrime/CEnvFxManager.cpp` | `UpdateSnowParticles`, `UpdateRainParticles`: the same sums through local pointers, prefetching ~20 particles ahead | speed: the grids' arrays are rewritten whole every tick, a miss per line and the vector's pointer reloaded per particle (~3% of a rainy or snowy frame, round hw9) |
 | `src/GuiSys/CGuiFrame.cpp` | `PortHasHudInterference`'s answer kept per frame once its models are loaded (forgotten when the frame goes) | speed: asked three times a frame, it read every HUD model's materials (~0.4%, round hw9) |
 | `src/Kyoto/Particles/CElementGen.cpp` | `UpdateExistingParticles` prefetches the particle two ahead | speed: a fight's effects walk thousands of particles a tick, a miss per line; a hint only |

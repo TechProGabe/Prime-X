@@ -419,6 +419,169 @@ int main(int argc, char** argv) {
         printf("%d keys with a texture matrix per vertex (pv_mtx): %d failed\n", pn, pfails);
         fails += pfails;
     }
+    /* VpKey.rain (no reference program): the optimized program must match
+     * the generator's own for random keys, and with the rain's rows built
+     * as gx_vtx.c GXPortRainGrid builds them, each vertex's streak end, its
+     * colour and the drop must be what clip_lines on the CPU gives the same
+     * streak (lines near a plane, where the two orders of operations may
+     * decide differently, are left out) */
+    {
+        int rfails = 0, rn = 0, vn = 0, vskip = 0, vdrop = 0, vclip = 0, maxlen = 0;
+        for (t = 0; t < nkeys / 10; t++) {
+            VpKey k;
+            VpIn in;
+            VpOut co, uo, co2;
+            int nun;
+            rand_key(&k);
+            if (k.copy) continue;
+            k.rain = 1;
+            if (!k.ntex) k.ntex = 1;
+            k.tex[0].src = 0;
+            vp_canon(&k);
+            vp_generate(&k, &cur);
+            if (cur.approximated) continue;
+            if ((int)cur.n > maxlen) maxlen = (int)cur.n;
+            nun = vp_test_unoptimized(&k, unopt, 512);
+            rand_input(&in, &k);
+            run(cur.words, (int)cur.n, &in, 11000u + (unsigned)t, 0, &co);
+            run(cur.words, (int)cur.n, &in, 12000u + (unsigned)t, 1, &co2);
+            run(unopt, nun, &in, 13000u + (unsigned)t, 0, &uo);
+            rn++;
+            if (co.bad || uo.bad || !out_eq(&co, &uo) || !out_eq(&co, &co2)) {
+                if (rfails++ < 5) printf("rain key %d differs from its unoptimized program\n", t);
+            }
+        }
+        for (t = 0; t < nkeys / 4; t++) {
+            /* a camera among the grids, looking anywhere; GX's perspective */
+            VpKey k;
+            VpIn in;
+            VpOut o[2];
+            float m[3][4], r[4][4], ey[3], ex[3], ez[3], cam[3], yaw, pitch, cot, p22, p23, sc = 1.0f / 256;
+            float pl[5][4], dzs, X, Y, Z0, d0[5], d1[5], t0 = 0, t1 = 1, want[2], wc[2];
+            int q, e, x16, y16, z16, D, dz, o0 = 0, o1 = 0, drop = 0, near_edge = 0;
+            memset(&k, 0, sizeof k);
+            k.rain = 1;
+            k.nchans = 1;
+            k.chan[0].mat_vtx = k.chan[1].mat_vtx = 1;   /* D0 = the vertex colour */
+            k.ntex = 1;              /* oT0 = (x, z) of the streak's end */
+            vp_canon(&k);
+            vp_generate(&k, &cur);
+            yaw = rf(0, 6.2831853f), pitch = rf(-1.4f, 1.4f);
+            /* view rows: right, up, back (GX looks down -z) */
+            ez[0] = -cosf(pitch) * sinf(yaw), ez[1] = -cosf(pitch) * cosf(yaw), ez[2] = -sinf(pitch);
+            ex[0] = cosf(yaw), ex[1] = -sinf(yaw), ex[2] = 0;
+            ey[0] = ez[1] * ex[2] - ez[2] * ex[1], ey[1] = ez[2] * ex[0] - ez[0] * ex[2], ey[2] = ez[0] * ex[1] - ez[1] * ex[0];
+            cam[0] = rf(-2, 10), cam[1] = rf(-2, 10), cam[2] = rf(-2, 70);
+            for (q = 0; q < 3; q++) {
+                const float* a = q == 0 ? ex : q == 1 ? ey : ez;
+                m[q][0] = a[0], m[q][1] = a[1], m[q][2] = a[2];
+                m[q][3] = -(a[0] * cam[0] + a[1] * cam[1] + a[2] * cam[2]);
+            }
+            cot = 1.0f / tanf(0.48f), p22 = -0.2f / (750 - 0.2f), p23 = -750 * 0.2f / (750 - 0.2f);
+            for (q = 0; q < 4; q++) {   /* gx_vtx.c clip_rows */
+                const float mz = m[2][q], tt = q == 3 ? 1.0f : 0.0f;
+                r[0][q] = cot / 1.333f * m[0][q];
+                r[1][q] = cot * m[1][q];
+                r[2][q] = -mz;
+                r[3][q] = p22 * mz + p23 * tt - mz;
+            }
+            /* the rows as GXPortRainGrid builds them */
+            for (q = 0; q < 4; q++) {
+                pl[0][q] = 2.0f * r[2][q] + r[0][q];
+                pl[1][q] = 2.0f * r[2][q] - r[0][q];
+                pl[2][q] = 2.0f * r[2][q] + r[1][q];
+                pl[3][q] = 2.0f * r[2][q] - r[1][q];
+                pl[4][q] = r[3][q];
+            }
+            x16 = (int)(rnd() % 0x800), y16 = (int)(rnd() % 0x800), z16 = (int)(rnd() % 0x4000);
+            D = (int)(rnd() % 0x4000), dz = 256 + (int)(rnd() % 513);
+            dzs = (float)dz * sc;
+            memset(&in, 0, sizeof in);
+            in.c[VPC_K][0] = 0, in.c[VPC_K][1] = 1, in.c[VPC_K][2] = 0.5f, in.c[VPC_K][3] = 2;
+            for (q = 0; q < 3; q++) memcpy(in.c[VPC_POS + q], m[q], 16);
+            for (q = 0; q < 4; q++) in.c[VPC_PROJ + q][q] = 1;
+            in.c[VPC_TEXGEN][0] = 1, in.c[VPC_TEXGEN + 1][2] = 1;
+            for (q = 0; q < 5; q++) memcpy(in.c[VPC_RAIN + (q < 4 ? VPR_GUARD + q : VPR_NEAR)], pl[q], 16);
+            for (q = 0; q < 4; q++) {
+                float dg = pl[q][2] * dzs;
+                in.c[VPC_RAIN + VPR_DG][q] = dg;
+                in.c[VPC_RAIN + VPR_IG][q] = fabsf(dg) > 1e-30f ? -1.0f / dg : 0.0f;
+            }
+            in.c[VPC_RAIN + VPR_DN][0] = pl[4][2] * dzs;
+            in.c[VPC_RAIN + VPR_IN][0] = fabsf(pl[4][2] * dzs) > 1e-30f ? -1.0f / (pl[4][2] * dzs) : 0.0f;
+            in.c[VPC_RAIN + VPR_Z][0] = (float)D / 16384.0f, in.c[VPC_RAIN + VPR_Z][1] = 1.0f / 16384.0f;
+            in.c[VPC_RAIN + VPR_Z][2] = 16384.0f * sc;
+            in.c[VPC_RAIN + VPR_DZ][0] = dzs;
+            in.c[VPC_RAIN + VPR_C0][3] = 170.0f / 255.0f;
+            in.c[VPC_RAIN + VPR_DC][3] = -170.0f / 255.0f;
+            in.c[VPC_RAIN + VPR_OFF][0] = -64, in.c[VPC_RAIN + VPR_OFF][1] = -64, in.c[VPC_RAIN + VPR_OFF][3] = 1;
+            /* clip_lines on the same streak: the game's sums, then the CPU's floats */
+            X = (float)x16 * sc, Y = (float)y16 * sc;
+            Z0 = (float)((z16 + D) & 0x3FFF) * sc;
+            {
+                const float z1 = (float)(short)(((z16 + D) & 0x3FFF) + dz) * sc;
+                for (q = 0; q < 5; q++) {
+                    const float* a = pl[q];
+                    d0[q] = a[0] * X + a[1] * Y + a[2] * Z0 + a[3];
+                    d1[q] = a[0] * X + a[1] * Y + a[2] * z1 + a[3];
+                    if (fabsf(d0[q]) < 1e-3f || fabsf(d1[q]) < 1e-3f) near_edge = 1;
+                    o0 |= (d0[q] < 0) << q;
+                    o1 |= (d1[q] < 0) << q;
+                }
+                if (o0 & o1) {
+                    drop = 1;
+                } else if (o0 | o1) {
+                    for (q = 0; q < 5; q++) {
+                        const float a = d0[q], b = d1[q];
+                        if (a < 0.0f) {
+                            const float tt = a / (a - b);
+                            if (tt > t0) t0 = tt;
+                        } else if (b < 0.0f) {
+                            const float tt = a / (a - b);
+                            if (tt < t1) t1 = tt;
+                        }
+                    }
+                    if (t0 >= t1) drop = 1;
+                    if (fabsf(t0 - t1) < 1e-3f) near_edge = 1;
+                }
+                want[0] = Z0 + (z1 - Z0) * t0, want[1] = Z0 + (z1 - Z0) * t1;
+                wc[0] = 170.0f / 255.0f * (1 - t0), wc[1] = 170.0f / 255.0f * (1 - t1);
+            }
+            if (near_edge) {
+                vskip++;
+                continue;
+            }
+            vn++;
+            vdrop += drop;
+            vclip += !drop && (o0 | o1);
+            for (e = 0; e < 2; e++) {
+                in.v[VPI_POS][0] = X, in.v[VPI_POS][1] = Y, in.v[VPI_POS][2] = (float)z16, in.v[VPI_POS][3] = 1;
+                in.v[VPI_MTX][3] = 1;
+                in.v[VPI_COL0][0] = in.v[VPI_COL0][1] = in.v[VPI_COL0][2] = in.v[VPI_COL0][3] = (float)e;
+                in.v[vpi_tex(0)][3] = 1;
+                run(cur.words, (int)cur.n, &in, 14000u + (unsigned)t, 0, &o[e]);
+            }
+            if (o[0].bad || o[1].bad) {
+                if (rfails++ < 5) printf("rain case %d: bad program\n", t);
+                continue;
+            }
+            for (e = 0; e < 2; e++) {
+                const int dropped = o[e].o[0][0] == -64 && o[e].o[0][1] == -64 && o[e].o[0][2] == 0;
+                if (dropped != drop || (!drop && (fabsf(o[e].o[9][1] - want[e]) > 1e-3f * (1 + fabsf(want[e])) ||
+                                                  fabsf(o[e].o[9][0] - X) > 1e-5f ||
+                                                  fabsf(o[e].o[3][3] - wc[e]) > 2e-3f))) {
+                    if (rfails++ < 10)
+                        printf("rain case %d end %d: drop %d (want %d), z %g (want %g), alpha %g (want %g), "
+                               "codes %x %x\n",
+                               t, e, dropped, drop, o[e].o[9][1], want[e], o[e].o[3][3], wc[e], o0, o1);
+                }
+            }
+        }
+        printf("%d rain keys against their unoptimized program (longest %d instructions); %d streaks against "
+               "clip_lines (%d dropped, %d clipped; %d near a plane left out): %d failed\n",
+               rn, maxlen, vn, vdrop, vclip, vskip, rfails);
+        fails += rfails;
+    }
     printf("%d keys (%d longer than 136 before: %ld whole now, checked against their unoptimized program; %d cut by "
            "the old generator and skipped): %d failed\n",
            nkeys, overflowed, nfull, degenerate, fails);

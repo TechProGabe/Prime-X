@@ -14,7 +14,30 @@
 #define VPC_POSTMTX 122  /* 4 units x 3 rows: post-transform after normalize */
 #define VPC_FOG 134      /* 3 rows: fog numerator, denominator, curve (nv2a_fog.h) */
 #define VPC_TEXMTX 137   /* 10 texture matrices x 3 rows (GX TEXMTX0..9), addressed by a0 = PNMTXIDX */
-#define VPC_COUNT 167
+#define VPC_RAIN 167     /* 14 rows, VpKey.rain's draws (xgx_rain_next): */
+#define VPC_COUNT 181
+/* VpKey.rain: a draw of the rain's streaks (gx_vtx.c GXPortRainGrid). Each
+ * vertex is one end of a vertical streak: position (x, y, z) with x and y
+ * scaled and z the stored 8.8 height (0..0x3FFF), colour0.x 0 for the
+ * streak's start, 1 for its end. The program adds the grid's fall
+ * (z = (z + D) mod 0x4000, as CEnvFxManager::UpdateRainParticles' sums),
+ * puts the end dz above the start, and clips the streak as gx_vtx.c's
+ * clip_lines does on the CPU (the near plane and the guard band,
+ * Liang-Barsky): both ends see the same streak, so each works out its own
+ * clipped end, and a streak wholly outside goes to a point off the screen.
+ * The rows, from VPC_RAIN (object space: the grid's matrix folded in): */
+#define VPR_GUARD 0      /* 4 rows: the guard band's planes, 2 w + x, 2 w - x, 2 w + y, 2 w - y */
+#define VPR_NEAR 4       /* the near plane, cz + cw */
+#define VPR_DG 5         /* each guard plane's change from start to end (plane.z * dz) */
+#define VPR_DN 6         /* the near plane's in x, 0 0 0 */
+#define VPR_IG 7         /* -1 / VPR_DG per lane, 0 where that is 0 */
+#define VPR_IN 8         /* -1 / VPR_DN.x, 0 0 0 */
+#define VPR_Z 9          /* D / 0x4000, 1 / 0x4000, 0x4000 x scale, 0 */
+#define VPR_DZ 10        /* dz x scale, 0 0 0 */
+#define VPR_C0 11        /* the start's colour (0..1) */
+#define VPR_DC 12        /* the end's colour minus the start's */
+#define VPR_OFF 13       /* where a dropped streak goes: clip (-64, -64, 0, 1), off the screen */
+#define VPR_ROWS 14
 
 /* vertex inputs */
 #define VPI_POS 0
@@ -60,7 +83,7 @@ typedef struct {
      * angle a = (1, 0, 0) (infinite and point lights), distance k = (1, 0, 0)
      * (infinite lights); their factor is then 1 exactly, so it is left out */
     uint8_t ang_one, dist_one;
-    uint8_t pad;
+    uint8_t rain;                 /* the rain's streaks (VPC_RAIN above) */
 } VpKey;
 
 #define VP_MAX_INSNS 136

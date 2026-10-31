@@ -128,6 +128,16 @@ private:
   CVector2i xc_extent;                 /* 8.8 fixed point */
   rstl::pair< bool, float > x14_block; /* Blocked-bool, Z-coordinate */
   rstl::vector< CVectorFixed8_8 > x1c_particles;
+#ifdef TARGET_XBOX
+  // PORT_XBOX: the rain's fall since its particles were stored (a particle's z
+  // is (z + xPortRainZ) & 0x3fff: UpdateRainParticles adds to this, not to
+  // every particle), and a number that changes whenever the particles do other
+  // than by growing (GXPortRainGrid keeps them on the GPU by it)
+  short xPortRainZ;
+  uint xPortRainGen;
+  void PortRainNewGen();
+  void PortRainFold();
+#endif
 };
 CHECK_SIZEOF(CEnvFxManagerGrid, 0x2c);
 

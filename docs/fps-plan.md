@@ -42,7 +42,7 @@ The user's policy for this plan (asked 2026-10-30):
 | M3.6-3.9 | `xhw_time_ns`: its write-only callers removed instead; transcendentals: ~0.5%, not done; pbkit -O1, GetSegIdFromString: small, not done |
 | back end, after hw13's profile | texture-only draws (`XGX_MAPS_FAST`, hw15: Main Plaza +13%), compact list-cache chains, texture memo (`XGX_TEX_MEMO`), covering vertex programs (`XGX_VP_COVER`), the list draws' [PERF] bracket |
 | M4 GPU skinning | built; Main Plaza's lists in the texture pool when the vertex pool is full (hw14) |
-| M5.1 rain | the batch's box tested once (`XGX_LINE_BOX`), the per-line test in SSE (`XGX_LINE_SSE`); GPU rain waits for the user (near-plane streaks) |
+| M5.1 rain | built: on the GPU (`XGX_GPU_RAIN`, approved): a vertex buffer per grid, the fall and the streaks' clip in the vertex program, none dropped; the CPU path (`XGX_LINE_BOX`, `XGX_LINE_SSE`) as the fallback |
 | M5.2 snow | drawn between ticks in one call too (`GXPortSnowQuads` with stepped copies) |
 | M5.3 particle quads | built: `GXPortVertices3fC2f` for the textured quads; the basic (untextured) ones keep their calls |
 | M5.4 particles at the tick period | dropped: frame-keyed elements, a visible rewrite |

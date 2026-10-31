@@ -2876,6 +2876,19 @@ void xgx_vbuf_free_now(void* p) {
 
 void xgx_vtx_use(const void* verts) { s_draw_base = (const uint8_t*)verts; }
 
+/* xgx_rain_next: the next draw's rain rows, and that there are some */
+_Static_assert(XGX_RAIN_ROWS == VPR_ROWS && XGX_RAIN_NEAR == VPR_NEAR && XGX_RAIN_DG == VPR_DG &&
+                   XGX_RAIN_DN == VPR_DN && XGX_RAIN_IG == VPR_IG && XGX_RAIN_IN == VPR_IN && XGX_RAIN_Z == VPR_Z &&
+                   XGX_RAIN_DZ == VPR_DZ && XGX_RAIN_C0 == VPR_C0 && XGX_RAIN_DC == VPR_DC && XGX_RAIN_OFF == VPR_OFF,
+               "xgx.h and nv2a_vp.h agree on the rain's rows");
+static float s_rain_rows[VPR_ROWS][4];
+static int s_rain_req;
+
+void xgx_rain_next(const float rows[XGX_RAIN_ROWS][4]) {
+    memcpy(s_rain_rows, rows, sizeof s_rain_rows);
+    s_rain_req = 1;
+}
+
 static uint32_t nv_prim(uint32_t gx) {
     switch (gx) {
         case XGX_QUADS: return NV097_SET_BEGIN_END_OP_QUADS;
@@ -3475,6 +3488,7 @@ static void derive_vk(const XgxState* st, const XgxLayout* layout) {
     s_d_spec_lights = 0;
     s_d_tg_posmtx = 0;
     vk->has_nrm = layout->off_nrm >= 0;
+    vk->rain = (uint8_t)s_rain_req;
     vk->nchans = (uint8_t)(st->nchans > 2 ? 2 : st->nchans);
     for (i = 0; i < 4; i++) {
         const XgxChan* c = &st->chan[i];
@@ -3619,6 +3633,7 @@ void xgx_draw(uint32_t prim, uint32_t count, const XgxLayout* layout, XgxState* 
 #if XHW_PMC
     if (xhw_ablate(XHW_AB_BACKEND)) {   /* the probe's window 4: no back end (black frames) */
         s_draw_force = XGX_DIRTY_ALL;    /* everything again once it ends */
+        s_rain_req = 0;
         s_draws++;                       /* still counted: [PERF]'s render per draw */
         s_pf_verts += count;
         return;
@@ -3647,7 +3662,7 @@ void xgx_draw(uint32_t prim, uint32_t count, const XgxLayout* layout, XgxState* 
         else if (prim != s_mrg_prim) s_st_nomrg[2]++;
         else if (memcmp(layout, &s_mrg_layout, sizeof *layout) != 0) s_st_nomrg[3]++;
     }
-    if (XGX_MERGE && !d && P == s_mrg_end && s_pb_mark == s_mrg_mark && prim == s_mrg_prim &&
+    if (XGX_MERGE && !d && !s_rain_req && P == s_mrg_end && s_pb_mark == s_mrg_mark && prim == s_mrg_prim &&
         memcmp(layout, &s_mrg_layout, sizeof *layout) == 0) {
         const uint8_t* base = draw_window(layout, count, &first);
         if (base == s_mrg_base) {   /* into the open primitive: its END back, the ranges, END again */
@@ -3692,7 +3707,7 @@ void xgx_draw(uint32_t prim, uint32_t count, const XgxLayout* layout, XgxState* 
     s_draw_force = 0;
     if (d & XGX_DIRTY_LIGHTS) s_lt_valid = 0;
     lay = (layout->off_nrm >= 0) | (layout->off_col[0] >= 0) << 1 | (layout->off_col[1] >= 0) << 2 |
-          (layout->off_mtx >= 0 ? (layout->tc_mtx & 0xFFu) << 3 : 0);
+          (layout->off_mtx >= 0 ? (layout->tc_mtx & 0xFFu) << 3 : 0) | (uint32_t)s_rain_req << 30;   /* the rain's program: a key of its own */
     /* Its inputs, without indirect stages: the TEV stages, swap tables and
      * Z texture (XGX_DIRTY_TEV), the texgens a bump pair uses (TEXGEN) and
      * which maps hold a texture. A draw that only rebinds textures (MAPS
@@ -3755,6 +3770,10 @@ void xgx_draw(uint32_t prim, uint32_t count, const XgxLayout* layout, XgxState* 
     if (d & (XGX_DIRTY_POSMTX | XGX_DIRTY_TEXMTX)) build_mtx(st);
     if (d & XGX_DIRTY_CHANS) build_chans(st);
     if (d & (XGX_DIRTY_LIGHTS | XGX_DIRTY_CHANS)) build_lights(st, s_d_spec_lights);
+    if (s_rain_req) {
+        vc_mark(VPC_RAIN, VPR_ROWS);
+        memcpy(s_vc[VPC_RAIN], s_rain_rows, sizeof s_rain_rows);
+    }
     emit_vc();
 
     if (d & DIRTY_FIXED) emit_fixed(st);
@@ -3786,9 +3805,9 @@ void xgx_draw(uint32_t prim, uint32_t count, const XgxLayout* layout, XgxState* 
     if (!skipped)
 #endif
     put1(NV097_SET_BEGIN_END, NV097_SET_BEGIN_END_OP_END);
-    if (prim == XGX_TRIANGLES || prim == XGX_QUADS || prim == XGX_LINES || prim == XGX_POINTS ||
-        (prim == XGX_TRISTRIP && count >= 3)) {
-        s_mrg_end = P;   /* the next draw may join it */
+    if (!s_rain_req && (prim == XGX_TRIANGLES || prim == XGX_QUADS || prim == XGX_LINES || prim == XGX_POINTS ||
+                        (prim == XGX_TRISTRIP && count >= 3))) {
+        s_mrg_end = P;   /* the next draw may join it (not a rain draw's: another program) */
         s_mrg_have = count;
         s_mrg_last = first + count - 1;
         s_mrg_mark = s_pb_mark;
@@ -3796,6 +3815,7 @@ void xgx_draw(uint32_t prim, uint32_t count, const XgxLayout* layout, XgxState* 
         s_mrg_base = s_attr_base;
         s_mrg_layout = *layout;
     }
+    s_rain_req = 0;
     if (P - s_pb_mark >= PB_KICK) {
         pb_close();
         s_mrg_end = NULL;

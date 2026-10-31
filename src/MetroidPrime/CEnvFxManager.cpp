@@ -71,9 +71,36 @@ CEnvFxManagerGrid::CEnvFxManagerGrid(const CVector2i& position, const CVector2i&
 , x4_position(position)
 , xc_extent(extent)
 , x14_block(false, gkReal32Max)
-, x1c_particles(initialParticles) {
+, x1c_particles(initialParticles)
+#ifdef TARGET_XBOX
+, xPortRainZ(0)
+#endif
+{
   x1c_particles.reserve(reserve);
+#ifdef TARGET_XBOX
+  PortRainNewGen();
+#endif
 }
+
+#ifdef TARGET_XBOX
+void CEnvFxManagerGrid::PortRainNewGen() {
+  static uint sGen = 0;
+  xPortRainGen = ++sGen;
+}
+
+// PORT_XBOX: the fall into the particles themselves, as UpdateRainParticles
+// sums it (for anything but the rain's draw to read them)
+void CEnvFxManagerGrid::PortRainFold() {
+  if (xPortRainZ == 0) {
+    return;
+  }
+  for (int j = x1c_particles.size() - 1; j >= 0; --j) {
+    x1c_particles[j].z = (xPortRainZ + x1c_particles[j].z) & 0x3fff;
+  }
+  xPortRainZ = 0;
+  PortRainNewGen();
+}
+#endif
 
 CEnvFxManager::CEnvFxManager()
 : x0_particleBounds(CVector3f(-63.5f, -63.5f, -63.5f), CVector3f(63.5f, 63.5f, 63.5f))
@@ -116,15 +143,40 @@ void CEnvFxManagerGrid::RenderRainParticles(const CTransform4f& camXf) {
   CGX::Begin(GX_LINES, GX_VTXFMT6, particleCount * 2);
   short zOffset = static_cast< short >(512.f * (1.f - absDot) + 256.f);
 #ifdef TARGET_XBOX
-  // PORT_XBOX: the same vertices in one call, not 4 a particle (port_xbox_gx.h)
+  // PORT_XBOX: the streaks from a vertex buffer kept on the GPU, their fall
+  // and clip done there (port_xbox_gx.h GXPortRainGrid; the fps plan's M5.1)
   if (particleCount > 0 &&
-      GXPortRainLines(&x1c_particles[0].x, static_cast< unsigned >(particleCount), zOffset, 10, 0)) {
+      GXPortRainGrid(this, xPortRainGen, &x1c_particles[0].x, static_cast< unsigned >(particleCount),
+                     xPortRainZ, zOffset, 10, 0)) {
     CGX::End();
     return;
+  }
+  // PORT_XBOX: else the same vertices in one call, not 4 a particle
+  // (port_xbox_gx.h), with the grid's fall added (xPortRainZ)
+  {
+    static const int kFallMax = 2048;
+    static short sFallen[kFallMax * 3];
+    const short* xyz = particleCount > 0 ? &x1c_particles[0].x : nullptr;
+    if (xPortRainZ != 0 && particleCount <= kFallMax) {
+      for (int i = 0; i < particleCount; ++i) {
+        sFallen[i * 3] = x1c_particles[i].x;
+        sFallen[i * 3 + 1] = x1c_particles[i].y;
+        sFallen[i * 3 + 2] = (xPortRainZ + x1c_particles[i].z) & 0x3fff;
+      }
+      xyz = sFallen;
+    }
+    if (particleCount > 0 && (xPortRainZ == 0 || particleCount <= kFallMax) &&
+        GXPortRainLines(xyz, static_cast< unsigned >(particleCount), zOffset, 10, 0)) {
+      CGX::End();
+      return;
+    }
   }
 #endif
   for (int i = 0; i < particleCount; ++i) {
     CVectorFixed8_8 p = x1c_particles[i];
+#ifdef TARGET_XBOX
+    p.z = (xPortRainZ + p.z) & 0x3fff;
+#endif
     GXPosition3s16(p.x, p.y, p.z);
     GXTexCoord1s16(10);
     GXPosition3s16(p.x, p.y, p.z + zOffset);
@@ -377,10 +429,21 @@ void CEnvFxManager::Update(float dt, CStateManager& mgr) {
   UpdateRainSounds(mgr);
   UpdateVisorSplash(mgr, dt, camXf);
 
+#ifdef TARGET_XBOX
+  // PORT_XBOX: anything but rain reads and moves the particles themselves
+  if (fxType != kEFX_Rain) {
+    for (int i = x50_grids.size() - 1; i >= 0; --i) {
+      x50_grids[i].PortRainFold();
+    }
+  }
+#endif
   if (fxType == kEFX_None) {
     for (int i = x50_grids.size() - 1; i >= 0; --i) {
       if (x50_grids[i].GetVisibility().first) {
         x50_grids[i].Particles() = rstl::vector< CVectorFixed8_8 >();
+#ifdef TARGET_XBOX
+        x50_grids[i].PortRainNewGen();
+#endif
       }
     }
   } else {
@@ -487,9 +550,18 @@ void CEnvFxManager::CreateNewParticles(EEnvFxType type) {
           int x = static_cast< int >(
               random.Range(0.f, static_cast< float >(x50_grids[i].xc_extent.GetX())));
           int z = static_cast< int >(256.f * zRand);
+#ifdef TARGET_XBOX
+          // PORT_XBOX: stored before the grid's fall (xPortRainZ, 0 but for rain)
+          z = (z - x50_grids[i].xPortRainZ) & 0x3fff;
+#endif
           particles.push_back(CVectorFixed8_8(x, y, z));
         }
       } else {
+#ifdef TARGET_XBOX
+        if (cellParticleCount < particles.x4_count) {
+          x50_grids[i].PortRainNewGen();   // PORT_XBOX: fewer: GXPortRainGrid writes them again
+        }
+#endif
         particles.resize(cellParticleCount);
       }
     }
@@ -646,14 +718,12 @@ void CEnvFxManager::UpdateRainParticles(const CVectorFixed8_8& zVec, const CVect
                                         float dt) {
   short deltaZ = zVec.GetZ() + real_to_fixed8_8(-40.f * dt * oopbtws.GetZ());
 #ifdef TARGET_XBOX
-  // PORT_XBOX: as UpdateSnowParticles
+  // PORT_XBOX: the same sum once a grid, not once a particle: every particle
+  // of a grid falls alike, and (a + b) & 0x3fff is a sum mod 0x4000, so the
+  // grid's total gives each particle's z when it is read (xPortRainZ)
   for (int i = x50_grids.size() - 1; i >= 0; --i) {
     if (x50_grids[i].GetVisibility().first) {
-      CVectorFixed8_8* const parts = x50_grids[i].x1c_particles.data();
-      for (int j = x50_grids[i].x1c_particles.size() - 1; j >= 0; --j) {
-        __builtin_prefetch(reinterpret_cast< const char* >(parts + j) - 128);
-        parts[j].z = (deltaZ + parts[j].z) & 0x3fff;
-      }
+      x50_grids[i].xPortRainZ = (deltaZ + x50_grids[i].xPortRainZ) & 0x3fff;
     }
   }
   return;
@@ -1106,6 +1176,9 @@ bool CEnvFxManager::PortRenderEnvFx(const CStateManager& mgr, EEnvFxType type, c
     const int count = particles.size();
     for (int j = 0; j < count; ++j) {
       CVectorFixed8_8 p = particles[j];
+#ifdef TARGET_XBOX
+      p.z = (grid.xPortRainZ + p.z) & 0x3fff; // PORT_XBOX: the grid's fall (0 but for rain)
+#endif
       if (sPortSnowSteps != nullptr) {
         // UpdateSnowParticles gives particle j force (first + size-1-j) & 0xff (as RenderSnowParticles).
         const CVectorFixed8_8& step = sPortSnowSteps[(sPortSnowFirst + (count - 1 - j)) & 0xff];
