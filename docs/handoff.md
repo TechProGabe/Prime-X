@@ -58,9 +58,12 @@ there is the limit). No audio fault in 21 chained scenes (hw11, hw12).
 ## Next session, in order
 
 0. **Round hw16, waiting for the user** (no hardware tests until they say;
-   2026-10-30 evening). Staged in `tools/xbox/scenarios/hw16` and
-   `C:\xemu\hw\prime\stage-hw16` but NOT uploaded; rebuild before the round,
-   since more landed after it was staged, all checked in xemu only:
+   the user wants one big round when they wake). Eleven scenes on three
+   profiler images (`tools/xbox/scenarios/hw16/README.md`): P (ThinLTO +
+   PGO) r16a-g, F (full LTO) r16h-i, K (16384-word busy kick) r16j-k.
+   `C:\xemu\hw\prime\stage-hw16` holds prof/, prof-full/, prof-kick/, ship/
+   and console/ (the upload tree; each scene folder has its image's XBE),
+   NOT uploaded. Since hw15, all checked in xemu only:
    - a room's geometry as static memory (no content checks on its lists),
    - the list cache's chains in compact arrays,
    - texture binds remembered per GXTexObj (`XGX_TEX_MEMO`, verify mode),
@@ -84,7 +87,7 @@ there is the limit). No audio fault in 21 chained scenes (hw11, hw12).
      the GPU at each EFB copy and the present, `[GPUT]` lines; frame
      rates are not valid with it on), for M5.6's first step,
    - a cached list's draws counted in [PERF]'s "dlist" (compare dlist + draw),
-   - the PGO profile retrained on this code (98d6793).
+   - the PGO profile retrained on this code (after 9fe4c06: GPU rain and the particles included).
    xemu's room sweep at 588573a (all of the above): 14 rooms, 28 shots, no
    FATAL/THROW, every shot drawn right (snow in the Ice Ruins, rain at the
    Landing Site and the temple, lava, the crater's lit debris).
