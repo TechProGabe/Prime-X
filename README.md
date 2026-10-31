@@ -119,7 +119,7 @@ nxdk and LLVM 21, natively on Windows with MSYS2 (`tools/xbox/msys/build.sh`) or
 
 This port stands on a lot of other people's work:
 
-- **[PrimeDecomp/prime](https://github.com/PrimeDecomp/prime)**, the decompilation. The whole game, as C++. Without it there is no port.
+- **[PrimeDecomp/prime](https://github.com/PrimeDecomp/prime)**, the decompilation. The whole game, as C++. Without it there is no port. The repo isn't public on GitHub anymore, so that link gives a 404 (the PrimeDecomp organization and its other projects are still there). Its progress page is still up on [decomp.dev](https://decomp.dev/PrimeDecomp/prime), and MetroidPrimePort carries the decompiled code, which is where Prime-X takes it from.
 - **[MetroidPrimePort](https://github.com/Odrannnn/MetroidPrimePort)**, the native port that got the decomp running on little-endian machines.
 - **[encounter/aurora](https://github.com/encounter/aurora)** for the Dolphin SDK headers, and **MusyX** for the audio engine.
 - **[nxdk](https://github.com/XboxDev/nxdk)**, the open Xbox dev kit everything runs on, **[xemu](https://xemu.app)**, which does a lot of the testing, and **[xdvdfs](https://github.com/antangelo/xdvdfs)**, which packs the discs.
