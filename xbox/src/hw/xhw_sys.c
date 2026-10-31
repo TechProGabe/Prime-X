@@ -490,22 +490,42 @@ void xhw_vlog_raw(const char* fmt, va_list ap) {
 }
 
 /* Round hw18: three chained launches (red at 480, gold at 720p) crashed in
- * pb_init on that store, an access violation, the page not mapped; never
- * before in any round. A page-0 allocation (lowest 0, highest 0xFFF) maps
- * it there when it is free, and it stays ours. Logged either way: the PTE
- * through the kernel's self-map at 0xC0000000. */
+ * pb_init on that store, an access violation; never before in any round.
+ * Round hw18c (this guard logging): each time the scene before was Lava
+ * Lake, and page 0 was mapped but read-only and uncached (PTE 655 or 659;
+ * 663 every other boot), left so by the launch. So: a page 0 that isn't
+ * mapped writable is claimed if it is free (a contiguous allocation with
+ * highest address 0xFFF maps it there, ours from then on); if it is still
+ * read-only, its PTE gets the write bit (titles run in ring 0; the page
+ * tables are mapped at 0xC0000000) and the TLB entry is flushed. Logged
+ * whenever it wasn't the usual. */
 void xhw_page0_guard(const char* when) {
-    const uint32_t* pte = (const uint32_t*)0xC0200000u;   /* 0xC0000000 + (0x80000000 >> 12) * 4 */
-    const uint32_t before = MmIsAddressValid((PVOID)pte) ? *pte : 0xFFFFFFFFu;
-    void* got;
-    if (MmIsAddressValid((PVOID)0x80000000u)) {
+    volatile uint32_t* pte = (volatile uint32_t*)0xC0200000u;   /* 0xC0000000 + (0x80000000 >> 12) * 4 */
+    const int pte_ok = MmIsAddressValid((PVOID)pte);
+    uint32_t before;
+#if XHW_TEST_BUILD
+    /* env PX_PAGE0_RO=1: page 0 read-only first, as hw18c's launches after
+     * Lava Lake left it, so xemu runs the repair */
+    if (pte_ok && when[0] == 'p' && getenv("PX_PAGE0_RO")) {
+        *pte &= ~2u;
+        __asm__ volatile("invlpg (%0)" : : "r"(0x80000000u) : "memory");
+    }
+#endif
+    before = pte_ok ? *pte : 0xFFFFFFFFu;
+    uint32_t after;
+    void* got = NULL;
+    if (pte_ok && (before & 3u) == 3u) {   /* present and writable */
         if (when[0] == 'b') xhw_logf("[MEM] page 0 at 0x80000000 mapped (%s, pte %08x)", when, (unsigned)before);
         return;
     }
     got = MmAllocateContiguousMemoryEx(4096, 0, 0xFFF, 0, PAGE_READWRITE);
-    xhw_logf("[MEM] page 0 at 0x80000000 not mapped (%s, pte %08x): %s", when, (unsigned)before,
-             got == (void*)0x80000000u && MmIsAddressValid((PVOID)0x80000000u) ? "claimed, mapped now"
-             : got ? "claimed elsewhere?" : "in use elsewhere, not claimed");
+    after = pte_ok ? *pte : 0xFFFFFFFFu;
+    if (pte_ok && (after & 1u) && !(after & 2u)) {
+        *pte = after | 2u;
+        __asm__ volatile("invlpg (%0)" : : "r"(0x80000000u) : "memory");
+    }
+    xhw_logf("[MEM] page 0 at 0x80000000 %s (%s, pte %08x): %s, pte now %08x", (before & 1u) ? "read-only" : "not mapped",
+             when, (unsigned)before, got ? "claimed" : "not claimed", pte_ok ? (unsigned)*pte : 0xFFFFFFFFu);
 }
 
 /* ======================================================================
