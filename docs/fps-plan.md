@@ -33,9 +33,21 @@ The user's policy for this plan (asked 2026-10-30):
 | M2.1 RMS and trace | the RMS is gone from the Xbox build |
 | M2.2 the mix in 32 bits | built, bit-exact (`px_mixer.h`, `test_mixer.py`): the ramps and the resampler's taps. Not float/SSE: the bounds-checked integer path is exact and needs no new buffers |
 | M2.3 bus skipping | already there (zero ramps return at once) |
+| M2 resampler loop | built, bit-exact: `pxMixResample4`, the state in locals (after hw15) |
+| M3.1 draw merging | built (`XGX_MERGE`); joins few (most unchanged draws follow another primitive) |
+| M3.2 konst fold | not done: the minimap's draws alternate fill and outline primitives, so folding the konst colour would not let them merge; ~0.3 ms |
+| M3.3 static promises | lists: built (a room's geometry is static memory, `XGX_STATIC_LISTS`); textures: not done (revalidation ~0.1 ms after the memo) |
 | M3.4 lazy `GXSetArray` | built (same array: no close, no re-sign) |
-| M3.5 pushbuffer kick | built, adaptive (32768 words while the GPU keeps up) |
-| M5 rain clip | built: the batch's box tested once (`XGX_LINE_BOX`) |
+| M3.5 pushbuffer kick | built, adaptive (32768 words while the GPU keeps up); 16384 for the busy case is an A/B candidate |
+| M3.6-3.9 | `xhw_time_ns`: its write-only callers removed instead; transcendentals: ~0.5%, not done; pbkit -O1, GetSegIdFromString: small, not done |
+| back end, after hw13's profile | texture-only draws (`XGX_MAPS_FAST`, hw15: Main Plaza +13%), compact list-cache chains, texture memo (`XGX_TEX_MEMO`), covering vertex programs (`XGX_VP_COVER`), the list draws' [PERF] bracket |
+| M4 GPU skinning | built; Main Plaza's lists in the texture pool when the vertex pool is full (hw14) |
+| M5.1 rain | the batch's box tested once (`XGX_LINE_BOX`), the per-line test in SSE (`XGX_LINE_SSE`); GPU rain waits for the user (near-plane streaks) |
+| M5.2 snow | drawn between ticks in one call too (`GXPortSnowQuads` with stepped copies) |
+| M5.3 particle quads | built: `GXPortVertices3fC2f` for the textured quads; the basic (untextured) ones keep their calls |
+| M5.4 particles at the tick period | dropped: frame-keyed elements, a visible rewrite |
+| M6a recorded pushbuffers | JUMP/CALL proven on red (hw15); its shape is the user's call (M6a below) |
+| compiler | `-O3` (hw13), full LTO ready as an A/B (`PX_LTO_MODE=full`), PGO retrained (98d6793) |
 
 ### Round hw11 (red, 2026-10-30): the numbers
 
