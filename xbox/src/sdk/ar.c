@@ -94,7 +94,11 @@ static void aram_map(void) {
     {
         char path[96];
         snprintf(path, sizeof path, "%saram.swp", xhw_save_dir());
-        s_swap = xhw_file_create_rw(path);
+        /* kept from boot to boot at 8 MB (128 slots; gold's longest 720p
+         * play used 122): created empty every boot before, each first
+         * swap-out of a slot grew the file, and on gold's nearly full
+         * drive a 1 MB reclaim (16 slots) stalled the game ~1.1-1.7 s */
+        s_swap = xhw_file_open_rw_sized(path, 8u * 1024 * 1024);
         if (!s_swap) xhw_logf("[AR] no swap file (%s)", path);
     }
     xhw_mem_add_reclaim(aram_reclaim, 0);

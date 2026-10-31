@@ -101,7 +101,10 @@ over unless a line here says otherwise.
   builds: `env PX_IMG_DELAY_MS=n` (each image read waits n ms), `env
   PX_LOG_DELAY_MS=n` (each boot.log write), `env PX_ARQ_ASYNC=1`. The
   first load from the menu into a world waits for its reads, as on the
-  GameCube.
+  GameCube. The ARAM swap file (`aram.swp`) is kept from boot to boot at
+  8 MB (`xhw_file_open_rw_sized`), no longer created empty each boot:
+  round hw18b's gold stalled ~1.1-1.7 s at each 1 MB reclaim, every
+  slot's first swap-out growing the file on its nearly full partition.
 - **No boot.log in release builds unless asked** (2026-10-31, the user:
   "It's possible logging is adding to hdd problems, let's make sure on
   official release logging is on port settings with default off"):

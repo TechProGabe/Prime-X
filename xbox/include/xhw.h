@@ -225,6 +225,11 @@ int xhw_file_stamp(void* file, uint64_t* size, uint64_t* written);
  * xhw_file_write returns 1 if all `len` bytes were written. */
 void* xhw_file_create_rw(const char* path);
 int xhw_file_write(void* file, uint32_t off, const void* src, uint32_t len);
+/* Read-write file kept as it was (created if missing) and grown to at
+ * least min_bytes now, so later writes inside that never extend it (on a
+ * nearly full FATX partition growing a file is the slow part). NULL if it
+ * can't be opened; a size it can't reach is left as it is. */
+void* xhw_file_open_rw_sized(const char* path, uint32_t min_bytes);
 
 /* ---- controllers ---- */
 typedef struct xhw_pad {
