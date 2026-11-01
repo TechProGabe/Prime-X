@@ -170,3 +170,7 @@ void xhw_video_fallback_480(void) {
 }
 
 void xhw_wait_vblank(void) { XVideoWaitForVBlank(); }
+
+/* the refresh of the mode nxdk set (50 on a PAL console at 50 Hz, else
+ * 60; 0 before a mode is set), for the clock's display check (xhw_sys.c) */
+int xhw_video_refresh_hz(void) { return XVideoGetMode().refresh; }

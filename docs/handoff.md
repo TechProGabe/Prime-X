@@ -51,6 +51,43 @@ image adds `XBOX_CFLAGS="-DXHW_AUTOPAD=1 -DXHW_PROF=1"`. Console rounds
 and their files: `C:\xemu\hw\prime\ROUNDS.md`; older sessions and rounds
 (hw1-hw10, and hw16-hw18d's notes): `docs/history.md`.
 
+## Session 2026-11-01: the beta's first three bug reports
+
+Fixed on `dev` (built with `-DXHW_AUTOPAD=1`, checked in xemu; no console
+round):
+
+1. **GitHub #1, "Swapping jump to A"**: a Buttons row only set its own
+   button, so A on Jump left X on Jump too and nothing on Fire (GameCube
+   A, which confirms in every menu: "unable to select anything"). Now the
+   button that had the action takes this one's (a swap), Fire can't
+   leave the last button that has it (`port_xbox_options.cpp` `Step`),
+   and in any menu Xbox A confirms as B backs whatever the layout
+   (`pad.c`, the menu flag).
+2. **The no-disc card's timeout** (a tester: don't auto-reboot, the card is
+   the guide): every error card stays until a button is pressed, no
+   timeout (`xhw_main.c` `wait_button_then_dashboard`).
+3. **Overclocked consoles run in slow motion** (two testers, Cerbios
+   overclock settings; the menu "severely throttled"; a tester's patched
+   XBE ran right, patch unknown). No log from such a console, so the cause
+   is inferred: the pacer waits by the clock for 60 Hz, and only a clock
+   that runs slow throttles the menu. Two guards, both in `xhw_sys.c` and
+   described in `docs/boot-safety.md`: `xhw_clock_display_frame` counts
+   VBlank against the clock over the first 3 s of frames and scales the
+   clock to the display when the ACPI timer is off (an FSB overclock can
+   move the chipset's reference); `rdtsc` is timed after the code check
+   and after that window, and if it traps (a patcher's int 2Eh) the clock
+   reads the ACPI timer on every call and the interrupt lock uses the
+   kernel's 1 ms tick. `[CLOCK]` lines in boot.log, release builds too.
+   In xemu: `scenarios/clock` (`PX_CLOCK_SKEW=120`) logged the display at
+   49.959 Hz by the clock, scaled time by 0.8327 (net 0.99918) and agreed
+   at 60.291 Hz in the next window; the plain title run agreed at 59.922.
+   **Next: get a boot.log from an overclocked console** (Port Options >
+   System > Log File on, or a test build), and ask the tester what the
+   XBE patch was: the `[CLOCK]` lines say whether the timer moved, rdtsc
+   traps, or neither (then look elsewhere: the ACPI I/O read's cost, the
+   kernel tick, the disc). xemu can't overclock; `env PX_CLOCK_SKEW=120`
+   in a scenario fakes a fast timer to exercise the correction.
+
 ## Next session, in order
 
 0. **v1.0 beta is out** (2026-10-31): RC1c passed the user's free play;

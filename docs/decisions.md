@@ -323,6 +323,38 @@ combiners; ThinLTO + PGO for releases.
   (`tools/xbox/eeprom_video.py`, from Melee-X); `env PX_VIDEO=720` in a
   scenario then runs 1280x720.
 
+- **Buttons rows swap** (2026-11-01, GitHub #1): a Buttons row that takes
+  an action another button has gives that button its own, so A set to
+  Jump makes X Fire. Before, the row only set its own button: A on Jump
+  left X on Jump too and no button on Fire, which is also what confirms
+  in every menu, so Options couldn't be left ("unable to select anything").
+  Fire can't leave the last button that has it: an action no other button
+  holds (None, Lock, Aim, a visor) is skipped while that is so
+  (`port_xbox_options.cpp` `Step`). And in any menu the Xbox A button
+  confirms as B backs, whatever they do in play (`pad.c`, the menu flag
+  that already forced B): no layout can lock a menu.
+- **Error cards wait for a button** (2026-11-01): the no-disc card and
+  every `xhw_fatal` stay on screen until a button is pressed (after a
+  release), with no timeout; before, 30 s (no disc) or 15 s, then the
+  dashboard. A tester: don't auto-reboot, "everyone is trained to reboot
+  manually", and the card is the guide to where the image goes. The
+  footer says "Press any button to return to the dashboard."
+- **The clock against the display, and rdtsc that traps** (2026-11-01):
+  `docs/boot-safety.md` "Upgraded and overclocked CPUs". Two testers'
+  Cerbios-overclocked consoles ran the beta in slow motion with the menu
+  throttled; one tester's patched XBE ran right. The pacer waits by the
+  clock, so a clock that runs slow is the one thing that throttles the
+  menu. Now `xhw_clock_display_frame` counts VBlank against the clock over
+  the first 3 s of frames and scales the clock to the display when the
+  ACPI timer is more than 1.5% off its mode's refresh (an FSB overclock
+  can move the chipset's reference; the GPU's crystal is its own), and
+  `rdtsc` is timed after the code check and after that window: over
+  250 ns it traps (a patcher's int 2Eh, put back or not), and the clock
+  then reads the ACPI timer on every call with the interrupt lock on the
+  kernel's 1 ms tick. `[CLOCK]` lines in boot.log, release builds too.
+  Unproven on an overclocked console (none here); the lines from one
+  will say which it was.
+
 Not carried over: `disc_lower` and the `DISC_STRUCT` lowering. Melee keeps
 disc data big-endian in memory and melee-pc marks those structs; Prime reads
 almost everything through `CInputStream`, which MetroidPrimePort makes read

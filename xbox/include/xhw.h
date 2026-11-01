@@ -36,9 +36,17 @@ void xhw_error_screen(const char* title, const char* const* lines);
 void xhw_choice_screen(const char* title, const char* const* lines);   /* no dashboard line: the caller asks */
 
 /* ---- time ---- */
-uint64_t xhw_ticks(void);            /* rdtsc */
+uint64_t xhw_ticks(void);            /* the kernel's counter (the ACPI timer) */
 uint64_t xhw_ticks_per_sec(void);
 uint64_t xhw_time_ns(void);          /* monotonic */
+uint32_t xhw_tick_ms(void);          /* the kernel's 1 ms tick count */
+/* 0 once rdtsc was found to trap (a BIOS patcher rewrote it): callers that
+ * time themselves by the TSC use xhw_tick_ms instead */
+int xhw_tsc_usable(void);
+/* Once a presented frame (the frame boundary): counts VBlank against the
+ * clock over the first seconds and scales the clock to the display when
+ * the ACPI timer is off its rate (docs/boot-safety.md). real_time 0: skip. */
+void xhw_clock_display_frame(int real_time);
 /* Wall clock: seconds since 2000-01-01 00:00:00 local time, plus the
  * sub-second part in nanoseconds (the GameCube RTC epoch). */
 int64_t xhw_wallclock_2000(uint32_t* ns_out);

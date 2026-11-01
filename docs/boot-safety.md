@@ -100,14 +100,45 @@ break games in three ways. Prime-X handles each:
    Where the TSC is still used for cheap intervals (the interrupt lock's
    delivery throttle, `os.c` `DELIVERY_TSC`; the profiler), its rate is
    measured at boot against the ACPI timer and the constants are scaled by
-   it. The ACPI timer is cross-checked against VBlank over the first
-   seconds, in case an FSB overclock moved it; if they disagree by more than
-   1%, VBlank wins and `boot.log` says so.
+   it.
+   **The ACPI timer against the display** (2026-11-01, after the first
+   overclock reports; `xhw_clock_display_frame`, called once a frame from
+   the frame boundary): the timer is the chipset's reference, which an
+   FSB overclock (Cerbios's overclock settings, XBOverclock) can move with
+   the CPU, while VBlank comes from the GPU's own 16.667 MHz crystal. Over
+   the first 3 s of frames the vblanks (pbkit's count) are counted against
+   the clock and compared with the mode's refresh (nxdk's 50 or 60). Within
+   1.5%: `[CLOCK] display 59.940 Hz by the clock, mode 60 Hz: agree`. Off
+   by more (and by less than 2.5x): the clock is scaled to the display from
+   that moment on (`xhw_time_ns` and everything on it: game time, the
+   pacer, the TSC's ns per tick), once, continuous at the switch, and a
+   second window checks it. A window with the GPU interrupt masked (the
+   count stalls) starts over. Test builds: `env PX_CLOCK_SKEW=120` runs the
+   clock 20% fast so xemu exercises the correction.
+   **rdtsc that traps**: after the code check, and again when the display
+   check ends, 2000 `rdtsc` are timed against the timer; over 250 ns each
+   (a trap is a microsecond; the console's rdtsc is ~40 ns) means a
+   patcher rewrote them after all (or again), and from then on
+   `xhw_time_ns` reads the ACPI timer on every call (~3% of the CPU, as
+   before round hw5) and the interrupt lock's throttle uses the kernel's
+   1 ms tick (`xhw_tsc_usable`), instead of trapping thousands of times a
+   frame.
 3. **Instructions the upgrade CPU has but the stock one doesn't (and the
    reverse).** The build targets `-march=pentium3` (SSE1, no SSE2) and
    never picks a code path by CPUID, so every console runs the same code.
 
-`boot.log` gets a `[CPU]` line: CPUID name and family, the measured TSC
-rate in MHz, the ACPI/VBlank agreement, and how many bytes the code check
-put back. A faster CPU only means more frames: no frame cap besides the
-display's refresh.
+`boot.log` gets `[CLOCK]` lines (release builds too, when Log File is
+on): at boot, after the code check, the kernel's counter rate, the TSC's
+MHz measured against it, what one `rdtsc` costs, and the kernel's 1 ms
+tick over 250 ms of timer time; then the display check's verdict. Test
+builds add `[CPU]` (CPUID, control registers) and `[CAL]`. A faster CPU
+only means more frames: no frame cap besides the display's refresh.
+
+What an overclocked console does is not yet known from a log (2026-11-01):
+two testers' Cerbios-overclocked consoles ran the first beta in slow
+motion, the main menu worst ("severe throttling"), and a tester's patched
+XBE ran right (what the patch did is not known). The pacer waits by the
+clock for 60 Hz, so a clock that runs slow throttles the menu (the one
+place frames are cheap enough to wait) and fixed-step ticks go slow
+motion; the display check and the trap check cover the two ways the clock
+can be wrong. The `[CLOCK]` lines from such a console settle it.

@@ -82,6 +82,12 @@ Open:
   logs at each scene's load).
 - Inside the gunship: 12-14 fps on red in hw5; the dynamic-list budget is
   doubled since, not measured.
+- Overclocked consoles (2026-11-01, two testers, Cerbios overclock
+  settings): the v1.0 beta runs in slow motion, the main menu throttled
+  worst; one tester's patched XBE ran right (the patch unknown). On `dev`
+  since: the clock is checked against VBlank and scaled to it, and rdtsc
+  traps are detected and avoided (`docs/boot-safety.md`); unproven on such
+  a console, the `[CLOCK]` lines from one are the next step.
 
 Fixed on hardware since hw10: fights 17-18 -> 30-32 fps (Auto, GPU
 skinning; hw12); the pause screen 14-17 -> 58-60 (hw12); Main Plaza at

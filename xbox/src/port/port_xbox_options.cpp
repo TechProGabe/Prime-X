@@ -132,7 +132,7 @@ const wchar_t* Title(int option) {
 
 const wchar_t* Description(int option) {
   if (IsBind(option)) {
-    return L"What this button does. Left and right change it.";
+    return L"What this button does. Taking another button's action swaps the two.";
   }
   switch (option) {
   case kXO_Widescreen:
@@ -176,18 +176,49 @@ const wchar_t* ListLabel(int option, int offset) {
   return kActions[((i + offset) % kActionCount + kActionCount) % kActionCount].name;
 }
 
+// the first Buttons row other than b that has the action gc; -1 if none
+static int RowWith(uint16_t gc, int b) {
+  if (gc == 0) {
+    return -1;
+  }
+  for (int j = 0; j <= kXO_BindLast - kXO_BindFirst; ++j) {
+    if (j != b && g_xsdk_settings.port[0].bind[j].gc == gc) {
+      return j;
+    }
+  }
+  return -1;
+}
+
+// A row takes the next action in the list; the button that had that action
+// takes this one's, so the two swap and no action is lost or doubled (GitHub
+// #1: A set to Jump left X on Jump too, and nothing on Fire, which is also
+// what confirms in every menu, so Options couldn't be left). Fire stays on
+// some button: an action no other button has (None, Lock, Aim, a visor) is
+// skipped while this button is the last with Fire.
 void Step(int option, int delta) {
   if (!IsBind(option)) {
     return;
   }
   const int b = option - kXO_BindFirst;
-  const int i = ActionIndex(g_xsdk_settings.port[0].bind[b].gc);
-  const uint16_t gc = kActions[((i + delta) % kActionCount + kActionCount) % kActionCount].gc;
-  // every port the same: Prime is one player
-  for (int p = 0; p < 4; ++p) {
-    g_xsdk_settings.port[p].bind[b].gc = gc;
+  const uint16_t old = g_xsdk_settings.port[0].bind[b].gc;
+  int i = ActionIndex(old);
+  for (int tries = 1; tries < kActionCount; ++tries) {
+    i = ((i + delta) % kActionCount + kActionCount) % kActionCount;
+    const uint16_t gc = kActions[i].gc;
+    const int other = RowWith(gc, b);
+    if (old == PAD_BUTTON_A && gc != PAD_BUTTON_A && other < 0 && RowWith(PAD_BUTTON_A, b) < 0) {
+      continue;
+    }
+    // every port the same: Prime is one player
+    for (int p = 0; p < 4; ++p) {
+      g_xsdk_settings.port[p].bind[b].gc = gc;
+      if (other >= 0) {
+        g_xsdk_settings.port[p].bind[other].gc = old;
+      }
+    }
+    sDirty = true;
+    return;
   }
-  sDirty = true;
 }
 
 // The rows that were sliders are three choices: the title screen's frame

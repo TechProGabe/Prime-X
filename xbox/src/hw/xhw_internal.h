@@ -66,6 +66,9 @@ void xhw_overlay_draw(void* fb, int w, int h, int bpp, int pitch, const struct x
 /* xhw_watchdog.c: hang dumper (hang.log + screen) */
 void xhw_watchdog_start(void);
 void xhw_code_repair(void);           /* boot: .text bytes a BIOS patcher changed put back (xhw_code_repair.c) */
+void xhw_clock_boot(void);            /* boot, after it: [CLOCK] rates, the rdtsc trap check (xhw_sys.c) */
+uint32_t xhw_vblank_count(int* irq_on);   /* nv2a.c: pbkit's vblank count; *irq_on 0 while the GPU interrupt is masked */
+int xhw_video_refresh_hz(void);       /* xhw_video.c: the set mode's refresh, 50 or 60 (0: none yet) */
 void xhw_prof_set_game_thread(void);   /* call on the game thread */
 void* xhw_game_thread(void);           /* its PKTHREAD, NULL before xhw_prof_set_game_thread */
 /* Where a thread that is not running was interrupted: the EIP of the
