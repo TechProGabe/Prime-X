@@ -444,7 +444,7 @@ static void draw_rows(const xhw_menu_view* v) {
 #define LH 200
 #define LX0 (CX - LW / 2)
 #define LY0 (CY - 80)
-#define BOX_W 112
+#define BOX_W 122   /* "Morph Ball" and the changed dot */
 #define BOX_H 18
 #define COL_L 22
 #define COL_R (CW - 22 - BOX_W)
