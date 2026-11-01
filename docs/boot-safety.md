@@ -130,15 +130,41 @@ break games in three ways. Prime-X handles each:
 `boot.log` gets `[CLOCK]` lines (release builds too, when Log File is
 on): at boot, after the code check, the kernel's counter rate, the TSC's
 MHz measured against it, what one `rdtsc` costs, and the kernel's 1 ms
-tick over 250 ms of timer time; then the display check's verdict. Test
-builds add `[CPU]` (CPUID, control registers) and `[CAL]`. A faster CPU
-only means more frames: no frame cap besides the display's refresh.
+tick over 250 ms of timer time; then the display check's verdict. The
+last 8 are kept and logged again ("again: logged before the log was on")
+when Log File is turned on mid-session, since a release build drops the
+boot's lines once settings.ini says the log is off. `-DXHW_LOG_ALWAYS=1`
+builds a release whose log is on from boot whatever the setting (a
+tester's diagnostic build, 2026-11-01). Test builds add `[CPU]` (CPUID,
+control registers) and `[CAL]`. A faster CPU only means more frames: no
+frame cap besides the display's refresh.
 
 What an overclocked console does is not yet known from a log (2026-11-01):
 two testers' Cerbios-overclocked consoles ran the first beta in slow
 motion, the main menu worst ("severe throttling"), and a tester's patched
-XBE ran right (what the patch did is not known). The pacer waits by the
-clock for 60 Hz, so a clock that runs slow throttles the menu (the one
-place frames are cheap enough to wait) and fixed-step ticks go slow
-motion; the display check and the trap check cover the two ways the clock
-can be wrong. The `[CLOCK]` lines from such a console settle it.
+XBE ran right. The pacer waits by the clock for 60 Hz, so a clock that
+runs slow throttles the menu (the one place frames are cheap enough to
+wait) and fixed-step ticks go slow motion; the display check and the trap
+check cover the two ways the clock can be wrong. The `[CLOCK]` lines from
+such a console settle it.
+
+What is known (2026-11-01, later): the tester's matrix is "frequency
+patch + AdvCPUSupport off: great; no patch + AdvCPUSupport on:
+slideshow" (the other two cells untested). cerbios.ini's comment on
+`AdvCPUSupport` is "Enables Runtime XBE Patching For CPU-Upgraded Or
+Overclocked Consoles": the rdtsc rewriter, the trap branch above, and the
+code check is meant to undo it, so either the undo doesn't hold on that
+console or the patcher does more than rewrite `0f 31`. The "frequency
+patch" is most likely the scene's XBE patch of the hardcoded 733333333
+(`QueryPerformanceFrequency` in XDK games; Prime-X's image has one, nxdk's
+`profiling.c` default, at 0x5f1928 of the ship build). How the overclock
+is made: nxdk's `tsc_freq_init` reads the FSB from the NV2A's CPU PLL
+(PCI 0:0x60 register 0x6C: 16.667 MHz crystal / divider x multiplier,
+times the CPU's multiplier from MSR 0x2A), and Cerbios's overclock
+settings are `CPUMPLLCoeff`/`NVPLLCoeff`, i.e. that PLL: the FSB comes
+from the GPU's crystal, and the ACPI timer (in the MCPX) is probably not
+moved by it, so the display check should "agree" there and the trap
+branch is the one to expect. nxdk's `QueryPerformanceCounter` is rdtsc
+with that computed frequency (733333333 when the CPU's multiplier isn't
+in its table), and libc++'s `steady_clock` is built on it: in the game
+only `main.cpp`'s tick budget and `MP_LOG_*` diagnostics use it.

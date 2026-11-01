@@ -104,8 +104,12 @@ static int e_has_room(void) {
 unsigned xhw_log_fallback(void) { return s_log_fallback; }
 
 /* boot.log at all: 1 yes, 0 no, -1 not known yet (release builds until
- * settings.ini is read: the lines wait in the queue) */
-static int s_log_mode = XHW_TEST_BUILD ? 1 : -1;
+ * settings.ini is read: the lines wait in the queue). -DXHW_LOG_ALWAYS=1:
+ * a release build that logs from boot whatever the setting (a tester's
+ * diagnostic build; the overclock test of 2026-11-01 sent two logs that
+ * began mid-session, the setting not having survived the restart). */
+static int s_log_mode = (XHW_TEST_BUILD || XHW_LOG_ALWAYS) ? 1 : -1;
+static void clock_replay(void);   /* the [CLOCK] lines so far, again (below) */
 
 void xhw_log_open_file(void) {
     char path[MAX_PATH], prev[MAX_PATH];
@@ -384,7 +388,7 @@ int xhw_log_try(const char* line) { return log_try(line, 1); }
 int xhw_log_try_file(const char* text) { return log_try(text, 0); }
 
 void xhw_log_set_file(int on) {
-    if (XHW_TEST_BUILD) return;   /* always on: the rounds read it */
+    if (XHW_TEST_BUILD || XHW_LOG_ALWAYS) return;   /* always on: the rounds read it */
     log_lock_init();
     EnterCriticalSection(&s_logf_cs);
     if (on) {
@@ -406,6 +410,7 @@ void xhw_log_set_file(int on) {
     }
     LeaveCriticalSection(&s_logf_cs);
     xhw_logf("[LOG] boot.log %s (Port Options > System > Log File)", on ? "on" : "off");
+    if (on) clock_replay();   /* turned on mid-session: the boot's clock lines were dropped with the queue */
     if (s_logq_thread) xhw_event_signal(s_logq_event);
 }
 
@@ -534,6 +539,29 @@ void xhw_page0_guard(const char* when) {
 uint64_t xhw_ticks(void) { return KeQueryPerformanceCounter(); }
 uint64_t xhw_ticks_per_sec(void) { return KeQueryPerformanceFrequency(); }
 uint32_t xhw_tick_ms(void) { return (uint32_t)GetTickCount(); }
+
+/* The [CLOCK] lines are kept (the last 8) and logged again when Log File is
+ * turned on mid-session (xhw_log_set_file): a release build drops the
+ * boot's lines with the queue once settings.ini says the log is off, and
+ * these are the ones an overclock report needs. */
+#define CLOCK_LINES 8
+static char s_clock_lines[CLOCK_LINES][200];
+static unsigned s_clock_n;
+
+static void clock_logf(const char* fmt, ...) {
+    char* line = s_clock_lines[s_clock_n % CLOCK_LINES];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(line, sizeof s_clock_lines[0], fmt, ap);
+    va_end(ap);
+    s_clock_n++;
+    xhw_log(line);
+}
+
+static void clock_replay(void) {
+    unsigned i, from = s_clock_n > CLOCK_LINES ? s_clock_n - CLOCK_LINES : 0;
+    for (i = from; i < s_clock_n; i++) xhw_logf("%s (again: logged before the log was on)", s_clock_lines[i % CLOCK_LINES]);
+}
 
 /* the ACPI timer as the kernel reads it, in ns at the rate the kernel says */
 static uint64_t kernel_ns(void) {
@@ -696,7 +724,7 @@ static void tsc_ban(unsigned cost) {
     if (s_tsc_banned || xhw_running_in_xemu()) return;   /* xemu's rdtsc is slow, not patched */
     s_tsc_banned = 1;
     s_tsc_ready = 0;
-    xhw_logf("[CLOCK] rdtsc costs %u ns: trapped (a BIOS patcher's int 2Eh?); the time-stamp counter isn't used "
+    clock_logf("[CLOCK] rdtsc costs %u ns: trapped (a BIOS patcher's int 2Eh?); the time-stamp counter isn't used "
              "from here on, the ACPI timer is read on every call",
              cost);
 }
@@ -735,10 +763,29 @@ void xhw_clock_boot(void) {
     ms1 = xhw_tick_ms();
     n1 = kernel_ns();
     mhz = (unsigned)(s_tsc_hz / 10000);   /* hundredths of a MHz */
-    xhw_logf("[CLOCK] acpi timer %lu Hz (the kernel's clock), tsc %u.%02u MHz against it, rdtsc %u ns, kernel tick "
+    clock_logf("[CLOCK] acpi timer %lu Hz (the kernel's clock), tsc %u.%02u MHz against it, rdtsc %u ns, kernel tick "
              "%lu ms in %lu ms of acpi time",
              (unsigned long)KeQueryPerformanceFrequency(), mhz / 100, mhz % 100, cost, (unsigned long)(ms1 - ms0),
              (unsigned long)((n1 - n0) / 1000000ull));
+    {
+        /* the clocks as set (an overclock is these): the FSB from the NV2A's
+         * CPU PLL (PCI 0:0x60 register 0x6C: 16.667 MHz / divider x
+         * multiplier, as nxdk's tsc_freq_init reads it), the GPU core from
+         * its NVPLL (PRAMDAC 0x680500: 16.667 MHz x N / M / 2^P), and nxdk's
+         * own TSC rate (that FSB times the CPU's multiplier from MSR 0x2A;
+         * 733333333 when the CPU isn't in its table), which libc++'s
+         * steady_clock runs on */
+        uint32_t pll = 0, nvpll, fsb_khz = 0, nv_khz = 0;
+        LARGE_INTEGER qpf;
+        HalReadWritePCISpace(0, 0x60, 0x6C, &pll, sizeof pll, FALSE);
+        if (pll & 0xFF) fsb_khz = (uint32_t)(16666667ull * ((pll >> 8) & 0xFF) / (pll & 0xFF) / 1000);
+        nvpll = *(volatile uint32_t*)0xFD680500u;
+        if (nvpll & 0xFF) nv_khz = (uint32_t)(16666667ull * ((nvpll >> 8) & 0xFF) / (nvpll & 0xFF) / (1u << ((nvpll >> 16) & 7)) / 1000);
+        qpf.QuadPart = 0;
+        QueryPerformanceFrequency(&qpf);
+        clock_logf("[CLOCK] fsb %u.%u MHz (cpu pll %08x), gpu %u MHz (nvpll %08x), nxdk's tsc rate %lu Hz", fsb_khz / 1000,
+                   (fsb_khz % 1000) / 100, (unsigned)pll, nv_khz / 1000, (unsigned)nvpll, (unsigned long)qpf.QuadPart);
+    }
     if (cost > 250) tsc_ban(cost);
 }
 
@@ -758,7 +805,17 @@ void xhw_clock_display_frame(int real_time) {
     uint64_t now, dn;
     int irq_on, hz;
     unsigned mhz, ppm;
-    if (state == 2 || !real_time) return;
+    if (state == 2) {
+        /* checked, done: every 30 s of frames, is rdtsc trapping now (a
+         * patcher that came back after the boot's repair)? 80 us a check */
+        static unsigned n;
+        if (++n % 1800 == 0 && real_time) {
+            unsigned cost = rdtsc_cost_ns();
+            if (cost > 250) tsc_ban(cost);
+        }
+        return;
+    }
+    if (!real_time) return;
 #if XHW_TEST_BUILD
     {
         /* env PX_CLOCK_SKEW=<percent> (autopad.txt, read after the boot's
@@ -771,7 +828,7 @@ void xhw_clock_display_frame(int real_time) {
             skew_done = 1;
             if (pct >= 40 && pct <= 250 && pct != 100) {
                 clock_set_scale((uint32_t)pct * 10000u);
-                xhw_logf("[CLOCK] PX_CLOCK_SKEW=%d: the clock runs at %d%% of the ACPI timer from here on", pct, pct);
+                clock_logf("[CLOCK] PX_CLOCK_SKEW=%d: the clock runs at %d%% of the ACPI timer from here on", pct, pct);
             }
         }
     }
@@ -795,18 +852,18 @@ void xhw_clock_display_frame(int real_time) {
     state = 2;
     windows++;
     if (dv < 30 || windows > 3) {
-        xhw_logf("[CLOCK] display: %u vblanks in %lu ms: no retrace count to check the clock by", dv,
+        clock_logf("[CLOCK] display: %u vblanks in %lu ms: no retrace count to check the clock by", dv,
                  (unsigned long)(dn / 1000000ull));
         return;
     }
     mhz = (unsigned)((uint64_t)dv * 1000000000000ull / dn);   /* the refresh by the clock, in mHz */
     if (hz <= 0) {
-        xhw_logf("[CLOCK] display %u.%03u Hz by the clock (mode's refresh unknown)", mhz / 1000, mhz % 1000);
+        clock_logf("[CLOCK] display %u.%03u Hz by the clock (mode's refresh unknown)", mhz / 1000, mhz % 1000);
         return;
     }
     ppm = (unsigned)((uint64_t)mhz * 1000 / (unsigned)hz);   /* measured / expected, parts per million */
     if (ppm >= 985000 && ppm <= 1015000) {
-        xhw_logf("[CLOCK] display %u.%03u Hz by the clock, mode %d Hz: agree%s", mhz / 1000, mhz % 1000, hz,
+        clock_logf("[CLOCK] display %u.%03u Hz by the clock, mode %d Hz: agree%s", mhz / 1000, mhz % 1000, hz,
                  corrected ? " (after the correction)" : "");
         {
             unsigned cost = rdtsc_cost_ns();   /* patched again since the boot? */
@@ -816,7 +873,7 @@ void xhw_clock_display_frame(int real_time) {
     }
     if (corrected || ppm < 400000 || ppm > 2500000) {
         int dev = (int)(ppm / 1000) - 1000;   /* tenths of a percent */
-        xhw_logf("[CLOCK] display %u.%03u Hz by the clock, mode %d Hz: off by %c%d.%d%%, %s", mhz / 1000, mhz % 1000,
+        clock_logf("[CLOCK] display %u.%03u Hz by the clock, mode %d Hz: off by %c%d.%d%%, %s", mhz / 1000, mhz % 1000,
                  hz, dev < 0 ? '-' : '+', abs(dev) / 10, abs(dev) % 10,
                  corrected ? "still, after the correction" : "left alone");
         return;
@@ -830,7 +887,7 @@ void xhw_clock_display_frame(int real_time) {
         state = 0;
         {
             int dev = (int)(1000000000ull / ppm) - 1000;   /* the timer's own rate, tenths of a percent */
-            xhw_logf("[CLOCK] display %u.%03u Hz by the clock, mode %d Hz: the acpi timer runs %c%d.%d%% off (an FSB "
+            clock_logf("[CLOCK] display %u.%03u Hz by the clock, mode %d Hz: the acpi timer runs %c%d.%d%% off (an FSB "
                      "overclock?); time follows the display from here on (scale %u.%06u)",
                      mhz / 1000, mhz % 1000, hz, dev < 0 ? '-' : '+', abs(dev) / 10, abs(dev) % 10,
                      s_scale_ppm / 1000000u, s_scale_ppm % 1000000u);
