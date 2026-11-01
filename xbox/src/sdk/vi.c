@@ -69,6 +69,8 @@ VIRetraceCallback VISetPostRetraceCallback(VIRetraceCallback cb) {
     return old;
 }
 
+void px_menu_frame(void);   /* xbox/src/port/port_menu.cpp */
+
 void xsdk_frame_boundary(void) {
     static u64 next_ns;
     const u64 period = sim_period_ns();
@@ -107,6 +109,7 @@ void xsdk_frame_boundary(void) {
     s_retrace++;
     px_sim_frame();     /* Game Timing: Auto picks the next frame's tick rate (port_debug.cpp) */
     xsdk_pad_frame();   /* pad.c: presses between two reads of a 30 Hz tick */
+    px_menu_frame();    /* the Port Options popup, while it is up (port_menu.cpp) */
     xhw_mem_tick();   /* low on memory: ARAM chunks to the disc or the swap file */
     if (s_retrace % 1800 == 0) {   /* every 30 s */
         xsdk_aram_log();

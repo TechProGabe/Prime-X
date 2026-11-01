@@ -47,15 +47,14 @@ typedef struct {
 extern xsdk_settings g_xsdk_settings;
 extern xsdk_settings g_xsdk_settings_boot;   /* as loaded at boot: what the video mode uses */
 
+void xsdk_settings_defaults(xsdk_settings* st);   /* what a first boot writes */
 void xsdk_settings_load(void);
 int xsdk_settings_save(void);   /* 0: failed, settings.ini left as it was */
 int xsdk_settings_equal(const xsdk_settings* a, const xsdk_settings* b);   /* as settings.ini would hold them */
 int xsdk_cstick_1p(void);       /* game code (fighter.c, camera.c PORT): g_xsdk_settings.cstick_1p */
 
-/* menu.c. The title screen calls xsdk_menu_title_frame every frame
- * (gmtitle.c, PORT); 1: the menu is open and the title stands still.
- * PADRead hands the game neutral input while xsdk_menu_block says so. */
-int xsdk_menu_title_frame(void);
+/* The Port Options popup (xbox/src/port/port_menu.cpp): PADRead hands the
+ * game neutral input while xsdk_menu_block says so. */
 int xsdk_menu_block(uint32_t raw_buttons);
 
 #endif
