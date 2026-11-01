@@ -83,14 +83,27 @@ stock console. Tested in xemu with a 128 MB configuration.
 Consoles with a 1.0-1.4 GHz CPU upgrade, or the stock CPU on a raised FSB,
 break games in three ways. Prime-X handles each:
 
-1. **The BIOS patches the game's code.** Cerbios (AdvCPUSupport, on by
-   default) and others rewrite `0f 31` (`rdtsc`) as `cd 2e` by signature,
-   and can hit byte pairs that aren't `rdtsc` at all. Melee-X's
-   `xhw_code_repair.c` (from OpenCrossing-Xbox) compares `.text` with
-   `D:\default.xbe` at boot and puts back every byte a patcher changed,
-   before anything reads the TSC. Prime-X takes it as is; its log line is
-   `[BOOT] code check`. C++ code has more `0f 31` byte pairs than C, so the
-   count is logged and the `MAX_OTHER` limit checked against Prime's image.
+1. **The BIOS patches the game's code.** Two forms seen. OpenCrossing's
+   issues: `0f 31` (`rdtsc`) rewritten as `cd 2e` (a trap) by signature,
+   which can hit byte pairs that aren't `rdtsc` at all. The beta tester's
+   Cerbios console (a 1.4 GHz CPU, 2026-11-01): 5-byte `jmp` detours into
+   the kernel (`e9 rel32` over the first bytes of an instruction), one at
+   pbkit's PCRTC interrupt-enable write (`mov [0xFD600140], 0`) even with
+   AdvCPUSupport off, and 43 bytes with it on, the first at an `rdtsc` in
+   the profiler, none of them `cd 2e`. Melee-X's `xhw_code_repair.c`
+   (from OpenCrossing-Xbox) compares `.text` with `D:\default.xbe` at
+   boot, before anything reads the TSC, and puts back every byte that
+   differs, whatever the patcher wrote, when the file is the running
+   build (its header's time stamps and size) and at most 1024 bytes
+   differ. Until 2026-11-01 it also required the differences to "look
+   like a patcher's" (any number of `cd 2e`, at most 16 other bytes),
+   which left Cerbios's detours in place: that was the slow motion. The
+   log: `[BOOT] code check: 43 bytes of .text were changed in memory
+   after load (9 places, 8 at an rdtsc; a BIOS patcher), put back`, then
+   each run of changed bytes, the memory's and the file's
+   (`001f77ff: e9 18 7b e2 7f, file c7 05 40 01 60`). Test builds:
+   `-DXHW_CODE_REPAIR_TEST` patches two sites (a `cd 2e`, a 5-byte jmp)
+   so the repair shows in xemu.
 2. **Code that counts on 733 MHz.** Game time, `OSGetTime`/`OSGetTick`, the
    frame pacer and the watchdog come from the ACPI timer
    (`KeQueryPerformanceCounter`, 3.375 MHz) and VBlank, never the TSC
@@ -115,14 +128,38 @@ break games in three ways. Prime-X handles each:
    second window checks it. A window with the GPU interrupt masked (the
    count stalls) starts over. Test builds: `env PX_CLOCK_SKEW=120` runs the
    clock 20% fast so xemu exercises the correction.
+   The windows are timed by the ACPI timer itself (`acpi_ns`, the
+   corrected timer with no TSC interpolation in it), since the timer is
+   what's being checked; and the window after a correction has to agree,
+   else the correction is undone and the check is over (2026-11-01: on
+   the Cerbios console a clock jumping on a patcher's rdtsc read the
+   display at 40.089 Hz, the clock was scaled to 0.668, the next window
+   read 89.797 Hz, and the game ran at two thirds speed by a clock that
+   said 60 fps).
    **rdtsc that traps**: after the code check, and again when the display
-   check ends, 2000 `rdtsc` are timed against the timer; over 250 ns each
-   (a trap is a microsecond; the console's rdtsc is ~40 ns) means a
-   patcher rewrote them after all (or again), and from then on
-   `xhw_time_ns` reads the ACPI timer on every call (~3% of the CPU, as
-   before round hw5) and the interrupt lock's throttle uses the kernel's
-   1 ms tick (`xhw_tsc_usable`), instead of trapping thousands of times a
-   frame.
+   check ends and every 30 s of frames after, 2000 `rdtsc` are timed
+   against the timer; over 250 ns each (a trap is a microsecond; the
+   console's rdtsc is ~40 ns, 23 on a 1.4 GHz CPU) means a patcher
+   rewrote them after all (or again), and from then on `xhw_time_ns`
+   reads the ACPI timer on every call (~3% of the CPU, as before round
+   hw5) and the interrupt lock's throttle uses the kernel's 1 ms tick
+   (`xhw_tsc_usable`), instead of trapping thousands of times a frame.
+   **rdtsc that lies**: the TSC's rate is measured against the timer over
+   50 ms at the first call; outside 100 MHz-4 GHz it isn't a counter
+   (2026-11-01: 164950 MHz, the patcher's detours returning one thing at
+   some rdtsc sites and the raw counter at others) and the same fallback
+   applies, with a `[CLOCK] tsc calibrates at N MHz ... no sane counter`
+   line.
+   **libc++'s `steady_clock`** (main.cpp's tick budget, the area-load and
+   door timers, `MP_LOG`) runs on `QueryPerformanceCounter`, which in
+   nxdk is `rdtsc` at the rate `tsc_freq_init` works out from the PLL and
+   the CPU's multiplier (733333333 for a CPU its table doesn't know:
+   1.9x fast on a 1.4 GHz upgrade; the scene's "frequency patch" of the
+   XBE's constant is for that). Prime-X defines
+   `QueryPerformanceCounter/Frequency` itself (`xhw_sys.c`, taking
+   precedence over libwinapi's at link time): the clock above in 10 us
+   units (libc++ multiplies the count by 1e9 before dividing, so the count
+   has to stay under 9.2e9: 25 hours). No patch needed.
 3. **Instructions the upgrade CPU has but the stock one doesn't (and the
    reverse).** The build targets `-march=pentium3` (SSE1, no SSE2) and
    never picks a code path by CPUID, so every console runs the same code.
@@ -139,32 +176,30 @@ tester's diagnostic build, 2026-11-01). Test builds add `[CPU]` (CPUID,
 control registers) and `[CAL]`. A faster CPU only means more frames: no
 frame cap besides the display's refresh.
 
-What an overclocked console does is not yet known from a log (2026-11-01):
-two testers' Cerbios-overclocked consoles ran the first beta in slow
-motion, the main menu worst ("severe throttling"), and a tester's patched
-XBE ran right. The pacer waits by the clock for 60 Hz, so a clock that
-runs slow throttles the menu (the one place frames are cheap enough to
-wait) and fixed-step ticks go slow motion; the display check and the trap
-check cover the two ways the clock can be wrong. The `[CLOCK]` lines from
-such a console settle it.
-
-What is known (2026-11-01, later): the tester's matrix is "frequency
-patch + AdvCPUSupport off: great; no patch + AdvCPUSupport on:
-slideshow" (the other two cells untested). cerbios.ini's comment on
-`AdvCPUSupport` is "Enables Runtime XBE Patching For CPU-Upgraded Or
-Overclocked Consoles": the rdtsc rewriter, the trap branch above, and the
-code check is meant to undo it, so either the undo doesn't hold on that
-console or the patcher does more than rewrite `0f 31`. The "frequency
-patch" is most likely the scene's XBE patch of the hardcoded 733333333
-(`QueryPerformanceFrequency` in XDK games; Prime-X's image has one, nxdk's
-`profiling.c` default, at 0x5f1928 of the ship build). How the overclock
-is made: nxdk's `tsc_freq_init` reads the FSB from the NV2A's CPU PLL
-(PCI 0:0x60 register 0x6C: 16.667 MHz crystal / divider x multiplier,
-times the CPU's multiplier from MSR 0x2A), and Cerbios's overclock
-settings are `CPUMPLLCoeff`/`NVPLLCoeff`, i.e. that PLL: the FSB comes
-from the GPU's crystal, and the ACPI timer (in the MCPX) is probably not
-moved by it, so the display check should "agree" there and the trap
-branch is the one to expect. nxdk's `QueryPerformanceCounter` is rdtsc
-with that computed frequency (733333333 when the CPU's multiplier isn't
-in its table), and libc++'s `steady_clock` is built on it: in the game
-only `main.cpp`'s tick budget and `MP_LOG_*` diagnostics use it.
+What the beta's "slow motion" was (2026-11-01, from a tester's logs;
+`docs/handoff.md` has the lines): a 1.4 GHz CPU upgrade on Cerbios, with
+the FSB and the ACPI timer stock (`tsc 1399.97 MHz`, the display check
+agreeing at 60.181 Hz). cerbios.ini's `AdvCPUSupport` ("Enables Runtime
+XBE Patching For CPU-Upgraded Or Overclocked Consoles") is the detour
+patcher above. With it off, and the tester's "frequency patch" (the
+scene's patch of nxdk's 733333333, in `.data`, which only `steady_clock`
+ran on), the game ran right. With it on, the code check of the time
+left its 43 bytes in place, the TSC calibrated at 164950 MHz, the clock
+jumped ahead and froze on the monotonic clamp, the pacer spun through
+the freezes (`vsync 1220 ms` a frame, `MP stall: frame 542 took 2658
+ms`, the watchdog's `frames stopped` every 7 s), and the display check
+read 40 Hz in that and "corrected" the clock to two thirds. The four
+changes above (any patch put back; the TSC's rate sanity-checked; the
+display windows on the timer itself with a correction undone when the
+next window disagrees; `steady_clock` on the clock) each close one of
+those. The pacer waits by the clock for 60 Hz, so any clock that runs
+slow throttles the menu (the one place frames are cheap enough to wait)
+and fixed-step ticks go slow motion: that's why the menu looked worst.
+Where an overclock would come from: nxdk's `tsc_freq_init` reads the FSB
+from the NV2A's CPU PLL (PCI 0:0x60 register 0x6C: 16.667 MHz crystal /
+divider x multiplier, times the CPU's multiplier from MSR 0x2A), and
+Cerbios's overclock settings are `CPUMPLLCoeff`/`NVPLLCoeff`, i.e. that
+PLL; the ACPI timer (in the MCPX) isn't on it, so the display check is
+expected to "agree" there too, and the boot line logs both PLLs
+(`[CLOCK] fsb 133.3 MHz (cpu pll 01230801), gpu 233 MHz (nvpll
+00011c01)` stock).

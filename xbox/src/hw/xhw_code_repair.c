@@ -1,29 +1,40 @@
 /* xhw_code_repair.c - puts the game's code back the way default.xbe has it
  * (OpenCrossing-Xbox's xbox_code_repair.c, MIT, as Wings64-X carries it).
  *
- * On CPU-upgraded and overclocked consoles (OpenCrossing GitHub #2/#3: a
- * 1 GHz Coppermine and a 1.4 GHz Tualatin) the BIOS (Cerbios 3.x
- * AdvCPUSupport, on by default) rewrites `0f 31` (rdtsc) as `cd 2e`
- * (int 2Eh) in the title's code, by signature, to slow down games that time
- * themselves with the TSC. It matched a pair in OpenCrossing that was no
- * rdtsc at all, and the game faulted. Prime-X keeps time with the ACPI timer
- * (xhw_sys.c), but its .text has ~55 `0f 31` pairs: the profiler's and the
- * interrupt lock's rdtsc (xhw_perf.c, os.c), run thousands of times a frame
- * (each a trap once rewritten), and byte pairs inside other instructions,
- * one of them in Sheik's needles (docs/roadmap.md).
+ * On CPU-upgraded and overclocked consoles the BIOS patches the title's code
+ * at load, by signature, to slow down games that time themselves with the
+ * TSC. Two forms seen:
+ * - OpenCrossing GitHub #2/#3 (a 1 GHz Coppermine, a 1.4 GHz Tualatin):
+ *   `0f 31` (rdtsc) rewritten as `cd 2e` (int 2Eh), a trap each. It matched
+ *   a pair in OpenCrossing that was no rdtsc at all, and the game faulted.
+ * - A Cerbios console with a 1.4 GHz CPU (2026-11-01, the beta's "slow
+ *   motion" report, docs/boot-safety.md): 5-byte `jmp` detours into the
+ *   kernel (e9 rel32 over the first bytes of an instruction). One at a
+ *   PCRTC interrupt-enable write even with AdvCPUSupport off; with it on,
+ *   43 bytes, the first at an rdtsc, none of them `cd 2e`. Some rdtsc sites
+ *   detoured and others not, two readings of the counter didn't agree:
+ *   xhw_sys.c calibrated the TSC at 165 GHz, the clock jumped and froze,
+ *   and the game ran a frame every 7 s. The old rule here ("at most 16
+ *   bytes that aren't a rewritten rdtsc, else not a patcher") left them.
+ * Prime-X keeps time with the ACPI timer (xhw_sys.c), but its .text has ~80
+ * `0f 31` pairs: the clock's, the profiler's and the interrupt lock's rdtsc
+ * (xhw_sys.c, xhw_perf.c, os.c), run thousands of times a frame (each a
+ * trap once rewritten), and byte pairs inside other instructions.
  *
  * Nothing in .text is ours to have changed after load (no relocations; the
  * kernel's import thunks are in .rdata), so at boot every byte that differs
- * from the file is put back, before anything reads the TSC. D:\default.xbe
- * must be the running build (its header's time stamps and size, else an A/B
- * build in another folder would get this one's bytes), and the differences
- * must look like a patcher's: any number of rewritten rdtsc (cd 2e where the
- * file has 0f 31; all ~55 pairs are 110 bytes) and at most MAX_OTHER other
- * bytes. Anything else is logged and left alone.
+ * from the file is put back, before anything reads the TSC, whatever the
+ * patcher wrote. D:\default.xbe must be the running build (its header's
+ * time stamps and size, else an A/B build in another folder would get this
+ * one's bytes), and at most MAX_FIX bytes may differ (more isn't a patcher:
+ * logged, left alone). boot.log gets every run of changed bytes, the
+ * memory's and the file's, so a new patcher's form shows at a glance.
  * Switches: -DXHW_CODE_REPAIR=0 (not built), =2 (check and log only),
- * -DXHW_CODE_REPAIR_TEST (patch one pair the way the BIOS does, then repair). */
+ * -DXHW_CODE_REPAIR_TEST (patch two sites the ways the BIOSes do, then
+ * repair). */
 #include <windows.h>
 #include <xboxkrnl/xboxkrnl.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -37,9 +48,9 @@
 #if XHW_CODE_REPAIR
 #define XBE_PATH "D:\\default.xbe"
 #define CHUNK 65536
-#define MAX_FIX 256   /* differing bytes kept; more and it isn't a patcher */
-#define MAX_OTHER 16  /* differing bytes that aren't a rewritten rdtsc */
-#define LOG_FIX 8
+#define MAX_FIX 1024  /* differing bytes kept; more and it isn't a patcher (every rdtsc detoured would be 400) */
+#define LOG_RUNS 24   /* runs of changed bytes logged */
+#define LOG_BYTES 8   /* bytes of a run shown */
 
 static struct {
     unsigned va;
@@ -76,29 +87,49 @@ static const XBE_SECTION_HEADER* text_section(void) {
 }
 
 #ifdef XHW_CODE_REPAIR_TEST
-/* test builds: rewrite the first rdtsc the way the BIOS does, so a boot in
- * xemu or on a stock console shows the repair */
+/* test builds: rewrite the first rdtsc the way the trap BIOSes do (cd 2e)
+ * and the second the way Cerbios does (a 5-byte jmp over it), so a boot in
+ * xemu or on a stock console shows the repair. Both are put back before
+ * they could run. */
 static void fake_patch(const XBE_SECTION_HEADER* s) {
     const unsigned char* p = (const unsigned char*)s->VirtualAddress;
-    unsigned k;
-    for (k = 0; k + 2 <= s->FileSize; k++) {
+    static const unsigned char jmp[5] = { 0xe9, 0x18, 0x7b, 0xe2, 0x7f };
+    unsigned k, found = 0, i;
+    for (k = 0; k + 5 <= s->FileSize && found < 2; k++) {
         if (p[k] != 0x0f || p[k + 1] != 0x31) continue;
-        put_byte(s->VirtualAddress + k, 0xcd);
-        put_byte(s->VirtualAddress + k + 1, 0x2e);
-        xhw_logf("[BOOT] code check test: patched %08x like an upgraded-CPU BIOS", s->VirtualAddress + k);
-        return;
+        if (found == 0) {
+            put_byte(s->VirtualAddress + k, 0xcd);
+            put_byte(s->VirtualAddress + k + 1, 0x2e);
+            xhw_logf("[BOOT] code check test: patched %08x like a trapping BIOS (cd 2e)", s->VirtualAddress + k);
+        } else {
+            for (i = 0; i < 5; i++) put_byte(s->VirtualAddress + k + i, jmp[i]);
+            xhw_logf("[BOOT] code check test: patched %08x like Cerbios (a 5-byte jmp)", s->VirtualAddress + k);
+        }
+        found++;
     }
-    xhw_logf("[BOOT] code check test: no 0f 31 found");
+    if (!found) xhw_logf("[BOOT] code check test: no 0f 31 found");
 }
 #endif
 
-/* byte i of s_fix is half of a 0f 31 the patcher made cd 2e */
-static int rdtsc_half(unsigned i, unsigned n) {
-    if (s_fix[i].ram == 0xcd && s_fix[i].disk == 0x0f)
-        return i + 1 < n && s_fix[i + 1].va == s_fix[i].va + 1 && s_fix[i + 1].ram == 0x2e && s_fix[i + 1].disk == 0x31;
-    if (s_fix[i].ram == 0x2e && s_fix[i].disk == 0x31)
-        return i > 0 && s_fix[i - 1].va + 1 == s_fix[i].va && s_fix[i - 1].ram == 0xcd && s_fix[i - 1].disk == 0x0f;
-    return 0;
+/* the run of changed bytes from s_fix[i] on begins at an rdtsc in the file:
+ * the file's bytes are 0f 31 there (the second from RAM when the run is one
+ * byte: a byte outside the run is the file's), or it is the 31 of one */
+static int run_at_rdtsc(unsigned i, unsigned len) {
+    unsigned va = s_fix[i].va;
+    unsigned char b0 = s_fix[i].disk, b1 = len > 1 ? s_fix[i + 1].disk : *(const unsigned char*)(va + 1);
+    if (b0 == 0x0f && b1 == 0x31) return 1;
+    return b0 == 0x31 && *(const unsigned char*)(va - 1) == 0x0f;
+}
+
+/* "e9 18 7b e2 7f" for up to LOG_BYTES bytes of a run, "+n" for the rest */
+static void run_hex(char* out, size_t cap, unsigned i, unsigned len, int ram) {
+    unsigned k, n = 0;
+    out[0] = 0;
+    for (k = 0; k < len && k < LOG_BYTES && n + 4 < cap; k++) {
+        if (k) out[n++] = ' ';
+        n += (unsigned)snprintf(out + n, cap - n, "%02x", ram ? s_fix[i + k].ram : s_fix[i + k].disk);
+    }
+    if (len > LOG_BYTES && n + 8 < cap) snprintf(out + n, cap - n, " +%u", len - LOG_BYTES);
 }
 
 void xhw_code_repair(void) {
@@ -108,7 +139,7 @@ void xhw_code_repair(void) {
     DWORD t0 = GetTickCount(), got;
     HANDLE h;
     unsigned char* buf;
-    unsigned off, n, diff = 0, other = 0, i;
+    unsigned off, n, diff = 0, i, len, runs = 0, rdtsc_runs = 0, logged;
     int ok = 1;
 
     if (!s) {
@@ -167,25 +198,38 @@ void xhw_code_repair(void) {
         xhw_logf("[BOOT] code check: .text matches %s (%lu ms)", XBE_PATH, (unsigned long)(GetTickCount() - t0));
         return;
     }
-    for (i = 0; i < diff && i < MAX_FIX; i++)
-        if (!rdtsc_half(i, diff < MAX_FIX ? diff : MAX_FIX)) other++;
-    if (diff > MAX_FIX || other > MAX_OTHER) {
-        xhw_logf("[BOOT] code check: %u bytes of .text differ from %s (%u not a rewritten rdtsc), first %08x; "
-                 "not a patcher, left alone",
-                 diff, XBE_PATH, other, s_fix[0].va);
+    if (diff > MAX_FIX) {
+        xhw_logf("[BOOT] code check: %u bytes of .text differ from %s, first %08x; too many for a patcher, left alone",
+                 diff, XBE_PATH, s_fix[0].va);
         return;
+    }
+    /* runs of consecutive changed bytes: a patcher's units (a 2-byte
+     * rewrite, a 5-byte jmp), counted before the repair (run_at_rdtsc reads
+     * RAM outside the runs, which is the file's either way) */
+    for (i = 0; i < diff; i += len) {
+        for (len = 1; i + len < diff && s_fix[i + len].va == s_fix[i].va + len; len++) {}
+        runs++;
+        if (run_at_rdtsc(i, len)) rdtsc_runs++;
     }
     if (XHW_CODE_REPAIR != 2)
         for (i = 0; i < diff; i++) put_byte(s_fix[i].va, s_fix[i].disk);
-    xhw_logf("[BOOT] code check: %u bytes of .text were changed in memory after load (%u rdtsc rewritten, BIOS "
-             "patcher?), %s (%lu ms)",
-             diff, (diff - other) / 2, XHW_CODE_REPAIR != 2 ? "put back" : "left alone (XHW_CODE_REPAIR=2)",
+    xhw_logf("[BOOT] code check: %u bytes of .text were changed in memory after load (%u places, %u at an rdtsc; a BIOS "
+             "patcher), %s (%lu ms)",
+             diff, runs, rdtsc_runs, XHW_CODE_REPAIR != 2 ? "put back" : "left alone (XHW_CODE_REPAIR=2)",
              (unsigned long)(GetTickCount() - t0));
-    for (i = 0; i < diff && i < LOG_FIX; i++)
-        xhw_logf("[BOOT]   %08x: %02x, file %02x%s", s_fix[i].va, s_fix[i].ram, s_fix[i].disk,
-                 XHW_CODE_REPAIR != 2 && *(volatile unsigned char*)s_fix[i].va != s_fix[i].disk
-                     ? " (write did not stick)"
-                     : "");
+    for (i = 0, logged = 0; i < diff && logged < LOG_RUNS; i += len, logged++) {
+        char ram[64], disk[64];
+        int stuck = 1;
+        unsigned k;
+        for (len = 1; i + len < diff && s_fix[i + len].va == s_fix[i].va + len; len++) {}
+        for (k = 0; k < len; k++)
+            if (*(volatile unsigned char*)s_fix[i + k].va != s_fix[i + k].disk) stuck = 0;
+        run_hex(ram, sizeof ram, i, len, 1);
+        run_hex(disk, sizeof disk, i, len, 0);
+        xhw_logf("[BOOT]   %08x: %s, file %s%s", s_fix[i].va, ram, disk,
+                 XHW_CODE_REPAIR != 2 && !stuck ? " (write did not stick)" : "");
+    }
+    if (runs > LOG_RUNS) xhw_logf("[BOOT]   ... %u more places", runs - LOG_RUNS);
 }
 #else
 void xhw_code_repair(void) {}
