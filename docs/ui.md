@@ -2,12 +2,10 @@
 
 Two pieces of UI are Prime-X's own. Both are specified by the user
 (2026-10-27): the splash remixes Melee-X's "TechProGabe Presents..." card
-in Prime's look, and the settings live inside the game's own Options screens
-and look built in, the way OpenCrossing-Xbox's Options page does.
+in Prime's look. The settings were first rows inside the game's own Options
+screens; since 2026-11-01 they are the Xbox Port Options popup (below).
 
-No game art, fonts or logos in either: shapes, colours and the unscii font
-for the splash, and the game's own font and frames (read from the disc at
-runtime) for the settings.
+No game art, fonts or logos in either: shapes, colours and the unscii font.
 
 ## Boot splash
 
@@ -54,133 +52,112 @@ copies them, draws only what moves through the shade and is copied out,
 hold (never the work). Kill switch `-DXHW_NO_SPLASH`; `-DXHW_SPLASH_DUMP`
 takes `[FBDUMP]`s of the settled screen and of a quarter-done stage.
 
-## Settings, inside the game's Options
+## Xbox Port Options: a popup of its own (2026-11-01)
 
-### The model: OpenCrossing-Xbox
+The user, after the beta: "the port options menu is just shitty. i know we
+were trying to keep it to match the game, but lets just do something new.
+when someone selects port settings, make a clear custom menu pop up that
+explains everything. add button mapping here, we can use the button mapping
+tech from recomp-x". Then: "make port options stand out" on the main menu,
+and call it "Xbox Port Options". This replaces the 2026-10-27 rule that the
+settings live in the game's own Options frames (that design is summarised
+at the end).
 
-OpenCrossing-Xbox's Options page (`xbox/src/xbox_settings_menu.c` there) is
-drawn like Animal Crossing's own windows (the game's font, its colours, its
-frame shapes), reached from the title screen and the pause menu, with tabs,
-a help line for the selected row, unapplied values marked, and changes
-waiting for Apply. Players can't tell it's not part of the game. Prime-X
-gets the same result a better way: Prime's Options screens are data-driven,
-so the Xbox rows go **into the game's own option tables** and are drawn by
-the game's own GUI.
+### Where it opens
 
-### Prime's Options screens
-
-- **Pause > Options** (`src/MetroidPrime/CPauseScreenFrame.cpp`): categories
-  Visor, Display, Sound, Controller (the fifth slot is Quit Game). Each
-  category is a table of `SGameOption {option, stringId, min, max, step,
-  type}`: sliders (`kOT_Float`) and On/Off-style choices
-  (`kOT_DoubleEnum`, `kOT_TripleEnum`), labels from the game's STRG
-  strings, values in `CGameOptions` (saved in the memory card file).
-- **Title screen > Options** (`CFrontEndUI`, `SOptionsFrontEndFrame`):
-  the same tables in the front end's frame.
-- MetroidPrimePort already adds its own rows after each category's retail
-  rows on the pause screen (`EPortOption`, from `kGO_RestoreDefaults + 1`),
-  with labels in code because STRG has no entries for them, and the right
-  table scrolls to fit. Its title-screen Options keeps the retail tables
-  because that frame doesn't scroll.
-
-### Prime-X rows
-
-**Built so far (pause screen):** `xbox/src/port/port_xbox_options.cpp`,
-hooked into `CPauseScreenFrame.cpp` in place of MetroidPrimePort's PC rows.
-The user (2026-10-27): "copy all the critical and important options we have
-from Melee and Animal Crossing, all the typical stuff in settings", and
-"button mapping will be expected".
-
-| category | row | values | settings.ini |
-|---|---|---|---|
-| Display | Widescreen | Auto / 4:3 / 16:9, live (720p is always 16:9) | `[video] widescreen` 1 / 0 / 2 |
-| Display | Widescreen HUD | Inner / Edges ("Centred" overlapped the divider, round hw5) | `[game] hud_wide` |
-| Display | Field of View | 55 (retail) / 65 / 75 | `[game] fov` |
-| Display | Frame Rate | Hide / Show (the counter in the corner) | `[video] fps` |
-| Display | Video Mode | 480i / 480p / 720p, each only where the dashboard allows it | `[video] 720p`, `progressive` |
-| Controller | Rumble Strength | Low / Medium / Full (40 / 70 / 100%; the retail Rumble row stays On/Off) | `[input] rumble` |
-| Controller | Stick Dead Zone | Low / Medium / High (10 / 20 / 30%) | `[portN] stick_deadzone` (all four) |
-| Controller | C-Stick Dead Zone | Low / Medium / High (15 / 25 / 35%) | `[portN] cstick_deadzone` |
-| Controller | Trigger Click | Light / Medium / Firm (180 / 230 / 250 of 255) | `[portN] trigger_click` |
-| Controller | Screen Capture | Off / On (Back saves `shotNN.bmp`) | `[system] screenshots` |
-| Controller | A / B / X / Y / White / Black / Start / Back Button, Left / Right Stick Click | what the button does: None, Fire, Jump, Morph, Missile, Map, Lock, Aim, Pause, Up/Down/Left/Right (the D-pad: the visors). A carousel in the game's three-cell value widget (previous, current, next; left and right step it) | `[portN] a = A` ... (all four ports) |
-
-On the pause screen a Prime-X row's selected value comes with a line saying
-what it does, at the top of the panel's body pane (empty on the retail
-rows: `PortXboxOptions::Description`). No row is a slider (the title screen's frame draws none, and named steps
-are plainer: the user, round hw4); two-choice rows say what their values do
-rather than Off / On. In any menu the Xbox B button is back and the Xbox A
-button confirms, whatever they do in play (the game's menus tell the pad
-they are up through `PortPointerMenu::Begin`; in play both keep their
-bindings). A Buttons row that takes an action another button has
-swaps with it (A set to Jump makes X Fire), and Fire stays on some button
-(GitHub #1, 2026-11-01). Restore Defaults also resets the category's Prime-X rows. settings.ini is
-written once, when the Options screen closes, and only if a row changed.
-
-**Main menu: "Port Options"** (the user: "on the main menu it has Start,
-Options; add a new one that says Port Options and make it look like it's
-part of the game"). The New Game popup reads Start | Options | Port
-Options: the third choice is the slot, separator and all, that the game
-fills with Hard once Normal is beaten. It opens the game's own title-screen
-Options frame with Prime-X's categories in place of the retail ones (that
-frame has four categories of five rows and doesn't scroll):
-
-| category | rows |
+| from | what |
 |---|---|
-| Video | Video (Next Start), Widescreen, Widescreen HUD, Field of View, Frame Rate |
-| Controller | Rumble Strength, Stick Dead Zone, C-Stick Dead Zone, Trigger Click |
-| Gameplay | Skip Cutscenes (Off / On: randomprime's skippable-cutscene patches, from MetroidPrimePort, applied to each room as it loads; START skips any cinematic) |
-| System | Screen Capture, Fusion Suit (Off / On: the GBA-link bonus, which an Xbox can't link for; kept in the game's save as on the GameCube), Log File (Off / On: boot.log in the save folder, for bug reports; Off by default in release builds, test builds always log; `[system] log_file`). Check Disc was removed: L+R+Y at boot does it |
+| the main menu | the row in place of "Metroid Fusion Connection Bonuses" (a GBA link an Xbox can't have) reads **Xbox Port Options**, in gold so it stands out (the game's own `&main-color` text tag on the front pane; the shadow pane keeps its colour) |
+| the New Game popup | its third choice (Hard's slot before Normal is beaten): Start / Options / Xbox Port Options |
+| the pause screen's Options | every category (Visor, Display, Sound, Controller) ends with an **Xbox Port Options** row above Restore Defaults; A opens the popup, the body pane says what it is |
+| test builds | `env PX_MENU_AT=<frame>` in autopad.txt opens it at that frame (`tools/xbox/scenarios/menu`) |
 
-It is also a row of the main menu itself, in place of "Metroid Fusion
-Connection Bonuses" (a GBA and its link cable, which an Xbox can't have), so
-it is reachable with every file slot used (the user, round hw4). Still to do: Skip Cutscenes (MetroidPrimePort's
-`port_skip_cutscenes` to import), the button remap on the title screen
-(its frame doesn't scroll: the pause screen has it), and a restart prompt
-for the video row. Known: the title-screen Options frame's slider doesn't
-draw (retail rows too; the pause screen's does).
+The game keeps running behind it (the title's animation, the pause
+screen) but reads a neutral pad until the popup closes and its closing
+press is let go (`xsdk_menu_block`, pad.c), so B doesn't also leave the
+game's menu.
 
-The full plan, as first written (`*` = applies after a restart):
+### The card (`xbox/src/hw/xhw_menu.c`)
 
-| category | row | values | default |
+576 x 416 in 480-line pixels, centred, drawn at the output's scale: 1x at
+480, 3/4 as wide at 480 when the dashboard says 16:9 (the TV stretches it
+back), 1.5x at 720p. All shapes are antialiased from distances and the text
+is unscii-16 supersampled to the scale.
+
+| part | what |
+|---|---|
+| glass | a cyan border, a navy gradient, scanlines, the scan visor's corner brackets |
+| header | **XBOX PORT OPTIONS** at 2x, a small orange PRIME-X, top right the mode now ("Now: 720p 16:9") |
+| tabs | Video, Controller, Buttons, Gameplay, System between LT and RT badges; the current one lit |
+| rows | the label left; the value right between two arrows, with pips under it (how many choices, which one); a value that isn't the default is orange with a dot; a row that applies at the next start has a `*` |
+| help box | what the selected row does (white), what the shown value does (cyan), a note (orange: "* Video Mode changes the next time Prime-X starts", "The dashboard doesn't allow 720p: the next start uses 480p", "Press Y again ...") |
+| footer | A Change, B Close, Y Defaults, the D-pad Select |
+| Buttons tab | N64Recomp-X's Controls page: an Xbox controller (its body from a distance field, shaded once and cached when memory allows), every input with a leader line and a callout naming its action; the remappable ones (A B X Y White Black START BACK and the stick clicks) bright, the fixed ones (LT Lock On, RT Free Aim, D-pad Visors, left stick Move, right stick Beams; D-pad and right stick swap with Swap Beam Controls) dim; what port 1 holds lights up; the selected input has a ring |
+
+Drawn by the CPU into the finished frame (after the GPU is idle, before
+the flip and the screenshot dumps), as the notices are: no GPU state, the
+same in every mode. Nothing reads the framebuffer (write-combined). The card
+is drawn in 16-row bands in RAM, where the shapes blend, into a cache of the
+whole card in the framebuffer's format (~0.9 MB at 480, ~1.1 MB at 720p)
+that exists only while the popup is up; each frame copies each row's opaque
+span. It is drawn again only when what it shows changes. If the cache can't
+be allocated (after asking the reclaimers), the bands go straight into
+every frame: more CPU, same picture; `[MENU] card ...` in boot.log says
+which.
+
+### The rows (`xbox/src/port/port_menu.cpp`)
+
+| tab | row | values | what the box says the values do |
 |---|---|---|---|
-| Visor | Skip cutscenes | Off (retail: only some can be skipped) / On (any cutscene skips, MetroidPrimePort's `PortSkipCutscenes`) | Off |
-| Display | Video output `*` | Auto (shown as "Auto, 720p") / 480i / 480p / 720p; only what the dashboard allows | Auto |
-| Display | Widescreen | Auto (follows the dashboard, shown as "Auto, 16:9") / 4:3 / 16:9; 720p is always 16:9 | Auto |
-| Display | Widescreen HUD | Centred / Edge to edge (16:9 only) | Centred |
-| Display | Field of view | slider, retail to retail + 20 degrees | retail |
-| Display | Frame Rate | Hide / Show | Hide |
-| Controller | Rumble strength | slider, 0-100% | 100% |
-| Controller | Stick dead zone | slider, with a live stick readout | as Melee-X |
-| Controller | C-stick dead zone | slider | as Melee-X |
-| Controller | Trigger click | slider: how far L/R go in before they click (lock-on, free aim) | as Melee-X (230/255) |
-| Controller | Buttons | opens a remap page in the same frame style, per port | GameCube layout |
-| Controller | Screen Capture | Off / On (Back saves `shotNN.bmp`) | Off (On in test builds) |
-| Controller | Front LED | Off / On | Off |
-| (every) | Restore defaults | the retail row also restores the Xbox rows of that category | |
-| Display | Verify disc image | runs the full check (`docs/boot-safety.md`) | |
+| Video | Video Mode `*` | 480i / 480p / 720p | every TV / sharper, component + dashboard / HD 16:9, component + dashboard, ~30 fps |
+| Video | Widescreen | Auto / 4:3 / 16:9 | follows the dashboard / the GameCube's shape / more to the sides (720p is 16:9) |
+| Video | Widescreen HUD | Inner / Edges | where the visor's readouts sit at 16:9 |
+| Video | Field of View | 55 / 65 / 75 | the GameCube's / wider / widest |
+| Video | Frame Rate | Hide / Show | the counter top left |
+| Controller | Rumble Strength | Low / Medium / Full | 40 / 70 / 100% (On/Off is the game's own row) |
+| Controller | Stick Dead Zone | Low / Medium / High | 10 / 20 / 30% |
+| Controller | C-Stick Dead Zone | Low / Medium / High | 15 / 25 / 35% |
+| Controller | Trigger Click | Light / Medium / Firm | how far LT/RT go in |
+| Buttons | each remappable input | None, Fire, Jump, Morph Ball, Missile, Map, Lock On, Free Aim, Pause, D-Up/Down/Left/Right | what the action does in Prime |
+| Gameplay | Skip Cutscenes | Off / On | START skips any cutscene, from the next room |
+| Gameplay | Fusion Suit | Off / On | the GBA-link bonus, kept in the game's save |
+| System | Screen Capture | Off / On | BACK saves shotNN.bmp |
+| System | Log File | Off / On | boot.log for bug reports |
+| System | Restore All Defaults | A, then A again | every Port Options setting, buttons included |
 
-Rules for the rows:
+The rows call the same `PortXboxOptions::Get/Set/Step` the old in-game rows
+did, so each applies at once (Video Mode at the next start) and settings.ini
+is written once, when the popup closes. Buttons: taking an action another
+button has swaps the two, and Fire always stays on some button (GitHub #1).
 
-- Drawn by the game's own frame (`CGuiTableGroup`/`CGuiTextPane`), in its
-  font and colours, with the same highlight, sounds and slider widget as
-  the retail rows. Labels and value strings live in code (`xbox/src/port`),
-  in the game's case and tone ("Widescreen HUD", not "WIDESCREEN_HUD").
-  Check every string's glyphs exist in the game's font.
-- Choice rows with more than two values need a list type the retail tables
-  don't have (`kOT_List` with code-supplied value strings); MetroidPrimePort's
-  aspect row shows how it hooks in.
-- The title-screen frame must scroll too (the retail rows plus ours don't
-  fit). Do it the way the pause screen's right table does; if the frame
-  can't, page the category instead. The title screen is where a player with
-  a black screen fixes video, so its rows are not optional.
-- A restart row asks first, in the game's own yes/no dialog (the one
-  Restore defaults uses), then restarts the XBE (Melee-X's "Save and
-  restart").
-- Values are saved in `E:\UDATA\50580001\settings.ini` (Melee-X's
-  `settings.c`: temp file, read back, swapped in), not in the game's save,
-  so they work before a save file exists. The retail rows stay in the
-  game's save as on the GameCube.
-- Hold Back at boot: safe video, as Melee-X (480i, 720p and 480p off in
-  `settings.ini`).
-- `[MENU]` log line when the Options screen opens, with the rows shown.
+### Controls in the popup
+
+The Xbox controllers as they are, not the remapped GameCube pad, so no
+layout can lock a player out: up/down (D-pad or left stick; held, it repeats
+after 300 ms every 85 ms) pick, left/right change, A changes too (or acts on
+Restore All Defaults), LT/RT switch tabs, Y twice within 3 s restores the
+tab's defaults, B or START close. The game's own pause-screen sounds: move,
+change, tab, back.
+
+### settings.ini by hand
+
+settings.c checks a hand-edited file line by line (docs/decisions.md): a
+value it can't read keeps the default, a number out of range takes the
+nearest, buttons take GameCube names or the popup's (Fire, Jump...), and a
+port with no Fire or no Pause is reset. What was wrong shows as a notice at
+the top of the screen for 10 s, is written at the top of the corrected
+settings.ini and in boot.log, and the file as it was is kept as
+settings.bad.ini. The written file explains every key, with each button's
+action beside it.
+
+### Before (2026-10-27 to 2026-10-31)
+
+Prime-X's settings were rows inside the game's own Options screens, drawn by
+its GUI as OpenCrossing-Xbox's page is drawn like Animal Crossing's: extra
+rows after each pause-screen category's retail rows (the right table
+scrolled), the remap as a carousel in the three-cell value widget, a
+description in the body pane, and on the title screen the Options frame
+with Prime-X's four categories in place of the retail ones (five rows each,
+no scrolling, value cells re-laid on a fixed grid after rounds hw6 and hw8
+found them on the labels). It looked built in but was hard to follow, which
+is why it was replaced.

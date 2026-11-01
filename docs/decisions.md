@@ -398,6 +398,47 @@ big-endian, so there is nothing to lower. Data the GPU reads straight from
 the disc (display lists, vertex arrays) stays big-endian and the GX layer
 swaps it, as Melee-X's does.
 
+- **Port Options is a popup of its own** (2026-11-01, the user: "the port
+  options menu is just shitty. i know we were trying to keep it to match the
+  game, but lets just do something new ... a clear custom menu ... that
+  explains everything. add button mapping here, we can use the button
+  mapping tech from recomp-x"). This replaces the 2026-10-27 rule that the
+  settings live in the game's own Options frames. A card drawn by the CPU
+  over the game's frame (`xhw_menu.c`, the path the notices already took on
+  the consoles: no GPU state), laid out in 480-line pixels and drawn at the
+  output's scale. It has tabs (Video, Controller, Buttons, Gameplay,
+  System), rows of named choices, and a box that says what the row and the
+  shown value do. The Buttons tab is N64Recomp-X's Controls page: a drawn
+  controller with a callout per input, what is held lit. Opened from the
+  main menu's row (now gold so it stands out), the New Game popup's third
+  choice, and a "Port Options" row in every pause Options category. It reads
+  the Xbox pads as they are, so a layout can't lock the player out, and the
+  game reads a neutral pad until the closing press is let go. The card's
+  cache (~1 MB, the framebuffer's format) lives only while the popup is up;
+  without the memory it is drawn into every frame instead. Logic:
+  `xbox/src/port/port_menu.cpp`; docs/ui.md "Port Options".
+- **settings.ini is checked line by line** (2026-11-01, the user: someone
+  "edited by hand and said weird stuff happened"). `atoi` had made typos 0,
+  an unknown button name unbound the button, `trigger_click` near 0 held
+  lock-on, and the file's comments still described Melee-X's keys
+  (`led_effects`, `cstick_1p`, `trigger_z` "grab"). Now a value that can't
+  be read keeps the default, a number out of range takes the nearest, and
+  flags take 0/1/on/off/yes/no/true/false. Buttons take the GameCube names
+  or the popup's (Fire, Jump...), and a port with no Fire or no Pause is
+  reset. A BOM is skipped, UTF-16 is reported, and `#` comments work. What
+  was wrong is shown as a notice, written at the top of the corrected
+  settings.ini, logged, and the file as it was is kept as settings.bad.ini.
+  The written file's comments now describe Prime-X's keys only, with each
+  button's action beside it. Melee-X's two keys are read quietly and dropped.
+  Host test: `tools/xbox/test_settings.py`.
+- **nxdk's libm stubs fail the link** (2026-11-01): a player's console showed
+  "Assertion failed ... exp2.c:12, exp2f" after the Frigate escape. MusyX's
+  `adsrConvertTimeCents` calls `powf(2.f, x)`, which clang turns into
+  `exp2f`, and nxdk's is `assert(0)`. `libm_fill.c` has `exp2`/`exp2f`/`exp2l`
+  on the x87 (host-checked against libm), and `tools/xbox/check_stubs.py`
+  runs after the link: any of nxdk's "Not implemented" pdclib objects in the
+  map fails the build.
+
 ## Edits to imported code
 
 One line per edit to `src/`, `include/`, `extern/musyx` or
@@ -413,9 +454,9 @@ One line per edit to `src/`, `include/`, `extern/musyx` or
 | `src/Kyoto/Input/CDolphinController.cpp` | input always focused | no window; SDL focus is always null |
 | `src/Kyoto/Graphics/CCubeMoviePlayer.cpp` | movies always take the deinterlaced (whole-frame) path | the field path draws every other line for an interlaced TV; Xbox frames are whole |
 | `extern/aurora/include/dolphin/ppc_math.h` | `_BitScanReverse64` only on x64 | nxdk's clang defines `_MSC_VER` on 32-bit |
-| `src/MetroidPrime/CPauseScreenFrame.cpp` | (2026-10-31: Log File in the title screen's System rows) Prime-X's Options rows (`port_xbox_options.h`) in place of MetroidPrimePort's PC rows: tables, titles, get/set, triple labels, Restore Defaults, save on close; the title-screen frame reads its tables through `GetOptionCategory` so "Port Options" can swap them | the user's settings (docs/ui.md); the PC rows drive hooks the Xbox doesn't have |
-| `src/MetroidPrime/CFrontEndUI.cpp` | the main menu's "Metroid Fusion Connection Bonuses" row reads "Port Options" and opens them | the user: reachable without a New Game slot; the bonuses need a GBA link an Xbox can't have |
-| `src/MetroidPrime/CFrontEndUI.cpp` | the New Game popup's third slot (Hard's, unused before Normal is beaten) shows "Port Options" and opens the Options frame with Prime-X's tables | the user's main-menu entry (docs/ui.md) |
+| `src/MetroidPrime/CPauseScreenFrame.cpp` | (rewritten 2026-11-01) every pause Options category ends with a "Port Options" row above Restore Defaults; A on it opens Prime-X's popup (`PortXboxOptions::OpenMenu`, port_menu.cpp). The Prime-X rows that were mixed into the categories, the title frame's Port Options tables, their value-cell grid and the Prime-X part of Restore Defaults are gone; the frame's get/set hooks for options past `kGO_RestoreDefaults` stay (the row's title and description) | the user: "the port options menu is just shitty ... make a clear custom menu pop up that explains everything" (docs/ui.md "Port Options") |
+| `src/MetroidPrime/CFrontEndUI.cpp` | the main menu's "Metroid Fusion Connection Bonuses" row reads "Port Options" (its front pane in gold through the game's `&main-color` text tag, 2026-11-01: "make port options stand out") and opens the popup | the user: reachable without a New Game slot; the bonuses need a GBA link an Xbox can't have |
+| `src/MetroidPrime/CFrontEndUI.cpp` | the New Game popup's third slot (Hard's, unused before Normal is beaten) shows "Port Options" and opens the popup (until 2026-11-01: the Options frame with Prime-X's tables) | the user's main-menu entry (docs/ui.md) |
 | `src/MetroidPrime/main.cpp` | `UpdateTicks` reports the updates it ran to `xhw_perf_ticks` | `[PERF]`'s "ticks per render" was always 0 (Melee-X's hook, never called): Fixed's catch-up shows now |
 | `src/Kyoto/Animation/CHierarchyPoseBuilder.cpp`, `include/Kyoto/Animation/CHierarchyPoseBuilder.hpp` | `BuildTransform` keeps each link's running state by builder, tree version (bumped by `Insert`) and segment, and resumes a walk from the deepest one kept | speed: every locator query walked its chain from the root (0.8% of xemu's pirate room); same operations in the same order, so the same bits |
 | `src/Kyoto/Particles/CParticleGlobals.cpp` | `PortLifetimeTween` keeps the reciprocal of the last lifetime | speed: the emulated FRECPE and two fma steps (x87 library calls here) ran per particle; same value |
@@ -449,8 +490,6 @@ One line per edit to `src/`, `include/`, `extern/musyx` or
 | `src/MetaRender/CCubeRenderer.cpp` | `PostRenderFogs` draws no fog volumes | the pass needs the depth itself from its Z16 copies (density ramp offsets); ours are in-front masks, so a volume drew as nothing or a solid fog-coloured box (Twin Fires Tunnel) |
 | `src/Kyoto/Graphics/CCubeMaterial.cpp` | `SetCurrent` doesn't read a PBR/WRAP record (the maps repeat) | the disc's materials have none (they come with Remastered conversions); the read parsed the material table on every material set, ~1% of the console's CPU |
 | `src/MetroidPrime/CPauseScreenFrame.cpp` | the title screen's Options/Port Options put the value tables at the selected right row's own offset, not selection times the left table's pitch, measured from the second row (the first worker's idle position is off the rows' spacing) | round hw6: "the divider sits on the text" on the lower Video rows (Widescreen HUD, Field of View, FPS counter); 2026-10-29, the user: the middle value table two rows low on every row past the first |
-| `src/MetroidPrime/CPauseScreenFrame.cpp` | Port Options' value cells on a fixed grid: every cell worker 0's box, centred both ways, evenly spaced around a fixed centre between the columns, the divider models hidden; the shared frame's retail rows get their cells back | round hw8, the user: still misaligned on the console, "remove the bar and make it centred and well spaced" |
-| `include/GuiSys/CGuiTextSupport.hpp` | `PortGetProps()`: the text properties read back | the Port Options grid restores the retail cells' justification |
 | `src/MetroidPrime/Cameras/CCameraFilter.cpp` | the random-static buffer (338 KB) and the pause blur's persistent copy (280 KB) are game-heap blocks taken at first use, not `.bss` | image memory for the whole session for effects most rooms never show; round hw6's out of memory |
 | `src/MetroidPrime/CEnvFxManager.cpp` | `RenderRainParticles` writes its streaks with one `GXPortRainLines` call (`port_xbox_gx.h`), the four calls a particle as the fallback | speed: ~10% of a rainy frame on the console went to the per-vertex calls (round hw5); the same vertices |
 | `src/MetroidPrime/HUD/CHudThreatInterface.cpp` | the threat distance digits formatted with `xsdk_snprintf` | nxdk's pdclib printf has no `%f`: the Threat Assessment readout came out empty |

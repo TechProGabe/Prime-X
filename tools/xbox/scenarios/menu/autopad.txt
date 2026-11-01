@@ -1,0 +1,29 @@
+# menu: the Xbox Port Options popup (2026-11-01). The main menu's gold row
+# first, then the popup opened by PX_MENU_AT (xemu is too slow for a script
+# to walk the main menu): every tab, a change on each kind of row, the
+# Buttons tab's remap, Y on a tab, close. ~10 min in xemu (shots stall ~20 s).
+# Presses last 2 frames: at xemu's ~6 fps a longer one auto-repeats.
+env PX_MENU_AT=1500
+700 START for 2
+1400 SHOT
+1560 SHOT
+1600 DOWN for 2
+1640 RIGHT for 2
+1700 SHOT
+1740 R for 2
+1800 SHOT
+1840 R for 2
+1900 SHOT
+1940 DOWN for 2
+1980 RIGHT for 2
+2040 SHOT
+2080 R for 2
+2140 SHOT
+2180 R for 2
+2240 SHOT
+2280 L for 2
+2320 L for 2
+2360 Y for 2
+2420 SHOT
+2460 B for 2
+2560 SHOT

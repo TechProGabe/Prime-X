@@ -51,6 +51,55 @@ image adds `XBOX_CFLAGS="-DXHW_AUTOPAD=1 -DXHW_PROF=1"`. Console rounds
 and their files: `C:\xemu\hw\prime\ROUNDS.md`; older sessions and rounds
 (hw1-hw10, and hw16-hw18d's notes): `docs/history.md`.
 
+## Session 2026-11-01 (later): Xbox Port Options popup, exp2f, settings.ini
+
+On `dev`, test builds (`-DXHW_AUTOPAD=1`), checked in xemu and on the host;
+no console round.
+
+1. **"Assertion failed ... exp2.c:12, exp2f" after the Frigate escape timer**
+   (the user's screenshot from a console). MusyX's `adsrConvertTimeCents`
+   does `powf(2.f, x)`; clang turns it into `exp2f`, and nxdk's is
+   `assert(0)`. `libm_fill.c` now has `exp2`/`exp2f`/`exp2l` (x87,
+   host-checked against libm). The same stub sat behind the automap's
+   pointer zoom (`pow(2.0, ...)` in `port_automapper.cpp`). The link now
+   runs `tools/xbox/check_stubs.py`: it lists every nxdk function whose body
+   is `assert(0)` (120: pdclib's libm, xboxrt's strtod/wcstod/mbrtowc...) and
+   fails the build if the image can reach one. It follows calls and stored
+   pointers a few levels up, and a stub only pointed to from dead code
+   (libc++'s `std::stod`) passes. A quick byte scan runs first; anything it
+   flags is confirmed against llvm-objdump's disassembly (~25 s, only
+   then), since an E8 byte inside another instruction can look like a call. Today: 22 linked, none reachable;
+   `_get_terminate` is allowed (only under `std::terminate`). Masking our
+   exp2f in the map reproduces the crash's chain, so the check would have
+   caught it. This covers "other level transitions" for this class of
+   crash; there was no xemu playthrough of world transitions.
+2. **Xbox Port Options popup** (the user: "make a clear custom menu pop up
+   that explains everything", Recomp-X's button mapping, "make port options
+   stand out", "Change it to Xbox port options"). docs/ui.md has the whole
+   design. In short: `xhw_menu.c` draws a card on the CPU into the finished
+   frame, `port_menu.cpp` runs it, and the old in-game Prime-X rows are
+   gone. The pause screen's categories each end with an "Xbox Port Options"
+   row, and the main menu's row is gold. Test builds: `env PX_MENU_AT=<frame>`;
+   scenarios `tools/xbox/scenarios/menu` and `menu_pause`. The xemu run found
+   a remap hole: START cycled onto a visor left no button on Pause. Now Pause
+   is kept on some button like Fire. Scripted presses there are 2 frames
+   long: at xemu's ~6 fps a 6-frame press auto-repeats.
+3. **settings.ini validation** (a player's hand edit, "weird stuff").
+   `settings.c` parses strictly, reports problems (on-screen notice, the
+   top of the rewritten file, boot.log), keeps settings.bad.ini, and resets
+   a port with no Fire or Pause. The file's comments now describe Prime's
+   keys (Melee-X's `led_effects`/`cstick_1p` are dropped quietly). Host
+   test: `tools/xbox/test_settings.py`.
+
+Also: `C:\xemu\xemu.toml` (slot 1's config) has been cut down to one EEPROM
+line, so slot 1 boots with no BIOS ("Failed to load BIOS"). Slots 2 and 3
+are fine. Restore it from slot 2's toml with slot 1's paths, or run in slot 2.
+
+**Not checked yet**: the popup at 720p and on a console (the 1.5x scale, the
+16-bit cache, the time a redraw takes on a P3, ~1 MB allocated while it is
+up), the pause-screen entry in xemu, the notice from a bad settings.ini on
+screen. All are for the next round, if the user wants one.
+
 ## Session 2026-11-01: the beta's first three bug reports
 
 Fixed on `dev` (built with `-DXHW_AUTOPAD=1`, checked in xemu; no console

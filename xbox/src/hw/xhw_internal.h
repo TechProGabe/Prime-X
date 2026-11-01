@@ -62,6 +62,9 @@ extern const unsigned char xhw_font16[256 * 16];   /* unscii-16: 8x16, one byte 
 /* xhw_overlay.c: the settings menu's text over a finished frame (CPU writes) */
 struct xgx_overlay;
 void xhw_overlay_draw(void* fb, int w, int h, int bpp, int pitch, const struct xgx_overlay* o);
+/* xhw_menu.c: the Port Options popup's card over a finished frame (CPU writes) */
+int xhw_menu_active(void);
+void xhw_menu_draw(void* fb, int w, int h, int bpp, int pitch);
 
 /* xhw_watchdog.c: hang dumper (hang.log + screen) */
 void xhw_watchdog_start(void);
