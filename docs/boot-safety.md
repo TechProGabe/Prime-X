@@ -83,27 +83,32 @@ stock console. Tested in xemu with a 128 MB configuration.
 Consoles with a 1.0-1.4 GHz CPU upgrade, or the stock CPU on a raised FSB,
 break games in three ways. Prime-X handles each:
 
-1. **The BIOS patches the game's code.** Two forms seen. OpenCrossing's
-   issues: `0f 31` (`rdtsc`) rewritten as `cd 2e` (a trap) by signature,
-   which can hit byte pairs that aren't `rdtsc` at all. The beta tester's
-   Cerbios console (a 1.4 GHz CPU, 2026-11-01): 5-byte `jmp` detours into
-   the kernel (`e9 rel32` over the first bytes of an instruction), one at
-   pbkit's PCRTC interrupt-enable write (`mov [0xFD600140], 0`) even with
-   AdvCPUSupport off, and 43 bytes with it on, the first at an `rdtsc` in
-   the profiler, none of them `cd 2e`. Melee-X's `xhw_code_repair.c`
-   (from OpenCrossing-Xbox) compares `.text` with `D:\default.xbe` at
-   boot, before anything reads the TSC, and puts back every byte that
-   differs, whatever the patcher wrote, when the file is the running
-   build (its header's time stamps and size) and at most 1024 bytes
-   differ. Until 2026-11-01 it also required the differences to "look
-   like a patcher's" (any number of `cd 2e`, at most 16 other bytes),
-   which left Cerbios's detours in place: that was the slow motion. The
-   log: `[BOOT] code check: 43 bytes of .text were changed in memory
-   after load (9 places, 8 at an rdtsc; a BIOS patcher), put back`, then
-   each run of changed bytes, the memory's and the file's
-   (`001f77ff: e9 18 7b e2 7f, file c7 05 40 01 60`). Test builds:
-   `-DXHW_CODE_REPAIR_TEST` patches two sites (a `cd 2e`, a 5-byte jmp)
-   so the repair shows in xemu.
+1. **The BIOS patches the game's code.** Two patchers seen. OpenCrossing's
+   issues: `0f 31` (`rdtsc`) rewritten as `cd 2e` (int 2Eh, a trap) by
+   signature, which can hit byte pairs that aren't `rdtsc` at all. The
+   beta tester's Cerbios console (a 1.4 GHz CPU, 2026-11-01), from test
+   build 3's log: with `AdvCPUSupport` on, 19 of the image's 80 `rdtsc`
+   rewritten as `cd 2a` (int 2Ah), chosen by signature (the profiler's
+   bucket switches, the frame boundary's, nv2a's `wait_idle`,
+   `xgx_present` and the EFB copy's, the splash's, two of the four in
+   `xhw_time_ns`, the texture upload's; not the calibration's or
+   `rdtsc_cost_ns`'s), and, with the setting on or off, a 5-byte `jmp`
+   into the kernel (`e9 rel32`, to 0x8001F31C) over the `mov
+   [0xFD600140], 0` in nxdk's `XVideoWaitForVBlank` (the PCRTC
+   interrupt-enable write). Melee-X's `xhw_code_repair.c` (from
+   OpenCrossing-Xbox) compares `.text` with `D:\default.xbe` at boot,
+   before anything reads the TSC, and puts back every byte that differs,
+   whatever the patcher wrote, when the file is the running build (its
+   header's time stamps and size) and at most 1024 bytes differ. Until
+   2026-11-01 it also required the differences to "look like a
+   patcher's" (any number of `cd 2e`, at most 16 other bytes), which
+   left Cerbios's 43 bytes in place: that was the slow motion. The log:
+   `[BOOT] code check: 43 bytes of .text were changed in memory after
+   load (20 places, 19 at an rdtsc; a BIOS patcher), put back (70 ms)`,
+   then each run of changed bytes, the memory's and the file's
+   (`00051989: cd 2a, file 0f 31`; `001f7d3f: e9 d8 75 e2 7f, file c7 05
+   40 01 60`). Test builds: `-DXHW_CODE_REPAIR_TEST` patches two sites (a
+   `cd 2e`, a 5-byte jmp) so the repair shows in xemu.
 2. **Code that counts on 733 MHz.** Game time, `OSGetTime`/`OSGetTick`, the
    frame pacer and the watchdog come from the ACPI timer
    (`KeQueryPerformanceCounter`, 3.375 MHz) and VBlank, never the TSC
@@ -146,10 +151,18 @@ break games in three ways. Prime-X handles each:
    (`xhw_tsc_usable`), instead of trapping thousands of times a frame.
    **rdtsc that lies**: the TSC's rate is measured against the timer over
    50 ms at the first call; outside 100 MHz-4 GHz it isn't a counter
-   (2026-11-01: 164950 MHz, the patcher's detours returning one thing at
+   (2026-11-01: 164950 MHz, the patcher's traps returning one thing at
    some rdtsc sites and the raw counter at others) and the same fallback
    applies, with a `[CLOCK] tsc calibrates at N MHz ... no sane counter`
    line.
+   **Not before the code check**: until `xhw_clock_boot` (right after
+   the check) the clock is the ACPI timer alone and the TSC isn't read.
+   nxdk's CRT seeds its stack cookie from `QueryPerformanceCounter`
+   before main (`vcruntime/stack_protection.c`, `rand_s`), which is
+   Prime-X's clock since 2026-11-01: test build 3 calibrated the TSC
+   through the traps then, banned it ("tsc not used") and ran the whole
+   session on the ACPI timer. The boot line counts those reads (`10
+   reads before the code check` in xemu).
    **libc++'s `steady_clock`** (main.cpp's tick budget, the area-load and
    door timers, `MP_LOG`) runs on `QueryPerformanceCounter`, which in
    nxdk is `rdtsc` at the rate `tsc_freq_init` works out from the PLL and
@@ -172,7 +185,9 @@ last 8 are kept and logged again ("again: logged before the log was on")
 when Log File is turned on mid-session, since a release build drops the
 boot's lines once settings.ini says the log is off. `-DXHW_LOG_ALWAYS=1`
 builds a release whose log is on from boot whatever the setting (a
-tester's diagnostic build, 2026-11-01). Test builds add `[CPU]` (CPUID,
+tester's diagnostic build, 2026-11-01; until test build 3 it dropped the
+lines written before boot.log opened, `[BOOT] Prime-X` among them, now
+they wait in the queue as a release build's do). Test builds add `[CPU]` (CPUID,
 control registers) and `[CAL]`. A faster CPU only means more frames: no
 frame cap besides the display's refresh.
 
@@ -188,13 +203,16 @@ left its 43 bytes in place, the TSC calibrated at 164950 MHz, the clock
 jumped ahead and froze on the monotonic clamp, the pacer spun through
 the freezes (`vsync 1220 ms` a frame, `MP stall: frame 542 took 2658
 ms`, the watchdog's `frames stopped` every 7 s), and the display check
-read 40 Hz in that and "corrected" the clock to two thirds. The four
-changes above (any patch put back; the TSC's rate sanity-checked; the
-display windows on the timer itself with a correction undone when the
-next window disagrees; `steady_clock` on the clock) each close one of
-those. The pacer waits by the clock for 60 Hz, so any clock that runs
-slow throttles the menu (the one place frames are cheap enough to wait)
-and fixed-step ticks go slow motion: that's why the menu looked worst.
+read 40 Hz in that and "corrected" the clock to two thirds. The changes
+above (any patch put back; the TSC's rate sanity-checked and not read
+before the check; the display windows on the timer itself with a
+correction undone when the next window disagrees; `steady_clock` on the
+clock) each close one of those. Test build 3 on that console, with
+AdvCPUSupport on and the XBE unpatched: the 43 bytes put back, the
+display agreeing, the title at 60 fps and gameplay 32-60 at 720p. The
+pacer waits by the clock for 60 Hz, so any clock that runs slow
+throttles the menu (the one place frames are cheap enough to wait) and
+fixed-step ticks go slow motion: that's why the menu looked worst.
 Where an overclock would come from: nxdk's `tsc_freq_init` reads the FSB
 from the NV2A's CPU PLL (PCI 0:0x60 register 0x6C: 16.667 MHz crystal /
 divider x multiplier, times the CPU's multiplier from MSR 0x2A), and

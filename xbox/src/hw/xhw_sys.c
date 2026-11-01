@@ -336,7 +336,7 @@ static int log_write_locked(const char* s, size_t n) {
     s_tail_pos += (unsigned)n;
     if (!s_log_no_com1) com1_write(s, n);
     if (s_bootlog == INVALID_HANDLE_VALUE) {
-        if (s_log_mode < 0) logq_put_locked(s, n);   /* settings.ini will say */
+        if (s_log_mode != 0) logq_put_locked(s, n);   /* settings.ini will say (-1), or the file isn't open yet (1) */
         return 0;
     }
     logq_put_locked(s, n);
@@ -634,7 +634,10 @@ static volatile int s_tsc_force;   /* the next call takes a fresh ACPI reading *
 static uint64_t s_ns_last;      /* the latest time handed out (atomic 64-bit) */
 static uint64_t s_tsc_hz;       /* the TSC's rate against the ACPI timer (raw: before any correction) */
 static volatile int s_tsc_ready;
+static int s_tsc_tried;         /* calibrated once (ready or not) */
 static int s_tsc_banned;        /* rdtsc traps (a BIOS patcher's int 2Eh): the ACPI timer on every call */
+static int s_clock_booted;      /* xhw_clock_boot ran: the code check is done, the TSC may be read */
+static unsigned s_early_calls;  /* clock reads before that (nxdk's CRT, the boot's own logging) */
 
 static uint64_t tsc_to_ns(uint64_t dt) { return scale_ns(dt, s_ns_whole, s_ns_frac); }
 
@@ -644,6 +647,8 @@ static void set_tsc_rate(uint64_t hz) {
     s_ns_frac = (uint32_t)(((1000000000ull % hz) << 32) / hz);
     s_tsc_resync = hz / 10;
 }
+
+static uint64_t time_monotonic(uint64_t ns);
 
 static void tsc_calibrate(void) {
     uint64_t k0 = acpi_ns(), t0 = rdtsc_now(), k1, t1, dt, hz;
@@ -670,7 +675,7 @@ static void tsc_calibrate(void) {
     set_tsc_rate(hz);
     s_tb[0].tsc0 = t1;
     s_tb[0].ns0 = k1;
-    __atomic_store_n(&s_ns_last, k1, __ATOMIC_SEQ_CST);
+    time_monotonic(k1);   /* never behind what the ACPI-only calls before handed out */
     s_tsc_ready = 1;
 }
 
@@ -686,9 +691,18 @@ uint64_t xhw_time_ns(void) {
     uint64_t now, tsc0, ns0;
     LONG cur, seq;
     if (!s_tsc_ready) {
-        static int tried;
-        if (tried || s_tsc_banned) return time_monotonic(acpi_ns());
-        tried = 1;
+        /* Until xhw_clock_boot (after the code check), the ACPI timer only:
+         * the TSC isn't read while a BIOS patcher's rewrites may still be
+         * in the code. nxdk's CRT reads the clock before main (its stack
+         * cookie is seeded from QueryPerformanceCounter, Prime-X's below),
+         * and on the Cerbios console that calibrated the TSC through the
+         * patcher's traps and banned it for the session (test build 3). */
+        if (!s_clock_booted) {
+            s_early_calls++;
+            return time_monotonic(acpi_ns());
+        }
+        if (s_tsc_tried || s_tsc_banned) return time_monotonic(acpi_ns());
+        s_tsc_tried = 1;
         tsc_calibrate();
         if (!s_tsc_ready) return time_monotonic(acpi_ns());
     }
@@ -765,7 +779,8 @@ void xhw_clock_boot(void) {
     uint64_t n0, n1;
     uint32_t ms0, ms1;
     unsigned cost, mhz;
-    xhw_time_ns();   /* calibrates the TSC */
+    s_clock_booted = 1;   /* the code check is done: the TSC may be read now */
+    xhw_time_ns();        /* calibrates the TSC */
     cost = rdtsc_cost_ns();
     /* the kernel's 1 ms tick (the 8254 timer) against the ACPI timer */
     ms0 = xhw_tick_ms();
@@ -776,14 +791,14 @@ void xhw_clock_boot(void) {
     mhz = (unsigned)(s_tsc_hz / 10000);   /* hundredths of a MHz */
     if (s_tsc_ready)
         clock_logf("[CLOCK] acpi timer %lu Hz (the kernel's clock), tsc %u.%02u MHz against it, rdtsc %u ns, kernel tick "
-                   "%lu ms in %lu ms of acpi time",
+                   "%lu ms in %lu ms of acpi time; %u reads before the code check",
                    (unsigned long)KeQueryPerformanceFrequency(), mhz / 100, mhz % 100, cost, (unsigned long)(ms1 - ms0),
-                   (unsigned long)((n1 - n0) / 1000000ull));
+                   (unsigned long)((n1 - n0) / 1000000ull), s_early_calls);
     else
         clock_logf("[CLOCK] acpi timer %lu Hz (the kernel's clock), tsc not used, rdtsc %u ns, kernel tick "
-                   "%lu ms in %lu ms of acpi time",
+                   "%lu ms in %lu ms of acpi time; %u reads before the code check",
                    (unsigned long)KeQueryPerformanceFrequency(), cost, (unsigned long)(ms1 - ms0),
-                   (unsigned long)((n1 - n0) / 1000000ull));
+                   (unsigned long)((n1 - n0) / 1000000ull), s_early_calls);
     {
         /* the clocks as set (an overclock is these): the FSB from the NV2A's
          * CPU PLL (PCI 0:0x60 register 0x6C: 16.667 MHz / divider x

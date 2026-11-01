@@ -85,13 +85,16 @@ Open:
 - Upgraded-CPU consoles (2026-11-01, two testers on Cerbios; one a 1.4 GHz
   CPU): the v1.0 beta runs in slow motion, a frame every few seconds at
   worst, with Cerbios's AdvCPUSupport on. Found from the logs: Cerbios
-  patches the code with 5-byte `jmp` detours, the boot code check didn't
-  recognise them and left them, and a TSC read at two sites that didn't
-  agree broke the clock. On `dev` since: the check puts back any patched
-  bytes, the TSC's rate is sanity-checked, the clock is checked against
-  VBlank (a correction the next window doesn't confirm is undone), rdtsc
-  traps are detected and avoided, and `steady_clock` runs on Prime-X's
-  clock (`docs/boot-safety.md`). The third test build is with the tester.
+  rewrites `rdtsc` as `cd 2a` and detours a PCRTC write with a 5-byte
+  `jmp`, the boot code check didn't recognise them and left them, and a
+  TSC read at two sites that didn't agree broke the clock. Fixed on `dev`
+  (6255590 and the commit after; `docs/boot-safety.md`): the check puts
+  back any patched bytes, the TSC isn't read before it and its rate is
+  sanity-checked, the clock is checked against VBlank (a correction the
+  next window doesn't confirm is undone), rdtsc traps are detected and
+  avoided, and `steady_clock` runs on Prime-X's clock. Test build 3 ran
+  right on the tester's console ("two reports of working"); not in the
+  v1.0 beta release, in the next.
 
 Fixed on hardware since hw10: fights 17-18 -> 30-32 fps (Auto, GPU
 skinning; hw12); the pause screen 14-17 -> 58-60 (hw12); Main Plaza at
