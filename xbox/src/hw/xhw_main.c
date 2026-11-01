@@ -78,11 +78,37 @@ static void card_screen(const char* title, const char* const* lines, const char*
 }
 
 void xhw_error_screen(const char* title, const char* const* lines) {
-    card_screen(title, lines, "Press any button or wait to return to the dashboard.");
+    card_screen(title, lines, "Press any button to return to the dashboard.");
 }
 
 /* the same card for a question the caller asks itself (A / B) */
 void xhw_choice_screen(const char* title, const char* const* lines) { card_screen(title, lines, NULL); }
+
+/* The card stays until a button is pressed on any controller (a release
+ * first: the button that launched the game may still be down), however
+ * long that takes: no timeout, as the first beta's 15-30 s one took the
+ * screen away while it was being read as the guide to fixing what it
+ * names (a tester, 2026-11-01: "everyone is trained to reboot manually").
+ * Then the dashboard. */
+static int any_button_down(void) {
+    xhw_pad p;
+    int i;
+    xhw_pad_poll();
+    for (i = 0; i < 4; i++)
+        if (xhw_pad_get(i, &p) && (p.buttons || p.lt > 128 || p.rt > 128)) return 1;
+    return 0;
+}
+
+static void __attribute__((noreturn)) wait_button_then_dashboard(void) {
+    int up = 0;
+    for (;;) {
+        if (!any_button_down()) up = up < 10 ? up + 1 : up;
+        else if (up >= 10) break;   /* a press after a steady release */
+        Sleep(50);
+    }
+    xhw_quit_to_dashboard();
+    for (;;) Sleep(1000);
+}
 
 void xhw_fatal(const char* title, const char* msg) {
     const char* lines[2] = { msg, NULL };
@@ -91,8 +117,7 @@ void xhw_fatal(const char* title, const char* msg) {
     snprintf(why, sizeof why, "fatal error screen (%s)", title);
     xhw_exit_reason(why);
     xhw_error_screen(title, lines);
-    Sleep(15000);
-    xhw_quit_to_dashboard();
+    wait_button_then_dashboard();
 }
 
 static void fatal_no_disc(void) {
@@ -111,8 +136,7 @@ static void fatal_no_disc(void) {
     xhw_logf("[BOOT] no disc image in D:\\");
     xhw_exit_reason("no disc image");
     xhw_error_screen("No disc image found", lines);
-    Sleep(30000);
-    xhw_quit_to_dashboard();
+    wait_button_then_dashboard();
 }
 
 /* XBE header: base address at +0x104, image size at +0x10C (the image is
@@ -212,6 +236,7 @@ static void main_body(void* arg) {
              XeImageFileName[0].Buffer);
     log_previous_exit();
     xhw_code_repair();   /* before anything reads the TSC (upgraded-CPU BIOSes rewrite rdtsc) */
+    xhw_clock_boot();    /* [CLOCK]: the TSC's rate, rdtsc's cost, the kernel tick against the ACPI timer */
     xhw_watchdog_start();
     xhw_prof_set_game_thread();
     xhw_prof_start();

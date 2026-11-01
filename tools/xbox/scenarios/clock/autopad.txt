@@ -1,0 +1,5 @@
+# clock: env PX_CLOCK_SKEW=120 runs the clock 20% fast against the ACPI timer (test builds, xhw_sys.c);
+# the display check must find the display at ~50 Hz by the clock, scale the clock to it, and then agree
+# ([CLOCK] lines in the log; docs/boot-safety.md "The ACPI timer against the display")
+env PX_CLOCK_SKEW=120
+900 SHOT

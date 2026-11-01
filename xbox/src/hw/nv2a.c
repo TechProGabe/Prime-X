@@ -623,6 +623,13 @@ static void report_gpu_stall(void) {
  * passive level, once the storm has had time to pass) and say so. */
 volatile int ocx_pb_irq_off;
 
+/* pbkit's vblank count (its DPC, so it stalls while the interrupt is
+ * masked: *irq_on says), for the clock's display check (xhw_sys.c) */
+uint32_t xhw_vblank_count(int* irq_on) {
+    if (irq_on) *irq_on = !ocx_pb_irq_off;
+    return (uint32_t)pb_get_vbl_counter();
+}
+
 static void irq_recover(void) {
     if (!ocx_pb_irq_off) return;
     ocx_pb_irq_off = 0;

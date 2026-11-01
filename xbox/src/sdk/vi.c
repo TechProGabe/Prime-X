@@ -102,6 +102,7 @@ void xsdk_frame_boundary(void) {
         xhw_perf_leave(pf);
     }
     next_ns += period;
+    xhw_clock_display_frame(!xsdk_lockstep());   /* the ACPI timer against VBlank, the first seconds */
 
     s_retrace++;
     px_sim_frame();     /* Game Timing: Auto picks the next frame's tick rate (port_debug.cpp) */

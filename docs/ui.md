@@ -43,7 +43,7 @@ order: "the headline should be Prime-X and then what it's doing".
 | tag | a red `// SIGNAL` top right, blinking slowly |
 | brackets | slide in from the corners (400 ms, eased), orange as they lock, then cyan |
 | CRT | scanlines, darker corners, a band torn sideways every ~4 s, a 300 ms fade in |
-| errors | the same glass with orange brackets, "PRIME-X // SIGNAL LOST", the title in orange-red, the lines in light cyan (`xhw_error_screen` before the game owns the display) |
+| errors | the same glass with orange brackets, "PRIME-X // SIGNAL LOST", the title in orange-red, the lines in light cyan (`xhw_error_screen` before the game owns the display); it stays until a button is pressed, no timeout (2026-11-01, a tester: the card is the guide to where the image goes) |
 | footer | "Hold BACK for safe video (480i)" |
 
 Cost (the user: "should not interfere with the main goal"): the glass, the
@@ -109,9 +109,12 @@ On the pause screen a Prime-X row's selected value comes with a line saying
 what it does, at the top of the panel's body pane (empty on the retail
 rows: `PortXboxOptions::Description`). No row is a slider (the title screen's frame draws none, and named steps
 are plainer: the user, round hw4); two-choice rows say what their values do
-rather than Off / On. In any menu the Xbox B button is back (the game's
-menus tell the pad they are up through `PortPointerMenu::Begin`; in play B
-keeps its binding). Restore Defaults also resets the category's Prime-X rows. settings.ini is
+rather than Off / On. In any menu the Xbox B button is back and the Xbox A
+button confirms, whatever they do in play (the game's menus tell the pad
+they are up through `PortPointerMenu::Begin`; in play both keep their
+bindings). A Buttons row that takes an action another button has
+swaps with it (A set to Jump makes X Fire), and Fire stays on some button
+(GitHub #1, 2026-11-01). Restore Defaults also resets the category's Prime-X rows. settings.ini is
 written once, when the Options screen closes, and only if a row changed.
 
 **Main menu: "Port Options"** (the user: "on the main menu it has Start,

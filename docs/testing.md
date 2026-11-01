@@ -51,6 +51,7 @@ console put it next to `default.xbe`. Its `env` lines set what the game's
 | `env PX_WIDESCREEN=0`, `=1`, `=2` | Port Options' Widescreen: 4:3, as the dashboard, 16:9 (over settings.ini) |
 | `env MP_INVULNERABLE=1` | no damage |
 | `env PX_LOCKSTEP=1` | one simulation tick per frame (comparable screenshots) |
+| `env PX_CLOCK_SKEW=<percent>` | test builds: the clock runs that much of the ACPI timer's rate (120: 20% fast), to exercise the display check's correction (`[CLOCK]` lines, `docs/boot-safety.md`; `scenarios/clock`) |
 
 The ids come from your own image:
 
