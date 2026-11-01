@@ -646,13 +646,24 @@ static void set_tsc_rate(uint64_t hz) {
 }
 
 static void tsc_calibrate(void) {
-    uint64_t k0 = acpi_ns(), t0 = rdtsc_now(), k1, t1, hz;
+    uint64_t k0 = acpi_ns(), t0 = rdtsc_now(), k1, t1, dt, hz;
     do {
         k1 = acpi_ns();
     } while (k1 - k0 < 50000000ull);
     t1 = rdtsc_now();
-    hz = (t1 - t0) * 1000000000ull / (k1 - k0);
-    if (hz < 100000000ull) return;   /* no sane counter: the ACPI timer on every call */
+    dt = t1 - t0;
+    hz = dt >> 33 ? ~0ull : dt * 1000000000ull / (k1 - k0);   /* 2^33 ticks in 50 ms: past any CPU (and the multiply) */
+    if (hz < 100000000ull || hz > 4000000000ull) {
+        /* no sane counter: the ACPI timer on every call. 2026-11-01, a
+         * Cerbios console (docs/boot-safety.md): 164950 MHz, the BIOS's
+         * patcher had detoured some rdtsc and not others, and two sites'
+         * readings didn't agree (xhw_code_repair.c puts them back now) */
+        s_tsc_banned = 1;
+        clock_logf("[CLOCK] tsc calibrates at %lu MHz against the acpi timer: no sane counter (a BIOS patcher's rdtsc?); "
+                   "the time-stamp counter isn't used, the ACPI timer is read on every call",
+                   (unsigned long)(hz > 9999999000000ull ? 9999999 : hz / 1000000ull));
+        return;
+    }
     /* hz is ticks per corrected second (= raw second * 1e6 / scale), so the
      * rate against the raw timer is hz * scale */
     s_tsc_hz = hz * s_scale_ppm / 1000000ull;
@@ -763,30 +774,51 @@ void xhw_clock_boot(void) {
     ms1 = xhw_tick_ms();
     n1 = kernel_ns();
     mhz = (unsigned)(s_tsc_hz / 10000);   /* hundredths of a MHz */
-    clock_logf("[CLOCK] acpi timer %lu Hz (the kernel's clock), tsc %u.%02u MHz against it, rdtsc %u ns, kernel tick "
-             "%lu ms in %lu ms of acpi time",
-             (unsigned long)KeQueryPerformanceFrequency(), mhz / 100, mhz % 100, cost, (unsigned long)(ms1 - ms0),
-             (unsigned long)((n1 - n0) / 1000000ull));
+    if (s_tsc_ready)
+        clock_logf("[CLOCK] acpi timer %lu Hz (the kernel's clock), tsc %u.%02u MHz against it, rdtsc %u ns, kernel tick "
+                   "%lu ms in %lu ms of acpi time",
+                   (unsigned long)KeQueryPerformanceFrequency(), mhz / 100, mhz % 100, cost, (unsigned long)(ms1 - ms0),
+                   (unsigned long)((n1 - n0) / 1000000ull));
+    else
+        clock_logf("[CLOCK] acpi timer %lu Hz (the kernel's clock), tsc not used, rdtsc %u ns, kernel tick "
+                   "%lu ms in %lu ms of acpi time",
+                   (unsigned long)KeQueryPerformanceFrequency(), cost, (unsigned long)(ms1 - ms0),
+                   (unsigned long)((n1 - n0) / 1000000ull));
     {
         /* the clocks as set (an overclock is these): the FSB from the NV2A's
          * CPU PLL (PCI 0:0x60 register 0x6C: 16.667 MHz / divider x
-         * multiplier, as nxdk's tsc_freq_init reads it), the GPU core from
-         * its NVPLL (PRAMDAC 0x680500: 16.667 MHz x N / M / 2^P), and nxdk's
-         * own TSC rate (that FSB times the CPU's multiplier from MSR 0x2A;
-         * 733333333 when the CPU isn't in its table), which libc++'s
-         * steady_clock runs on */
+         * multiplier, as nxdk's tsc_freq_init reads it) and the GPU core
+         * from its NVPLL (PRAMDAC 0x680500: 16.667 MHz x N / M / 2^P) */
         uint32_t pll = 0, nvpll, fsb_khz = 0, nv_khz = 0;
-        LARGE_INTEGER qpf;
         HalReadWritePCISpace(0, 0x60, 0x6C, &pll, sizeof pll, FALSE);
         if (pll & 0xFF) fsb_khz = (uint32_t)(16666667ull * ((pll >> 8) & 0xFF) / (pll & 0xFF) / 1000);
         nvpll = *(volatile uint32_t*)0xFD680500u;
         if (nvpll & 0xFF) nv_khz = (uint32_t)(16666667ull * ((nvpll >> 8) & 0xFF) / (nvpll & 0xFF) / (1u << ((nvpll >> 16) & 7)) / 1000);
-        qpf.QuadPart = 0;
-        QueryPerformanceFrequency(&qpf);
-        clock_logf("[CLOCK] fsb %u.%u MHz (cpu pll %08x), gpu %u MHz (nvpll %08x), nxdk's tsc rate %lu Hz", fsb_khz / 1000,
-                   (fsb_khz % 1000) / 100, (unsigned)pll, nv_khz / 1000, (unsigned)nvpll, (unsigned long)qpf.QuadPart);
+        clock_logf("[CLOCK] fsb %u.%u MHz (cpu pll %08x), gpu %u MHz (nvpll %08x)", fsb_khz / 1000, (fsb_khz % 1000) / 100,
+                   (unsigned)pll, nv_khz / 1000, (unsigned)nvpll);
     }
     if (cost > 250) tsc_ban(cost);
+}
+
+/* nxdk's QueryPerformanceCounter is rdtsc, at the rate its tsc_freq_init
+ * works out from the PLL and the CPU's multiplier (733333333 for a CPU its
+ * table doesn't know), and libc++'s steady_clock runs on it: in the game,
+ * main.cpp's tick budget, the area-load and door timers, MP_LOG. On an
+ * upgraded CPU that's up to 1.9x fast (the scene's "frequency patch" of the
+ * XBE's 733333333 is for this), and a BIOS patcher's rdtsc returns whatever
+ * it returns. These definitions take precedence over libwinapi's at link
+ * time (an archive member is only pulled for a symbol nothing else
+ * defines): the clock above, in 10 us units. libc++ multiplies the count
+ * by 1e9 before dividing by the rate, so the count must stay under 9.2e9:
+ * 25 hours of 10 us. */
+BOOL QueryPerformanceCounter(LARGE_INTEGER* c) {
+    c->QuadPart = (LONGLONG)(xhw_time_ns() / 10000ull);
+    return TRUE;
+}
+
+BOOL QueryPerformanceFrequency(LARGE_INTEGER* f) {
+    f->QuadPart = 100000;
+    return TRUE;
 }
 
 /* The display against the clock, once a presented frame from the frame
@@ -794,11 +826,18 @@ void xhw_clock_boot(void) {
  * GPU's crystal) are counted against the clock and compared with the
  * mode's refresh (50 or 60). Off by more than 1.5%, the clock is scaled to
  * the display, once, and measured again; the console says so in boot.log.
+ * The window after the correction has to agree, else the correction is
+ * undone (2026-11-01: on a Cerbios console a clock jumping on a patcher's
+ * rdtsc read the display at 40 Hz, and the "correction" ran the game at
+ * two thirds speed). The windows are timed by the ACPI timer itself
+ * (acpi_ns, not xhw_time_ns): it is the timer that's being checked, and
+ * the TSC's interpolation can't get into the measurement.
  * A window with the GPU interrupt masked (the count stalls) starts over.
  * real_time 0 (lockstep runs): nothing. */
 void xhw_clock_display_frame(int real_time) {
     static int state;   /* 0 idle, 1 counting, 2 done */
     static int corrected, windows;
+    static uint32_t ppm_before;   /* the scale before the correction, to undo it */
     static uint64_t ns0;
     static uint32_t vbl0;
     uint32_t vbl, dv;
@@ -834,7 +873,7 @@ void xhw_clock_display_frame(int real_time) {
     }
 #endif
     vbl = xhw_vblank_count(&irq_on);
-    now = xhw_time_ns();
+    now = acpi_ns();   /* the timer under test, in corrected ns, no TSC in it */
     if (!irq_on) {
         state = 0;
         return;
@@ -871,17 +910,28 @@ void xhw_clock_display_frame(int real_time) {
         }
         return;
     }
-    if (corrected || ppm < 400000 || ppm > 2500000) {
+    if (corrected) {
+        /* the window after the correction doesn't agree: the first window
+         * was wrong, not the timer; back to the rate before it */
         int dev = (int)(ppm / 1000) - 1000;   /* tenths of a percent */
-        clock_logf("[CLOCK] display %u.%03u Hz by the clock, mode %d Hz: off by %c%d.%d%%, %s", mhz / 1000, mhz % 1000,
-                 hz, dev < 0 ? '-' : '+', abs(dev) / 10, abs(dev) % 10,
-                 corrected ? "still, after the correction" : "left alone");
+        clock_set_scale(ppm_before);
+        clock_logf("[CLOCK] display %u.%03u Hz by the clock, mode %d Hz: off by %c%d.%d%% after the correction, which "
+                   "is undone (scale back to %u.%06u)",
+                   mhz / 1000, mhz % 1000, hz, dev < 0 ? '-' : '+', abs(dev) / 10, abs(dev) % 10,
+                   ppm_before / 1000000u, ppm_before % 1000000u);
+        return;
+    }
+    if (ppm < 400000 || ppm > 2500000) {
+        int dev = (int)(ppm / 1000) - 1000;   /* tenths of a percent */
+        clock_logf("[CLOCK] display %u.%03u Hz by the clock, mode %d Hz: off by %c%d.%d%%, left alone", mhz / 1000,
+                   mhz % 1000, hz, dev < 0 ? '-' : '+', abs(dev) / 10, abs(dev) % 10);
         return;
     }
     {
         /* true ns = corrected ns * ppm / 1e6: the ACPI timer runs fast by
          * 1e6 / ppm. The new scale is on the raw timer, so the old one
          * folds in */
+        ppm_before = s_scale_ppm;
         clock_set_scale((uint32_t)((uint64_t)s_scale_ppm * ppm / 1000000ull));
         corrected = 1;
         state = 0;

@@ -109,12 +109,53 @@ round):
    is in Downloads as `Prime-X-test2.zip` with README-TEST.txt (play, quit with
    L+R+BACK+BLACK, send `E:\UDATA\50580001\boot.log`, say what the slow
    motion looks like and where, and the overclock settings and CPU).
-   **Next: get a boot.log from an overclocked console** (Port Options >
-   System > Log File on, or a test build), and ask the tester what the
-   XBE patch was: the `[CLOCK]` lines say whether the timer moved, rdtsc
-   traps, or neither (then look elsewhere: the ACPI I/O read's cost, the
-   kernel tick, the disc). xemu can't overclock; `env PX_CLOCK_SKEW=120`
-   in a scenario fakes a fast timer to exercise the correction.
+   **The logs that settled it** (2026-11-01, later; three zips from the
+   tester, who ran test build 1 by mistake, which was enough since its
+   settings.ini had Log File on). The console: a **1.4 GHz CPU upgrade**
+   on Cerbios (`tsc 1399.97 MHz`, FSB and ACPI timer stock: the display
+   check agreed at 60.181 Hz), not an FSB overclock. With AdvCPUSupport
+   **off** and the tester's freq-patched XBE: `code check: 5 bytes ...
+   put back`, at 001f77ff `e9 18 7b e2 7f` where the file has `c7 05 40
+   01 60`: Cerbios had detoured pbkit's `mov [0xFD600140], 0` (the PCRTC
+   interrupt-enable write) with a 5-byte `jmp` into the kernel
+   (0x8001F31C), even with the CPU patching off; rdtsc 23 ns; the title at
+   60 fps, gameplay 30-60 at 720p, "great performance". With
+   AdvCPUSupport **on** and the unpatched XBE: `code check: 43 bytes of
+   .text differ ... (43 not a rewritten rdtsc), first 00051989; not a
+   patcher, left alone` (00051989 is an `rdtsc` in the profiler's bucket
+   switch; none of the 43 were `cd 2e`, so the old rule gave up), then
+   `tsc 164950.11 MHz against it, rdtsc 23 ns`: the patcher had detoured
+   some rdtsc sites and not others, so two readings of the counter didn't
+   agree and the calibration was garbage; the clock jumped ahead and
+   froze (`MP stall: frame 542 took 2658 ms (draw 2657)`, `vsync 1220.7`
+   ms a frame, `[WDOG] frames stopped` every 7 s in boot_prev.log: the
+   slideshow), the display check read 40.089 Hz in that chaos and
+   "corrected" the clock to 0.668 (the next window: 89.797 Hz, "still,
+   after the correction", left in place), so after that the game ran at
+   two thirds speed by a clock that said 60 fps ("so far so good, fewer
+   fps than the patched version"). The freq patch itself only moves
+   nxdk's 733333333 (`.data` 00601928), i.e. libc++'s `steady_clock`
+   (main.cpp's tick budget), 1.9x fast on this CPU without it.
+   **Fixed on `dev`** (docs/boot-safety.md): the code check puts back
+   every differing byte when D:\default.xbe is the running build (no
+   "looks like a patcher" rule; cap 1024 bytes) and logs each run of
+   changed bytes with the file's; the TSC calibration refuses a rate
+   outside 100 MHz-4 GHz (ACPI on every call, logged); the display check
+   times its windows by the ACPI timer itself and undoes a correction the
+   next window doesn't confirm; `QueryPerformanceCounter/Frequency` are
+   Prime-X's (the clock in 10 us units), so `steady_clock` no longer needs
+   the freq patch. xemu: `-DXHW_CODE_REPAIR_TEST` patches two sites (a
+   `cd 2e`, a 5-byte jmp) and the boot shows both put back (`7 bytes ...
+   (2 places, 2 at an rdtsc; a BIOS patcher), put back`); the ship build
+   ran the title with the log on from boot and the display agreeing.
+   **Third test build** (ship recipe + `-DXHW_LOG_ALWAYS=1`; XBE MD5
+   b1f00b8da5628bc901667f1b7523c134) in Downloads as `Prime-X-test3.zip`
+   with README-TEST.txt: the tester runs it with AdvCPUSupport on and no
+   freq patch; the expected log: `code check: 43 bytes ... (N places, M at
+   an rdtsc; a BIOS patcher), put back`, the runs, `tsc 1399.9x MHz`,
+   `display ... agree`, and 60 fps at the title. **Next**: that log; if
+   it holds, the fix goes into the next release as is (the freq patch no
+   longer needed, say so in the README/issue).
 
 ## Next session, in order
 

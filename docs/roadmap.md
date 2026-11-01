@@ -82,12 +82,16 @@ Open:
   logs at each scene's load).
 - Inside the gunship: 12-14 fps on red in hw5; the dynamic-list budget is
   doubled since, not measured.
-- Overclocked consoles (2026-11-01, two testers, Cerbios overclock
-  settings): the v1.0 beta runs in slow motion, the main menu throttled
-  worst; one tester's patched XBE ran right (the patch unknown). On `dev`
-  since: the clock is checked against VBlank and scaled to it, and rdtsc
-  traps are detected and avoided (`docs/boot-safety.md`); unproven on such
-  a console, the `[CLOCK]` lines from one are the next step.
+- Upgraded-CPU consoles (2026-11-01, two testers on Cerbios; one a 1.4 GHz
+  CPU): the v1.0 beta runs in slow motion, a frame every few seconds at
+  worst, with Cerbios's AdvCPUSupport on. Found from the logs: Cerbios
+  patches the code with 5-byte `jmp` detours, the boot code check didn't
+  recognise them and left them, and a TSC read at two sites that didn't
+  agree broke the clock. On `dev` since: the check puts back any patched
+  bytes, the TSC's rate is sanity-checked, the clock is checked against
+  VBlank (a correction the next window doesn't confirm is undone), rdtsc
+  traps are detected and avoided, and `steady_clock` runs on Prime-X's
+  clock (`docs/boot-safety.md`). The third test build is with the tester.
 
 Fixed on hardware since hw10: fights 17-18 -> 30-32 fps (Auto, GPU
 skinning; hw12); the pause screen 14-17 -> 58-60 (hw12); Main Plaza at

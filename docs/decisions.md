@@ -359,6 +359,27 @@ combiners; ThinLTO + PGO for releases.
   lines are kept and logged again whenever Log File is turned on, and
   `-DXHW_LOG_ALWAYS=1` builds a release that logs from boot regardless
   (the second test build).
+- **The code check puts back whatever a patcher wrote** (2026-11-01,
+  later; `xhw_code_repair.c`, `docs/boot-safety.md`): the tester's logs
+  showed Cerbios (a 1.4 GHz CPU upgrade) patching with 5-byte `jmp`
+  detours into the kernel, not `cd 2e`: one over pbkit's PCRTC
+  interrupt-enable write even with AdvCPUSupport off, 43 bytes with it
+  on, the first at an rdtsc. The old rule ("at most 16 bytes that aren't a
+  rewritten rdtsc, else not a patcher") left them, some rdtsc sites then
+  returned other values than the rest, the TSC calibrated at 165 GHz, and
+  the clock jumped and froze: the slideshow. Now every differing byte is
+  put back when D:\default.xbe is the running build (its time stamps and
+  size), up to 1024 bytes, and each run of changed bytes is logged with
+  the file's bytes. With it: the TSC calibration refuses a rate outside
+  100 MHz-4 GHz (the ACPI timer on every call, logged); the display check
+  times its windows by the ACPI timer itself, not `xhw_time_ns`, and
+  undoes a correction the next window doesn't confirm (that run's first
+  window read 40 Hz in the chaos and the "correction" ran the game at two
+  thirds speed); and `QueryPerformanceCounter/Frequency` are Prime-X's,
+  the clock in 10 us units, so libc++'s `steady_clock` (main.cpp's tick
+  budget, the area-load and door timers) no longer runs on nxdk's rdtsc
+  at 733333333 (1.9x fast on a 1.4 GHz CPU; the scene's "frequency patch"
+  of the XBE was for that, and isn't needed now).
 
 Not carried over: `disc_lower` and the `DISC_STRUCT` lowering. Melee keeps
 disc data big-endian in memory and melee-pc marks those structs; Prime reads
