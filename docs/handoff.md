@@ -66,96 +66,53 @@ round):
 2. **The no-disc card's timeout** (a tester: don't auto-reboot, the card is
    the guide): every error card stays until a button is pressed, no
    timeout (`xhw_main.c` `wait_button_then_dashboard`).
-3. **Overclocked consoles run in slow motion** (two testers, Cerbios
-   overclock settings; the menu "severely throttled"; a tester's patched
-   XBE ran right, patch unknown). No log from such a console, so the cause
-   is inferred: the pacer waits by the clock for 60 Hz, and only a clock
-   that runs slow throttles the menu. Two guards, both in `xhw_sys.c` and
-   described in `docs/boot-safety.md`: `xhw_clock_display_frame` counts
-   VBlank against the clock over the first 3 s of frames and scales the
-   clock to the display when the ACPI timer is off (an FSB overclock can
-   move the chipset's reference); `rdtsc` is timed after the code check
-   and after that window, and if it traps (a patcher's int 2Eh) the clock
-   reads the ACPI timer on every call and the interrupt lock uses the
-   kernel's 1 ms tick. `[CLOCK]` lines in boot.log, release builds too.
-   In xemu: `scenarios/clock` (`PX_CLOCK_SKEW=120`) logged the display at
-   49.959 Hz by the clock, scaled time by 0.8327 (net 0.99918) and agreed
-   at 60.291 Hz in the next window; the plain title run agreed at 59.922.
-   **The overclocker's first test** (2026-11-01, the ship recipe of
-   d8731ca, MD5 b84e032a3d877130d97b8f3aa9bedffe): "didn't work", and
-   both logs sent (boot.log, boot_prev.log) begin with "[LOG] boot.log
-   on": turned on mid-session each time, the setting not surviving the
-   restart (or the tester never backed out of Options), so no `[BOOT]`
-   or `[CLOCK]` lines. What they do show: `cpu 802 MHz` (the TSC against
-   the clock: FSB ~146, a 9% overclock, if the clock is true); the title
-   screen at 50-56 fps by the clock, 30 Hz ticks, 15 ms per tick (gold's
-   title is the same per tick), the pacer waiting under 1 ms a frame
-   (so the pacer isn't throttling that scene), the flip 5 ms a frame;
-   `[BEAT] 60s: retrace 1418`. Nothing in those numbers is the slow
-   motion described; what "didn't work" looked like is not known. The
-   tester then said: "freq patch + AdvCPUSupport off = great; no freq
-   patch + AdvCPUSupport on = slideshow" (the other two cells untested).
-   `AdvCPUSupport` is Cerbios's runtime XBE patcher (the rdtsc rewriter,
-   docs/boot-safety.md), so the trap branch is the suspect and the
-   question is why the boot code check doesn't hold on that console (the
-   ship image has 80 `0f 31` pairs, within the check's 256-byte cap).
-   The Cerbios overclock is the NV2A's CPU PLL, so the ACPI timer is
-   probably unmoved (the display check should "agree" there). So:
-   the `[CLOCK]` lines are kept and logged again when Log File is turned
-   on, and `-DXHW_LOG_ALWAYS=1` makes a release build log from boot: the
-   **second test build** (ship recipe plus that flag; its boot line also
-   reads the CPU PLL, the NVPLL and nxdk's TSC rate, and rdtsc is
-   re-timed every 30 s of frames; MD5 c2af58c60dd3010d5271d8e8f8e82c2b)
-   is in Downloads as `Prime-X-test2.zip` with README-TEST.txt (play, quit with
-   L+R+BACK+BLACK, send `E:\UDATA\50580001\boot.log`, say what the slow
-   motion looks like and where, and the overclock settings and CPU).
-   **The logs that settled it** (2026-11-01, later; three zips from the
-   tester, who ran test build 1 by mistake, which was enough since its
-   settings.ini had Log File on). The console: a **1.4 GHz CPU upgrade**
-   on Cerbios (`tsc 1399.97 MHz`, FSB and ACPI timer stock: the display
-   check agreed at 60.181 Hz), not an FSB overclock. With AdvCPUSupport
-   **off** and the tester's freq-patched XBE: `code check: 5 bytes ...
-   put back`, at 001f77ff `e9 18 7b e2 7f` where the file has `c7 05 40
-   01 60`: Cerbios had detoured pbkit's `mov [0xFD600140], 0` (the PCRTC
-   interrupt-enable write) with a 5-byte `jmp` into the kernel
-   (0x8001F31C), even with the CPU patching off; rdtsc 23 ns; the title at
-   60 fps, gameplay 30-60 at 720p, "great performance". With
-   AdvCPUSupport **on** and the unpatched XBE: `code check: 43 bytes of
-   .text differ ... (43 not a rewritten rdtsc), first 00051989; not a
-   patcher, left alone` (00051989 is an `rdtsc` in the profiler's bucket
-   switch; none of the 43 were `cd 2e`, so the old rule gave up), then
-   `tsc 164950.11 MHz against it, rdtsc 23 ns`: the patcher had detoured
-   some rdtsc sites and not others, so two readings of the counter didn't
-   agree and the calibration was garbage; the clock jumped ahead and
-   froze (`MP stall: frame 542 took 2658 ms (draw 2657)`, `vsync 1220.7`
-   ms a frame, `[WDOG] frames stopped` every 7 s in boot_prev.log: the
-   slideshow), the display check read 40.089 Hz in that chaos and
-   "corrected" the clock to 0.668 (the next window: 89.797 Hz, "still,
-   after the correction", left in place), so after that the game ran at
-   two thirds speed by a clock that said 60 fps ("so far so good, fewer
-   fps than the patched version"). The freq patch itself only moves
-   nxdk's 733333333 (`.data` 00601928), i.e. libc++'s `steady_clock`
-   (main.cpp's tick budget), 1.9x fast on this CPU without it.
-   **Fixed on `dev`** (docs/boot-safety.md): the code check puts back
-   every differing byte when D:\default.xbe is the running build (no
-   "looks like a patcher" rule; cap 1024 bytes) and logs each run of
-   changed bytes with the file's; the TSC calibration refuses a rate
-   outside 100 MHz-4 GHz (ACPI on every call, logged); the display check
-   times its windows by the ACPI timer itself and undoes a correction the
-   next window doesn't confirm; `QueryPerformanceCounter/Frequency` are
-   Prime-X's (the clock in 10 us units), so `steady_clock` no longer needs
-   the freq patch. xemu: `-DXHW_CODE_REPAIR_TEST` patches two sites (a
-   `cd 2e`, a 5-byte jmp) and the boot shows both put back (`7 bytes ...
-   (2 places, 2 at an rdtsc; a BIOS patcher), put back`); the ship build
-   ran the title with the log on from boot and the display agreeing.
-   **Third test build** (ship recipe + `-DXHW_LOG_ALWAYS=1`; XBE MD5
-   b1f00b8da5628bc901667f1b7523c134) in Downloads as `Prime-X-test3.zip`
-   with README-TEST.txt: the tester runs it with AdvCPUSupport on and no
-   freq patch; the expected log: `code check: 43 bytes ... (N places, M at
-   an rdtsc; a BIOS patcher), put back`, the runs, `tsc 1399.9x MHz`,
-   `display ... agree`, and 60 fps at the title. **Next**: that log; if
-   it holds, the fix goes into the next release as is (the freq patch no
-   longer needed, say so in the README/issue).
+3. **"Slow motion on overclocked consoles"**, solved with one tester's
+   console over three test builds (the detail: `docs/boot-safety.md`
+   "Upgraded and overclocked CPUs", `docs/decisions.md`). The console
+   was a **1.4 GHz CPU upgrade on Cerbios**, FSB and ACPI timer stock
+   (`tsc 1399.97 MHz`, the display check agreeing at 60.18 Hz), not an
+   FSB overclock. Cerbios's `AdvCPUSupport` patches the game's code at
+   load: 19 of the image's 80 `rdtsc` rewritten as `cd 2a` (int 2Ah; the
+   profiler's, the frame boundary's, nv2a's waits, two in `xhw_time_ns`,
+   by signature) and, with the setting on or off, a 5-byte `jmp` into
+   the kernel over nxdk's `XVideoWaitForVBlank` PCRTC write. The boot
+   code check knew only the `cd 2e` form and its "at most 16 other
+   bytes" rule gave up ("not a patcher, left alone"); with some `rdtsc`
+   trapping and others not, the TSC calibrated at 164950 MHz, the clock
+   jumped ahead and froze on its monotonic clamp (`MP stall: frame 542
+   took 2658 ms`, `[WDOG] frames stopped` every 7 s: the slideshow), and
+   the display check read 40.089 Hz in that chaos and scaled the clock
+   to 0.668 (two thirds speed by a clock that said 60 fps). The
+   tester's "frequency patch" only moved nxdk's 733333333 (`.data`),
+   i.e. libc++'s `steady_clock` for main.cpp's tick budget.
+   **The fix** (6255590 and the commit after it): the check puts back
+   every differing byte when D:\default.xbe is the running build (cap
+   1024) and logs each run with the file's bytes; the TSC's rate is
+   refused outside 100 MHz-4 GHz; the display windows are timed by the
+   ACPI timer itself and a correction the next window doesn't confirm is
+   undone; `QueryPerformanceCounter/Frequency` are Prime-X's (the clock
+   in 10 us units), so `steady_clock` needs no patch; the clock doesn't
+   touch the TSC until `xhw_clock_boot`, after the check (nxdk's CRT
+   seeds its stack cookie from `QueryPerformanceCounter` before main:
+   test build 3 calibrated through the traps and banned the TSC for the
+   session, "tsc not used", ACPI on every call, ~3% CPU); and
+   `-DXHW_LOG_ALWAYS=1` builds queue the lines written before boot.log
+   opens instead of dropping them (that's why test 2/3 logs lacked
+   `[BOOT] Prime-X` and the ban line).
+   **Verified**: test build 3 (ship recipe + LOG_ALWAYS, MD5
+   b1f00b8da5628bc901667f1b7523c134, `Prime-X-test3.zip`) on the
+   tester's console with AdvCPUSupport on and the XBE unpatched: `43
+   bytes ... (20 places, 19 at an rdtsc; a BIOS patcher), put back`,
+   display agree, the title at 60 fps and gameplay 32-60 at 720p, "two
+   reports of working". The last two changes (the TSC read before the
+   check, the LOG_ALWAYS queue) came from that log and are verified in
+   xemu only (`10 reads before the code check`, the TSC calibrated after
+   it); the user has closed console testing ("not doing any more testing
+   on people's consoles if it works"). **Next**: ship as the next release
+   from `dev`; the release notes can say the frequency patch isn't
+   needed and AdvCPUSupport can stay on. xemu: `-DXHW_CODE_REPAIR_TEST`
+   patches two sites (a `cd 2e`, a 5-byte jmp) to show the repair;
+   `env PX_CLOCK_SKEW=120` exercises the display correction.
 
 ## Next session, in order
 

@@ -379,7 +379,17 @@ combiners; ThinLTO + PGO for releases.
   the clock in 10 us units, so libc++'s `steady_clock` (main.cpp's tick
   budget, the area-load and door timers) no longer runs on nxdk's rdtsc
   at 733333333 (1.9x fast on a 1.4 GHz CPU; the scene's "frequency patch"
-  of the XBE was for that, and isn't needed now).
+  of the XBE was for that, and isn't needed now). Test build 3 on that
+  console: the patch was 19 `rdtsc` as `cd 2a` (int 2Ah) and the PCRTC
+  detour, all put back, 60 fps at the title, "working". Its log also
+  showed the TSC banned before the check ran: nxdk's CRT seeds its stack
+  cookie from `QueryPerformanceCounter` before main, which calibrated the
+  TSC through the traps. So the clock doesn't read the TSC until
+  `xhw_clock_boot`, after the check (the boot line counts the reads
+  before it), and `-DXHW_LOG_ALWAYS=1` builds queue the lines written
+  before boot.log opens (they were dropped, the ban line with them).
+  Both verified in xemu only: the user closed console testing once it
+  worked ("not doing any more testing on people's consoles").
 
 Not carried over: `disc_lower` and the `DISC_STRUCT` lowering. Melee keeps
 disc data big-endian in memory and melee-pc marks those structs; Prime reads
