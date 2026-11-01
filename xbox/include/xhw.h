@@ -25,6 +25,11 @@ extern "C" {
 #define XHW_TEST_BUILD 0
 #endif
 #endif
+/* -DXHW_LOG_ALWAYS=1: a release build (no test tools) whose boot.log is on
+ * from boot whatever Port Options says: a tester's diagnostic build */
+#ifndef XHW_LOG_ALWAYS
+#define XHW_LOG_ALWAYS 0
+#endif
 
 /* ---- logging (COM1 when present, E:\UDATA\...\boot.log / last.log) ---- */
 void xhw_log(const char* line);

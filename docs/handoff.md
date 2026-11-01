@@ -81,13 +81,34 @@ round):
    In xemu: `scenarios/clock` (`PX_CLOCK_SKEW=120`) logged the display at
    49.959 Hz by the clock, scaled time by 0.8327 (net 0.99918) and agreed
    at 60.291 Hz in the next window; the plain title run agreed at 59.922.
-   An overclocker's test is arranged (the user, 2026-11-01): a normal
-   free-play build of d8731ca (the ship recipe, ThinLTO + the committed
-   `prime.profdata`, no autopad; MD5 b84e032a3d877130d97b8f3aa9bedffe)
-   is in the user's Downloads as `Prime-X-test-d8731ca.zip` with a
-   README-TEST.txt: turn Port Options > System > Log File on, back out
-   (saves), restart, play a minute, quit with L+R+BACK+BLACK, send
-   `E:\UDATA\50580001\boot.log` plus the overclock settings and CPU.
+   **The overclocker's first test** (2026-11-01, the ship recipe of
+   d8731ca, MD5 b84e032a3d877130d97b8f3aa9bedffe): "didn't work", and
+   both logs sent (boot.log, boot_prev.log) begin with "[LOG] boot.log
+   on": turned on mid-session each time, the setting not surviving the
+   restart (or the tester never backed out of Options), so no `[BOOT]`
+   or `[CLOCK]` lines. What they do show: `cpu 802 MHz` (the TSC against
+   the clock: FSB ~146, a 9% overclock, if the clock is true); the title
+   screen at 50-56 fps by the clock, 30 Hz ticks, 15 ms per tick (gold's
+   title is the same per tick), the pacer waiting under 1 ms a frame
+   (so the pacer isn't throttling that scene), the flip 5 ms a frame;
+   `[BEAT] 60s: retrace 1418`. Nothing in those numbers is the slow
+   motion described; what "didn't work" looked like is not known. The
+   tester then said: "freq patch + AdvCPUSupport off = great; no freq
+   patch + AdvCPUSupport on = slideshow" (the other two cells untested).
+   `AdvCPUSupport` is Cerbios's runtime XBE patcher (the rdtsc rewriter,
+   docs/boot-safety.md), so the trap branch is the suspect and the
+   question is why the boot code check doesn't hold on that console (the
+   ship image has 80 `0f 31` pairs, within the check's 256-byte cap).
+   The Cerbios overclock is the NV2A's CPU PLL, so the ACPI timer is
+   probably unmoved (the display check should "agree" there). So:
+   the `[CLOCK]` lines are kept and logged again when Log File is turned
+   on, and `-DXHW_LOG_ALWAYS=1` makes a release build log from boot: the
+   **second test build** (ship recipe plus that flag; its boot line also
+   reads the CPU PLL, the NVPLL and nxdk's TSC rate, and rdtsc is
+   re-timed every 30 s of frames; MD5 c2af58c60dd3010d5271d8e8f8e82c2b)
+   is in Downloads as `Prime-X-test2.zip` with README-TEST.txt (play, quit with
+   L+R+BACK+BLACK, send `E:\UDATA\50580001\boot.log`, say what the slow
+   motion looks like and where, and the overclock settings and CPU).
    **Next: get a boot.log from an overclocked console** (Port Options >
    System > Log File on, or a test build), and ask the tester what the
    XBE patch was: the `[CLOCK]` lines say whether the timer moved, rdtsc

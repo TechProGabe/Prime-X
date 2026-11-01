@@ -353,7 +353,12 @@ combiners; ThinLTO + PGO for releases.
   then reads the ACPI timer on every call with the interrupt lock on the
   kernel's 1 ms tick. `[CLOCK]` lines in boot.log, release builds too.
   Unproven on an overclocked console (none here); the lines from one
-  will say which it was.
+  will say which it was. The first tester's two logs (2026-11-01) both
+  began mid-session ("[LOG] boot.log on"), the setting not having
+  survived a restart, with no `[CLOCK]` lines: so the last 8 `[CLOCK]`
+  lines are kept and logged again whenever Log File is turned on, and
+  `-DXHW_LOG_ALWAYS=1` builds a release that logs from boot regardless
+  (the second test build).
 
 Not carried over: `disc_lower` and the `DISC_STRUCT` lowering. Melee keeps
 disc data big-endian in memory and melee-pc marks those structs; Prime reads
