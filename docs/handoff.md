@@ -81,6 +81,13 @@ round):
    In xemu: `scenarios/clock` (`PX_CLOCK_SKEW=120`) logged the display at
    49.959 Hz by the clock, scaled time by 0.8327 (net 0.99918) and agreed
    at 60.291 Hz in the next window; the plain title run agreed at 59.922.
+   An overclocker's test is arranged (the user, 2026-11-01): a normal
+   free-play build of d8731ca (the ship recipe, ThinLTO + the committed
+   `prime.profdata`, no autopad; MD5 b84e032a3d877130d97b8f3aa9bedffe)
+   is in the user's Downloads as `Prime-X-test-d8731ca.zip` with a
+   README-TEST.txt: turn Port Options > System > Log File on, back out
+   (saves), restart, play a minute, quit with L+R+BACK+BLACK, send
+   `E:\UDATA\50580001\boot.log` plus the overclock settings and CPU.
    **Next: get a boot.log from an overclocked console** (Port Options >
    System > Log File on, or a test build), and ask the tester what the
    XBE patch was: the `[CLOCK]` lines say whether the timer moved, rdtsc
