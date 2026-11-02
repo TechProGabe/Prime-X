@@ -25,6 +25,11 @@ extern "C" {
 #define XHW_TEST_BUILD 0
 #endif
 #endif
+/* -DXHW_LOG_ALWAYS=1: a release build (no test tools) whose boot.log is on
+ * from boot whatever Port Options says: a tester's diagnostic build */
+#ifndef XHW_LOG_ALWAYS
+#define XHW_LOG_ALWAYS 0
+#endif
 
 /* ---- logging (COM1 when present, E:\UDATA\...\boot.log / last.log) ---- */
 void xhw_log(const char* line);
@@ -36,9 +41,17 @@ void xhw_error_screen(const char* title, const char* const* lines);
 void xhw_choice_screen(const char* title, const char* const* lines);   /* no dashboard line: the caller asks */
 
 /* ---- time ---- */
-uint64_t xhw_ticks(void);            /* rdtsc */
+uint64_t xhw_ticks(void);            /* the kernel's counter (the ACPI timer) */
 uint64_t xhw_ticks_per_sec(void);
 uint64_t xhw_time_ns(void);          /* monotonic */
+uint32_t xhw_tick_ms(void);          /* the kernel's 1 ms tick count */
+/* 0 once rdtsc was found to trap (a BIOS patcher rewrote it): callers that
+ * time themselves by the TSC use xhw_tick_ms instead */
+int xhw_tsc_usable(void);
+/* Once a presented frame (the frame boundary): counts VBlank against the
+ * clock over the first seconds and scales the clock to the display when
+ * the ACPI timer is off its rate (docs/boot-safety.md). real_time 0: skip. */
+void xhw_clock_display_frame(int real_time);
 /* Wall clock: seconds since 2000-01-01 00:00:00 local time, plus the
  * sub-second part in nanoseconds (the GameCube RTC epoch). */
 int64_t xhw_wallclock_2000(uint32_t* ns_out);
@@ -214,6 +227,52 @@ unsigned xhw_log_fallback(void);
  * driver's stuck engine, a save or screenshot that couldn't be written); any
  * thread. A call while another notice is waiting or up is dropped. */
 void xhw_notice(const char* line1, const char* line2);
+
+/* ---- the Port Options popup (xhw_menu.c draws it, port_menu.cpp runs it) ----
+ * A card over the game's frame: a header, tabs, rows of named choices, a
+ * box that explains the selected row and its value, and the button prompts;
+ * on the Buttons tab an Xbox controller with a callout per input (from
+ * N64Recomp-X's Controls page). The logic fills this view each frame and
+ * hands it over; the card is drawn again only when the view changes, and
+ * written into every presented frame by the CPU (as the notices are), so
+ * it needs no GPU state. Plain fixed-size fields: it crosses the triples. */
+#define XHW_MENU_TABS 5
+#define XHW_MENU_ROWS 8
+#define XHW_MENU_TEXT 200
+enum { XHW_MENU_ROW_CHANGED = 1, XHW_MENU_ROW_RESTART = 2, XHW_MENU_ROW_ACTION = 4 };
+/* the controller page's inputs: the first XHW_MENU_IN_MAPPABLE can be remapped */
+enum {
+    XHW_MENU_IN_A, XHW_MENU_IN_B, XHW_MENU_IN_X, XHW_MENU_IN_Y, XHW_MENU_IN_WHITE, XHW_MENU_IN_BLACK,
+    XHW_MENU_IN_START, XHW_MENU_IN_BACK, XHW_MENU_IN_LCLICK, XHW_MENU_IN_RCLICK,
+    XHW_MENU_IN_MAPPABLE,
+    XHW_MENU_IN_LT = XHW_MENU_IN_MAPPABLE, XHW_MENU_IN_RT, XHW_MENU_IN_DPAD, XHW_MENU_IN_LSTICK, XHW_MENU_IN_RSTICK,
+    XHW_MENU_IN_COUNT
+};
+typedef struct xhw_menu_view {
+    int32_t tab, tabs;
+    char tab_name[XHW_MENU_TABS][16];
+    char status[32];                       /* top right: "720p  16:9" */
+    int32_t page;                          /* 0: rows, 1: the controller */
+    int32_t rows, sel;
+    char label[XHW_MENU_ROWS][28];
+    char value[XHW_MENU_ROWS][20];
+    int32_t choices[XHW_MENU_ROWS];        /* how many values the row has (the pips); 0: none */
+    int32_t choice[XHW_MENU_ROWS];         /* which one it shows */
+    int32_t flags[XHW_MENU_ROWS];          /* XHW_MENU_ROW_* */
+    char help[XHW_MENU_TEXT];              /* what the selected row does (wrapped by the card) */
+    char value_help[XHW_MENU_TEXT];        /* what its value does */
+    char note[80];                         /* warm line at the bottom of the box, or "" */
+    /* page 1 */
+    int32_t pad_sel;                       /* XHW_MENU_IN_*, -1 none */
+    char pad_map[XHW_MENU_IN_COUNT][12];   /* what each input does */
+    int32_t pad_changed[XHW_MENU_IN_COUNT];
+    int32_t pad_ok;                        /* port 1 has a controller: the live state below */
+    uint32_t pad_buttons;                  /* XHW_BTN_* */
+    int16_t pad_lx, pad_ly, pad_rx, pad_ry;
+    uint8_t pad_lt, pad_rt, pad_pad[2];
+} xhw_menu_view;
+/* the card shows `v` from the next present on (copied); NULL takes it down */
+void xhw_menu_show(const xhw_menu_view* v);
 /* Read-only file with positioned reads straight into the caller's buffer
  * (pdclib's fread goes 1 KB ReadFile at a time and copies byte by byte).
  * xhw_file_read returns 1 if all `len` bytes were read. */

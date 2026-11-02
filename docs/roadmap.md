@@ -82,6 +82,19 @@ Open:
   logs at each scene's load).
 - Inside the gunship: 12-14 fps on red in hw5; the dynamic-list budget is
   doubled since, not measured.
+- Upgraded-CPU consoles (2026-11-01, two testers on Cerbios; one a 1.4 GHz
+  CPU): the v1.0 beta runs in slow motion, a frame every few seconds at
+  worst, with Cerbios's AdvCPUSupport on. Found from the logs: Cerbios
+  rewrites `rdtsc` as `cd 2a` and detours a PCRTC write with a 5-byte
+  `jmp`, the boot code check didn't recognise them and left them, and a
+  TSC read at two sites that didn't agree broke the clock. Fixed on `dev`
+  (6255590 and the commit after; `docs/boot-safety.md`): the check puts
+  back any patched bytes, the TSC isn't read before it and its rate is
+  sanity-checked, the clock is checked against VBlank (a correction the
+  next window doesn't confirm is undone), rdtsc traps are detected and
+  avoided, and `steady_clock` runs on Prime-X's clock. Test build 3 ran
+  right on the tester's console ("two reports of working"); not in the
+  v1.0 beta release, in the next.
 
 Fixed on hardware since hw10: fights 17-18 -> 30-32 fps (Auto, GPU
 skinning; hw12); the pause screen 14-17 -> 58-60 (hw12); Main Plaza at
@@ -124,6 +137,8 @@ without input).
 | 2026-10-31 | hw18 | red + gold | first both at once: red clean; gold 720p Main Plaza 36-40; gold froze with the ARQ worker on (backed out) and crashed once in `pb_init` |
 | 2026-10-31 | hw18b, hw18c | red + gold | RC1, RC1b: the `pb_init` crash on the launch after Lava Lake on both (page 0 read-only); gold's reclaims 1.1-1.7 s |
 | 2026-10-31 | hw18d | red + gold | RC1c (0ff5ed0): all 11 scenes on both, no fault; gold reclaims 0-370 ms, its screenshots 27-47 s (fixed after); release build left on both for free play |
+| 2026-11-01 | free play | red + gold | the first Xbox Port Options build: every move in the popup stalled 336-581 ms (red's log), the music skipping; fixed (incremental, time-budgeted redraws) |
+| 2026-11-01 | free play | red + gold | the fix (e9526cd) approved by the user: released as v1.0-beta2 |
 
 ## Performance per build
 

@@ -55,7 +55,11 @@
 // PORT_XBOX: the main menu's "Metroid Fusion Connection Bonuses" row needs a
 // GBA and its link cable, which an Xbox can't have: the row is "Port
 // Options" instead (the user: reachable without a New Game slot)
-#define PX_GBA_ROW_TEXT L"Port Options"
+#define PX_GBA_ROW_TEXT L"Xbox Port Options"
+// PORT_XBOX: the row's front pane in gold, so it stands out (the user:
+// "make port options stand out so people see it"); the shadow pane ("...b")
+// keeps its colour. The game's own text tag, as STRG strings use it.
+#define PX_GBA_ROW_GOLD L"&main-color=#FFB43C;Xbox Port Options"
 #else
 #define PX_GBA_ROW_TEXT gpStringTable->GetString(0x25)
 #endif
@@ -739,6 +743,9 @@ void CFrontEndUI::SFrontEndFrame::FinishedLoading() {
 
   x1c_gbaPair = SGuiTextPair(x14_loadedFrme, "textpane_gba");
   x1c_gbaPair.SetPairText(PX_GBA_ROW_TEXT);
+#ifdef TARGET_XBOX
+  x1c_gbaPair.x0_textPane->TextSupport().SetText(rstl::wstring_l(PX_GBA_ROW_GOLD)); // PORT_XBOX: gold
+#endif
 
   x24_cheatPair = SGuiTextPair(x14_loadedFrme, "textpane_cheats");
   x24_cheatPair.SetPairText(gpStringTable->GetString(0x60));
@@ -1271,7 +1278,11 @@ void CFrontEndUI::SNewFileSelectFrame::ClearFrameContents() {
 
   StartTextAnimating(x28_textpane_erase.x0_textPane,
                      rstl::wstring_l(gpStringTable->GetString(0x26)), 60.f);
+#ifdef TARGET_XBOX
+  StartTextAnimating(x38_textpane_gba.x0_textPane, rstl::wstring_l(PX_GBA_ROW_GOLD), 60.f); // PORT_XBOX: gold
+#else
   StartTextAnimating(x38_textpane_gba.x0_textPane, rstl::wstring_l(PX_GBA_ROW_TEXT), 60.f);
+#endif
   StartTextAnimating(x30_textpane_cheats.x0_textPane,
                      rstl::wstring_l(gpStringTable->GetString(0x60)), 60.f);
 
@@ -1389,7 +1400,7 @@ void CFrontEndUI::SNewFileSelectFrame::ActivateNewGamePopup() {
 #ifdef TARGET_XBOX
     // PORT_XBOX: Start | Options | Port Options, in the slot (and with the
     // separator) the game gives Hard once Normal is beaten
-    x58_textpane_popupextra.SetPairText(rstl::wstring_l(L"Port Options"));
+    x58_textpane_popupextra.SetPairText(rstl::wstring_l(L"Xbox Port Options"));
     x40_tablegroup_popup->GetWorkerWidget(2)->SetIsSelectable(true);
     x40_tablegroup_popup->GetWorkerWidget(2)->SetVisibility(true, kTM_Children);
     x44_model_dash7->SetVisibility(true, kTM_Children);
@@ -1508,11 +1519,9 @@ void CFrontEndUI::SNewFileSelectFrame::DoPopupAdvance(CGuiTableGroup* caller) {
       x4_saveUI->StartGame(fileSelection);
     } else {
 #ifdef TARGET_XBOX
-      // PORT_XBOX: Options or Port Options: the same frame, other tables
-      PortXboxOptions::SetFrontEndPort(x40_tablegroup_popup->GetUserSelection() == 2);
+      // PORT_XBOX: Port Options opens Prime-X's popup over the screen
       if (x40_tablegroup_popup->GetUserSelection() == 2) {
-        PlayAdvanceSfx();
-        xc_action = kA_GameOptions;
+        PortXboxOptions::OpenMenu();
         return;
       }
 #endif
@@ -2599,12 +2608,8 @@ void CFrontEndUI::ProcessUserInput(const CFinalInput& padInput, CArchitectureQue
             SFrontEndFrame::EAction action = xe8_frontendNoCardFrme->ProcessUserInput(input);
 #ifdef TARGET_XBOX
             if (action == SFrontEndFrame::kEA_FusionBonus) { // PORT_XBOX: the row is Port Options
-              PortXboxOptions::SetFrontEndPort(true);
-              xf0_optionsFrme = rs_new SOptionsFrontEndFrame();
+              PortXboxOptions::OpenMenu();
               return;
-            }
-            if (action == SFrontEndFrame::kEA_GameOptions) {
-              PortXboxOptions::SetFrontEndPort(false);
             }
 #endif
             if (action == SFrontEndFrame::kEA_FusionBonus) {
@@ -2625,8 +2630,7 @@ void CFrontEndUI::ProcessUserInput(const CFinalInput& padInput, CArchitectureQue
             SNewFileSelectFrame::EAction action = xe0_frontendCardFrme->ProcessUserInput(input);
 #ifdef TARGET_XBOX
             if (action == SNewFileSelectFrame::kA_FusionBonus) { // PORT_XBOX: the row is Port Options
-              PortXboxOptions::SetFrontEndPort(true);
-              xf0_optionsFrme = rs_new SOptionsFrontEndFrame();
+              PortXboxOptions::OpenMenu();
               return;
             }
 #endif

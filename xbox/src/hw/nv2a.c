@@ -623,6 +623,13 @@ static void report_gpu_stall(void) {
  * passive level, once the storm has had time to pass) and say so. */
 volatile int ocx_pb_irq_off;
 
+/* pbkit's vblank count (its DPC, so it stalls while the interrupt is
+ * masked: *irq_on says), for the clock's display check (xhw_sys.c) */
+uint32_t xhw_vblank_count(int* irq_on) {
+    if (irq_on) *irq_on = !ocx_pb_irq_off;
+    return (uint32_t)pb_get_vbl_counter();
+}
+
 static void irq_recover(void) {
     if (!ocx_pb_irq_off) return;
     ocx_pb_irq_off = 0;
@@ -1819,22 +1826,24 @@ void xgx_stats_now(void) { stats_report(); }
 static void z16_frame_end(void);
 
 void xgx_present(int black) {
-    int ovl, note;
+    int ovl, note, menu;
     uint64_t t_flip;
     frame_open();
     gput_mark(1);
     if (black) clear_fb(0, 0, s_fbw, s_fbh, 0xFF000000u, 1, 0, 0);
     pb_budget();   /* the frame's pushbuffer peak */
     if (s_fps_on && !black) fps_overlay();
-    ovl = s_ovl_ttl > 0 && !black;
-    note = !black && (!ovl || s_ovl.kind == XGX_OVERLAY_HINT) && notice_due();
+    menu = !black && xhw_menu_active();   /* the Port Options popup: over everything else */
+    ovl = s_ovl_ttl > 0 && !black && !menu;
+    note = !black && !menu && (!ovl || s_ovl.kind == XGX_OVERLAY_HINT) && notice_due();
     /* the next frame_open waits (XGX_OVERLAP); a screenshot reads the frame now */
-    if (!XGX_OVERLAP || ovl || note || s_fbdump_once || s_shot_once ||
+    if (!XGX_OVERLAP || ovl || note || menu || s_fbdump_once || s_shot_once ||
         (XHW_FBDUMP_EVERY && (s_frame + 1) % XHW_FBDUMP_EVERY == 0))
         wait_idle();
     if (ovl || note)
         xhw_overlay_draw(fb_cpu(pb_back_buffer()), s_fbw, s_fbh, s_bpp, (int)pb_back_buffer_pitch(),
                          note ? &s_notice : &s_ovl);
+    if (menu) xhw_menu_draw(fb_cpu(pb_back_buffer()), s_fbw, s_fbh, s_bpp, (int)pb_back_buffer_pitch());
     if (s_ovl_ttl > 0) s_ovl_ttl--;
     if (s_fbdump_once || (XHW_FBDUMP_EVERY && (s_frame + 1) % XHW_FBDUMP_EVERY == 0)) {
         s_fbdump_once = 0;

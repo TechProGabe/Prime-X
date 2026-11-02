@@ -3,35 +3,34 @@
 Update this at the end of every session: what was done, what's next,
 what's broken, anything the next agent would otherwise rediscover.
 
-## Where it stands (2026-10-31): v1.0 beta (release candidate 1c)
+## Where it stands (2026-11-01): v1.0-beta2
 
-**RC1c is 0ff5ed0.** Its release build (`stage-hw18d/ship`) is in
-`Prime-X` on both consoles (red `F:\Applications`, gold
-`E:\Applications`; MD5 checked against the stage after round hw18d), next
-to the profiler image (`Prime-X-prof`) and round hw18d's chain. The user
-calls it "potentially release candidate 1"; it is theirs to play and to
-call. Round hw18d ran every scene on both consoles with no crash, hang,
-watchdog or fault.
+**v1.0-beta2 is `main` at the merge of `dev` (2026-11-01)**, released by
+GitHub Actions from the `v1.0-beta2` tag. Its ship build (e9526cd, the
+same source) is in `Prime-X` on both consoles (red `F:\Applications`, gold
+`E:\Applications`); the user approved it after free play. What it has over
+v1.0-beta (docs/history.md "Session 2026-11-01" for the detail,
+docs/decisions.md for the why):
 
-What RC1 has over the free-play builds of 2026-10-30 (decisions.md for
-each):
+- **Xbox Port Options**, a popup of its own (docs/ui.md): from the main
+  menu's gold row, the New Game popup and every pause Options category;
+  tabs, a box explaining each row and value, the button remap on a drawn
+  controller (N64Recomp-X's). Redraws only what changed within 3 ms a
+  frame (the first console build stalled 336-581 ms a move). No sounds.
+- **The crash after the Frigate escape** ("Assertion failed ... exp2f"):
+  nxdk's `exp2f` is `assert(0)`; Prime-X has its own, and the link fails if
+  any nxdk stub is reachable (`tools/xbox/check_stubs.py`).
+- **settings.ini checked line by line**: bad values keep the default, the
+  problems shown on screen and written into the file, the old one kept as
+  settings.bad.ini.
+- GitHub #1 (Jump on A): a remap swaps, Fire and Pause stay on some button,
+  A confirms in every menu.
+- Upgraded/overclocked CPUs (Cerbios AdvCPUSupport): the code check puts
+  back a BIOS patcher's bytes, the TSC is sanity-checked, the clock is
+  checked against VBlank.
+- Error cards wait for a button; screenshots written in 64 KB pieces.
 
-- 720p: 30 Hz ticks throughout (480 keeps Auto, the user), the vertex
-  ring in the video library's idle framebuffer, a 7 MB texture pool.
-- Stock drives (gold's: nearly full, slow to grow files): no boot.log in
-  release builds unless Port Options > System > Log File is on; boot.log
-  through a writer thread; the DVD read queue 64 -> 1024; `aram.swp` kept
-  at 8 MB from boot to boot. The ARQ worker (copies and swap writes off
-  the game thread) is built but off (`XSDK_ARQ_ASYNC 0`): gold froze with
-  it on.
-- `pb_init`'s store to 0x80000000: `xhw_page0_guard` claims physical page
-  0 if it is free, and gives it back its write bit if it is mapped
-  read-only (hw18c's crashes; the repair hasn't had to act on hardware
-  yet).
-- Rain in 4 x 4 columns: inside columns skip the clip, off-screen columns
-  aren't drawn.
-
-RC1c in round hw18d (median of the profiler's 5 s lines):
+Performance is RC1c's (round hw18d, median of the profiler's 5 s lines):
 
 | scene | red 480i | gold 720p |
 |---|---|---|
@@ -41,27 +40,25 @@ RC1c in round hw18d (median of the profiler's 5 s lines):
 | Landing Site, rain | 50 | 28 |
 | Phendrana, visors | 51 | 32 |
 
-On `dev` after RC1c: 6963d15, screenshots written whole in 64 KB pieces
-(gold took 47 s a 720p shot). Not in RC1: test builds and the Screen
-Capture setting only, saved for a later round (the user).
-
 Ship builds are `XBOX_LTO=1 XBOX_PGO=xbox/prime.profdata
 XBOX_CMAKE_ARGS=-DPX_LTO_MODE=thin` (`docs/pgo.md`); a round's profiler
 image adds `XBOX_CFLAGS="-DXHW_AUTOPAD=1 -DXHW_PROF=1"`. Console rounds
-and their files: `C:\xemu\hw\prime\ROUNDS.md`; older sessions and rounds
-(hw1-hw10, and hw16-hw18d's notes): `docs/history.md`.
+and their files: `C:\xemu\hw\prime\ROUNDS.md`; older sessions and rounds:
+`docs/history.md`.
+
+**This PC's xemu slot 1** (`C:\xemu\xemu.toml`) was found cut down to one
+EEPROM line ("Failed to load BIOS"); slots 2 and 3 work. Restore slot 1
+from slot 2's toml with its own paths, or keep using 2 and 3.
 
 ## Next session, in order
 
-0. **v1.0 beta is out** (2026-10-31): RC1c passed the user's free play;
-   dev merged into `main`, tagged `v1.0-beta`. The release is built and
-   published by GitHub Actions (the user): pushing the tag runs
-   `.github/workflows/build.yml` (docs/toolchain.md "Release"), a full
-   release marked latest. That build is from main's source on Linux
-   (RC1c plus 6963d15's screenshot writer and docs), not the MSYS2 binary
-   the consoles ran (MD5 7b0273f0...); likely this repo's first CI run, so
-   check it went through. Bug reports from players come with a boot.log
-   only if they turn Log File on.
+0. **v1.0-beta2 is out** (2026-11-01): check the Actions run for the tag
+   went through (build, host tests incl. `test_settings.py`, the stub
+   check) and the release zip is there. Player bug reports come with a
+   boot.log only if they turn Log File on (Xbox Port Options > System).
+   On the consoles, with Log File on, a move in the popup should log no
+   `MP stall`; the notice from a bad settings.ini hasn't been seen on a
+   screen yet.
 1. **Watch in the next round** (none planned: hardware only when truly
    needed, the user):
    - the page-0 repair: a `[MEM] page 0 at 0x80000000 read-only ...

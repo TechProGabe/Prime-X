@@ -56,9 +56,6 @@ const wchar_t* const kButtonNames[] = {L"A Button",     L"B Button",     L"X But
                                        L"Y Button",     L"White Button", L"Black Button",
                                        L"Start Button", L"Back Button",  L"Left Stick Click",
                                        L"Right Stick Click"};
-// GameCube by position (settings.c's k_default)
-const uint16_t kDefaultBinds[] = {PAD_BUTTON_A, PAD_BUTTON_X,     PAD_BUTTON_B, PAD_BUTTON_Y, PAD_TRIGGER_Z,
-                                  PAD_TRIGGER_Z, PAD_BUTTON_START, 0,            0,            0};
 
 bool IsBind(int option) { return option >= kXO_BindFirst && option <= kXO_BindLast; }
 
@@ -125,6 +122,8 @@ const wchar_t* Title(int option) {
     return L"Skip Cutscenes";
   case kXO_LogFile:
     return L"Log File";
+  case kXO_OpenMenu:
+    return L"Xbox Port Options";
   default:
     return IsBind(option) ? kButtonNames[option - kXO_BindFirst] : L"";
   }
@@ -132,7 +131,7 @@ const wchar_t* Title(int option) {
 
 const wchar_t* Description(int option) {
   if (IsBind(option)) {
-    return L"What this button does. Left and right change it.";
+    return L"What this button does. Taking another button's action swaps the two.";
   }
   switch (option) {
   case kXO_Widescreen:
@@ -161,6 +160,8 @@ const wchar_t* Description(int option) {
     return L"The Fusion Suit, a GBA-link bonus on the GameCube.";
   case kXO_LogFile:
     return L"Writes boot.log to the save folder, for bug reports.";
+  case kXO_OpenMenu:
+    return L"Prime-X's settings: video, controller, buttons and more. Press A.";
   default:
     return nullptr;
   }
@@ -176,18 +177,51 @@ const wchar_t* ListLabel(int option, int offset) {
   return kActions[((i + offset) % kActionCount + kActionCount) % kActionCount].name;
 }
 
+// the first Buttons row other than b that has the action gc; -1 if none
+static int RowWith(uint16_t gc, int b) {
+  if (gc == 0) {
+    return -1;
+  }
+  for (int j = 0; j <= kXO_BindLast - kXO_BindFirst; ++j) {
+    if (j != b && g_xsdk_settings.port[0].bind[j].gc == gc) {
+      return j;
+    }
+  }
+  return -1;
+}
+
+// A row takes the next action in the list; the button that had that action
+// takes this one's, so the two swap and no action is lost or doubled (GitHub
+// #1: A set to Jump left X on Jump too, and nothing on Fire, which is also
+// what confirms in every menu, so Options couldn't be left). Fire and Pause
+// stay on some button: an action no other button has (None, Lock, Aim, a
+// visor) is skipped while this button is the last with Fire or with Pause
+// (START cycled onto a visor left nothing to pause with: the popup's xemu
+// run, 2026-11-01; settings.ini's check resets such a layout too).
 void Step(int option, int delta) {
   if (!IsBind(option)) {
     return;
   }
   const int b = option - kXO_BindFirst;
-  const int i = ActionIndex(g_xsdk_settings.port[0].bind[b].gc);
-  const uint16_t gc = kActions[((i + delta) % kActionCount + kActionCount) % kActionCount].gc;
-  // every port the same: Prime is one player
-  for (int p = 0; p < 4; ++p) {
-    g_xsdk_settings.port[p].bind[b].gc = gc;
+  const uint16_t old = g_xsdk_settings.port[0].bind[b].gc;
+  int i = ActionIndex(old);
+  for (int tries = 1; tries < kActionCount; ++tries) {
+    i = ((i + delta) % kActionCount + kActionCount) % kActionCount;
+    const uint16_t gc = kActions[i].gc;
+    const int other = RowWith(gc, b);
+    if ((old == PAD_BUTTON_A || old == PAD_BUTTON_START) && gc != old && other < 0 && RowWith(old, b) < 0) {
+      continue;
+    }
+    // every port the same: Prime is one player
+    for (int p = 0; p < 4; ++p) {
+      g_xsdk_settings.port[p].bind[b].gc = gc;
+      if (other >= 0) {
+        g_xsdk_settings.port[p].bind[other].gc = old;
+      }
+    }
+    sDirty = true;
+    return;
   }
-  sDirty = true;
 }
 
 // The rows that were sliders are three choices: the title screen's frame
@@ -391,37 +425,6 @@ void Set(int option, int value) {
   }
 }
 
-void RestoreDefaults(int category) {
-  switch (category) {
-  case 0:
-    Set(kXO_SkipCutscenes, 0);
-    break;
-  case 1:
-    Set(kXO_Widescreen, 0);
-    Set(kXO_WidescreenHud, 0);
-    Set(kXO_Fov, 0);
-    Set(kXO_FpsCounter, 0);
-    break;
-  case 3:
-    for (int b = 0; b <= kXO_BindLast - kXO_BindFirst; ++b) {
-      for (int p = 0; p < 4; ++p) {
-        if (g_xsdk_settings.port[p].bind[b].gc != kDefaultBinds[b]) {
-          g_xsdk_settings.port[p].bind[b].gc = kDefaultBinds[b];
-          sDirty = true;
-        }
-      }
-    }
-    Set(kXO_RumbleStrength, 2);
-    Set(kXO_StickDeadZone, 1);
-    Set(kXO_CStickDeadZone, 1);
-    Set(kXO_TriggerClick, 1);
-    Set(kXO_Screenshots, XHW_TEST_BUILD);
-    break;
-  default:
-    break;
-  }
-}
-
 void ApplyAtBoot() {
 #if XHW_TEST_BUILD
   // test builds: "env PX_WIDESCREEN=0|1|2" (4:3, as the dashboard, 16:9) over settings.ini
@@ -443,16 +446,10 @@ void ApplyAtBoot() {
            g_xsdk_settings.hud_wide ? "edge to edge" : "centred", g_xsdk_settings.fov);
 }
 
-namespace {
-bool sFrontEndPort = false;
-} // namespace
+void MarkChanged() { sDirty = true; }
 
-void SetFrontEndPort(bool port) { sFrontEndPort = port; }
-bool FrontEndPort() { return sFrontEndPort; }
-
-const wchar_t* FrontEndCategory(int category) {
-  static const wchar_t* const kNames[] = {L"Video", L"Controller", L"Gameplay", L"System"};
-  return category >= 0 && category < 4 ? kNames[category] : nullptr;
+int BindGc(int button) {
+  return button >= 0 && button <= kXO_BindLast - kXO_BindFirst ? g_xsdk_settings.port[0].bind[button].gc : 0;
 }
 
 void Save() {

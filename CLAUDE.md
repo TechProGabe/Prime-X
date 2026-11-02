@@ -5,9 +5,10 @@ to be built with nxdk and LLVM 21. Not an emulator: the decompiled game
 (PrimeDecomp via MetroidPrimePort) is compiled for the Pentium III and drawn
 on the NV2A by Melee-X's GX layer.
 
-**State: release candidate 1** (RC1c, 0ff5ed0, 2026-10-31). The game plays
+**State: v1.0-beta2** (released 2026-11-01 from `main`). The game plays
 in xemu and on two consoles: red at 480i (~39-51 fps, fights 30-32) and
-gold at 720p (28-37 fps, 30 Hz ticks). The work is laid out
+gold at 720p (28-37 fps, 30 Hz ticks). Settings are the Xbox Port Options
+popup (`docs/ui.md`). The work is laid out
 as phases with gates in `docs/plan.md`; `docs/roadmap.md` says how far each
 got. Start with `docs/handoff.md` (where things stand, what to do next),
 then `docs/plan.md`, `docs/decisions.md`, `docs/sources.md`.

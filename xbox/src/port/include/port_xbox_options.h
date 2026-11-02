@@ -31,6 +31,8 @@ enum EOption {
   // (IsList): A, B, X, Y, White, Black, Start, Back, the stick clicks
   kXO_BindFirst,
   kXO_BindLast = kXO_BindFirst + 9,
+  // the pause screen's "Port Options" row: A opens the popup (port_menu.cpp)
+  kXO_OpenMenu,
 };
 
 const wchar_t* Title(int option);
@@ -47,17 +49,21 @@ const wchar_t* ListLabel(int option, int offset); // offset -1, 0, +1 from the v
 void Step(int option, int delta);
 int Get(int option);
 void Set(int option, int value);
-// Restore Defaults on a category (0 Visor, 1 Display, 2 Sound, 3 Controller)
-void RestoreDefaults(int category);
 // the screen closes: settings.ini is written if anything changed
 void Save();
 // at boot, after the video mode: the game-side settings (aspect, HUD, FOV)
 void ApplyAtBoot();
-// The title screen's Options frame shows Prime-X's categories ("Port
-// Options" in the New Game popup) or the retail ones ("Options")
-void SetFrontEndPort(bool port);
-bool FrontEndPort();
-// the categories' names on the title screen; nullptr: an empty slot
-const wchar_t* FrontEndCategory(int category);
+
+// The Port Options popup (xbox/src/port/port_menu.cpp, docs/ui.md): a card
+// over the game, opened from the main menu's "Port Options" row, the New
+// Game popup's third choice and the pause screen's Options. The game sees
+// no input while it is up, nor the press that closes it.
+void OpenMenu();
+bool MenuOpen();
+// the GameCube action a Buttons row gives (port 1; 0 none)
+int BindGc(int button);
+// settings.ini is to be written when the popup closes (a change made
+// without Set or Step: the Buttons tab's defaults)
+void MarkChanged();
 
 } // namespace PortXboxOptions
