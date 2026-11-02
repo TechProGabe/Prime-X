@@ -70,8 +70,8 @@ from slot 2's toml with its own paths, or keep using 2 and 3.
    consoles' MSYS2 image (nxdk's source paths are baked in and CI builds
    its own LLVM 21: a few dozen functions inline differently from the
    same source). Player reports come with a boot.log only if they turn
-   Log File on (Xbox Port Options > System). GitHub #2 (Dual Stick) is
-   still open: reply or close only when the user says.
+   Log File on (Xbox Port Options > System). GitHub #2 (Dual Stick) closed
+   with a comment pointing at the release (2026-11-02).
    - Saved for later (the user): **Xbox button glyphs** in the game's own
      text, sized up in docs/history.md "Session 2026-11-02" (~96 strings,
      48 textures, a `CTextParser` hook; ~2-3 days plus the art).
