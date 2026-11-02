@@ -110,6 +110,14 @@ report on older builds:
   red/gold: the popup opened several times (text clean every time), Dual
   Stick after the map, the map's zoom on LT/RT, Fusion Suit On surviving a
   restart, then the rest of the round's list below.
+- On both consoles (red 2026-11-02 13:52, gold 16:01; UDATA backed up
+  first). Red's first two runs on it (logs in `xemu/hw/logs-red-hw19`): no
+  crash or hang. The popup opened and closed 4 times in a row, and Aiming
+  and Fusion Suit changed and saved (`fusion_suit = 1` in settings.ini).
+  Gameplay ran 53-57 fps. The run before ended at 320 s with the popup open
+  for its last 200 s; frames kept presenting and nothing logged a fault, so
+  it was probably switched off there (asked). Fusion Suit after a restart:
+  the next boot shows it.
 
 xemu (slot 2): the popup at the title (`menu`, shots), the restart prompt
 (`menu_restart`), the pause screen's row in Tallon at 720p (`menu_pause`);
