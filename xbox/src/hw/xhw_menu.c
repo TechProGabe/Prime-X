@@ -36,7 +36,7 @@
 #define MAXH 640   /* 416 x 1.5 = 624 */
 
 static xhw_menu_view s_view;
-static int s_on, s_dirty;
+static int s_on;
 static int s_sx = 16, s_sy = 16;   /* device pixels per logical pixel, x16 */
 static int s_dw, s_dh, s_bpp;      /* the card in device pixels; the framebuffer's depth */
 static uint8_t* s_cache;           /* s_dw x s_dh in the framebuffer's format */
@@ -46,6 +46,27 @@ static int s_by0, s_by1;           /* the band's device rows */
 static uint32_t* s_body;           /* the controller body at this scale (optional) */
 static int s_body_w, s_body_h, s_body_ok;
 static int s_logged;
+/* Device pixel centres in logical 1/16 px, by column and row (no divide per
+ * pixel: the P3 pays ~40 cycles for one, and the first card took 336 ms a
+ * redraw on red, a stall the music skipped through) */
+static int s_lx[MAXW], s_ly[MAXH];
+static int s_aa, s_aa_k;           /* half a device pixel in L16; 128/s_aa in 16.16 */
+/* What is still to be drawn into the cache: device rows [s_pend0, s_pend1),
+ * a band at a time within XHW_MENU_BUDGET_US a frame, so a change never
+ * stalls the game (its music skipped). s_ready: the cache holds a whole card. */
+#ifndef XHW_MENU_BUDGET_US
+#define XHW_MENU_BUDGET_US 3000
+#endif
+#ifndef XHW_MENU_OPEN_BUDGET_US
+#define XHW_MENU_OPEN_BUDGET_US 10000   /* the first drawing: the card shows in a few frames */
+#endif
+static int s_pend0, s_pend1, s_ready, s_whole;   /* s_whole: the whole card again (a tab) */
+/* Each glyph's coverage at this scale (0..16 a device pixel), made the first
+ * time it is drawn: 16 samples a pixel once, not on every redraw */
+#define GLYPHS 128
+static uint8_t* s_gl[2][GLYPHS];
+static uint8_t* s_gl_mem;
+static int s_gl_used, s_gl_cap, s_gw[2], s_gh[2];
 
 /* ---------------------------------------------------------------- helpers */
 static uint32_t rgb(int r, int g, int b) {
@@ -61,17 +82,7 @@ static uint32_t rgb(int r, int g, int b) {
 
 static uint32_t shade(uint32_t c, int k) { return rgb(R_(c) * k >> 8, G_(c) * k >> 8, B_(c) * k >> 8); }
 
-static int isqrt(int v) {
-    int r = 0, b = 1 << 30;
-    if (v <= 0) return 0;
-    while (b > v) b >>= 2;
-    while (b) {
-        if (v >= r + b) v -= r + b, r = (r >> 1) + b;
-        else r >>= 1;
-        b >>= 2;
-    }
-    return r;
-}
+static int isqrt(int v) { return v <= 0 ? 0 : (int)__builtin_sqrtf((float)v); }
 
 /* col over the band pixel at alpha a (0..255) */
 static void mix(uint32_t* p, uint32_t col, int a) {
@@ -93,9 +104,8 @@ static void mix(uint32_t* p, uint32_t col, int a) {
 
 /* Logical coordinates in 1/16 pixel (L16). A device pixel's centre in L16,
  * and a logical box's device pixels clipped to the band */
-static int lx16(int px) { return ((px * 16 + 8) * 16) / s_sx; }
-static int ly16(int py) { return ((py * 16 + 8) * 16) / s_sy; }
-static int aa_half(void) { return 8 * 32 / (s_sx + s_sy); }   /* half a device pixel in L16 */
+#define lx16(px) (s_lx[px])
+#define ly16(py) (s_ly[py])
 
 typedef struct { int x0, x1, y0, y1; } Box;
 static int clip(Box* b, int l16x0, int l16y0, int l16x1, int l16y1) {
@@ -112,20 +122,44 @@ static int clip(Box* b, int l16x0, int l16y0, int l16x1, int l16y1) {
 #define PX(x, y) (&s_band[(y) - s_by0][x])
 
 static int cover(int d) {   /* d: signed distance in L16, negative inside -> 0..256 */
-    int h = aa_half();
-    return d <= -h ? 256 : d >= h ? 0 : (h - d) * 128 / h;
+    return d <= -s_aa ? 256 : d >= s_aa ? 0 : ((s_aa - d) * s_aa_k) >> 16;
 }
 
 /* ------------------------------------------------------------- the shapes */
+/* rbox leaves out the device columns [s_hole_x0, s_hole_x1) of the rows
+ * [s_hole_y0, s_hole_y1) while s_hole is set: the glass's two rims, whose
+ * insides the gradient covers anyway (three full-card passes were most of a
+ * redraw) */
+static int s_hole, s_hole_x0, s_hole_x1, s_hole_y0, s_hole_y1;
+
+static void hole(int x0, int y0, int x1, int y1) {   /* logical px; 0 size: none */
+    int i;
+    s_hole = x1 > x0;
+    s_hole_x0 = s_hole_x1 = s_hole_y0 = s_hole_y1 = 0;
+    if (!s_hole) return;
+    for (i = 0; i < s_dw && s_lx[i] < x0 * 16; i++) {}
+    s_hole_x0 = i;
+    for (; i < s_dw && s_lx[i] < x1 * 16; i++) {}
+    s_hole_x1 = i;
+    for (i = 0; i < s_dh && s_ly[i] < y0 * 16; i++) {}
+    s_hole_y0 = i;
+    for (; i < s_dh && s_ly[i] < y1 * 16; i++) {}
+    s_hole_y1 = i;
+}
+
 /* a rounded box in logical pixels (r: corner radius) */
 static void rbox(int x, int y, int w, int h, int r, uint32_t col, int alpha) {
     Box b;
     int px, py, cx = (2 * x + w) * 8, cy = (2 * y + h) * 8, hx = w * 8 - r * 16, hy = h * 8 - r * 16;
     if (!clip(&b, x * 16, y * 16, (x + w) * 16, (y + h) * 16)) return;
     for (py = b.y0; py < b.y1; py++) {
-        int qy = ly16(py) - cy;
+        int qy = ly16(py) - cy, skip = s_hole && py >= s_hole_y0 && py < s_hole_y1;
         qy = (qy < 0 ? -qy : qy) - hy;
         for (px = b.x0; px < b.x1; px++) {
+            if (skip && px == s_hole_x0) {
+                px = s_hole_x1 - 1;
+                continue;
+            }
             int qx = lx16(px) - cx, d, c;
             qx = (qx < 0 ? -qx : qx) - hx;
             if (qx > 0 && qy > 0) d = isqrt(qx * qx + qy * qy) - r * 16;
@@ -148,11 +182,10 @@ static void vgrad(int x, int y, int w, int h, uint32_t top, uint32_t bot) {
         if (t > 256) t = 256;
         k = 256 - t;
         c = rgb((R_(top) * k + R_(bot) * t) >> 8, (G_(top) * k + G_(bot) * t) >> 8, (B_(top) * k + B_(bot) * t) >> 8);
-        for (px = b.x0; px < b.x1; px++) {
-            int lx = lx16(px), ly = ly16(py);
-            if (lx < x * 16 || lx >= (x + w) * 16 || ly < y * 16 || ly >= (y + h) * 16) continue;
-            mix(PX(px, py), c, 255);
-        }
+        if (py & 1) c = shade(c, 236);   /* the scanlines */
+        if (ly16(py) < y * 16 || ly16(py) >= (y + h) * 16) continue;
+        for (px = b.x0; px < b.x1; px++)
+            if (lx16(px) >= x * 16 && lx16(px) < (x + w) * 16) *PX(px, py) = 0xFF000000u | c;
     }
 }
 
@@ -181,26 +214,26 @@ static void ring(int cx, int cy, int r, int w, uint32_t col, int alpha) {
         }
 }
 
-/* a line, ends round, w16 wide; points in L16 */
+/* a line, ends round, w16 wide; points in L16 (floats: a 64-bit divide a
+ * pixel was the Buttons page's slowest part) */
 static void line(int x0, int y0, int x1, int y1, int w16, uint32_t col, int alpha) {
     Box b;
-    int px, py, dx = x1 - x0, dy = y1 - y0;
-    long long len2 = (long long)dx * dx + (long long)dy * dy;
-    int pad = w16 / 2 + 16;
+    int px, py, pad = w16 / 2 + 16;
+    float dx = (float)(x1 - x0), dy = (float)(y1 - y0), len2 = dx * dx + dy * dy, inv = len2 > 0 ? 1.0f / len2 : 0;
     if (!clip(&b, (x0 < x1 ? x0 : x1) - pad, (y0 < y1 ? y0 : y1) - pad, (x0 > x1 ? x0 : x1) + pad,
               (y0 > y1 ? y0 : y1) + pad))
         return;
-    for (py = b.y0; py < b.y1; py++)
+    for (py = b.y0; py < b.y1; py++) {
+        float qy = (float)(ly16(py) - y0);
         for (px = b.x0; px < b.x1; px++) {
-            int qx = lx16(px) - x0, qy = ly16(py) - y0, ex = qx, ey = qy, c;
-            long long t = (long long)qx * dx + (long long)qy * dy;
-            if (len2 && t > 0) {
-                if (t >= len2) ex = qx - dx, ey = qy - dy;
-                else ex = qx - (int)(t * dx / len2), ey = qy - (int)(t * dy / len2);
-            }
-            c = cover(isqrt(ex * ex + ey * ey) - w16 / 2);
+            float qx = (float)(lx16(px) - x0), t = (qx * dx + qy * dy) * inv, ex, ey;
+            int c;
+            t = t < 0 ? 0 : t > 1 ? 1 : t;
+            ex = qx - t * dx, ey = qy - t * dy;
+            c = cover((int)__builtin_sqrtf(ex * ex + ey * ey) - w16 / 2);
             if (c) mix(PX(px, py), col, alpha * c >> 8);
         }
+    }
 }
 
 /* a triangle pointing left (dir -1) or right (+1), centre and half-height in
@@ -237,7 +270,7 @@ static void arrow(int cx, int cy, int hh, int dir, uint32_t col, int alpha) {
 static int tw(const char* s, int z) { return (int)strlen(s) * 8 * z; }
 
 /* unscii-16, zoom z, top-left at logical (x, y), 4 x 4 samples a pixel */
-static void glyphs(const char* s, int x, int y, int z, uint32_t col, int alpha) {
+static void glyphs_sampled(const char* s, int x, int y, int z, uint32_t col, int alpha) {
     Box b;
     int px, py, n = (int)strlen(s);
     if (!clip(&b, x * 16, y * 16, (x + n * 8 * z) * 16, (y + 16 * z) * 16)) return;
@@ -260,6 +293,56 @@ static void glyphs(const char* s, int x, int y, int z, uint32_t col, int alpha) 
             }
             if (hit) mix(PX(px, py), col, alpha * hit / 16);
         }
+}
+
+/* glyph c's coverage at zoom z (1 or 2), made on first use; NULL without memory */
+static const uint8_t* glyph(int zi, unsigned c) {
+    uint8_t* g;
+    int gw = s_gw[zi], gh = s_gh[zi], dx, dy, z = zi + 1;
+    if (c >= GLYPHS) c = '?';
+    if (s_gl[zi][c]) return s_gl[zi][c];
+    if (!s_gl_mem || s_gl_used + gw * gh > s_gl_cap) return NULL;
+    g = s_gl_mem + s_gl_used;
+    s_gl_used += gw * gh;
+    for (dy = 0; dy < gh; dy++)
+        for (dx = 0; dx < gw; dx++) {
+            int i, j, hit = 0;
+            for (j = 0; j < 4; j++) {
+                int gy = ((dy * 16 + 2 + j * 4) * 16) / s_sy / (16 * z);
+                if (gy >= 16) continue;
+                for (i = 0; i < 4; i++) {
+                    int gx = ((dx * 16 + 2 + i * 4) * 16) / s_sx / (16 * z);
+                    if (gx < 8 && (xhw_font16[c * 16 + gy] & (0x80 >> gx))) hit++;
+                }
+            }
+            g[dy * gw + dx] = (uint8_t)hit;
+        }
+    s_gl[zi][c] = g;
+    return g;
+}
+
+/* unscii-16 at zoom z, top-left at logical (x, y), snapped to a device pixel
+ * (a glyph is a whole number of device pixels at every scale: 6, 8 or 12 wide) */
+static void glyphs(const char* s, int x, int y, int z, uint32_t col, int alpha) {
+    int zi = z - 1, gw = s_gw[zi], gh = s_gh[zi], ox = (x * s_sx + 8) >> 4, oy = (y * s_sy + 8) >> 4, cx = x;
+    int y0 = oy < s_by0 ? s_by0 : oy, y1 = oy + gh > s_by1 ? s_by1 : oy + gh;
+    if (y0 >= y1) return;
+    for (; *s; s++, ox += gw, cx += 8 * z) {
+        const uint8_t* g = glyph(zi, (unsigned char)*s);
+        int px, py, x0 = ox < 0 ? 0 : ox, x1 = ox + gw > s_dw ? s_dw : ox + gw;
+        if (!g) {   /* no memory for the cache: sampled as it is drawn */
+            char one[2];
+            one[0] = *s, one[1] = 0;
+            glyphs_sampled(one, cx, y, z, col, alpha);
+            continue;
+        }
+        for (py = y0; py < y1; py++) {
+            const uint8_t* gr = g + (py - oy) * gw - ox;
+            uint32_t* d = PX(0, py);
+            for (px = x0; px < x1; px++)
+                if (gr[px]) mix(&d[px], col, (alpha * gr[px]) >> 4);
+        }
+    }
 }
 
 static void text(const char* s, int x, int y, int z, uint32_t col) {
@@ -323,19 +406,14 @@ static int badge(const char* b, int x, int y) {   /* returns its width */
 
 /* ------------------------------------------------------- the card's frame */
 static void draw_frame(const xhw_menu_view* v) {
-    int i, px, py;
-    Box b;
-    /* the glass: border, gradient, scanlines */
+    int i;
+    /* the glass: the rim and its dark inner edge, then the gradient with its
+     * scanlines inside them */
+    hole(8, 8, CW - 8, CH - 8);
     rbox(0, 0, CW, CH, 14, C_EDGE, 255);
     rbox(2, 2, CW - 4, CH - 4, 12, rgb(10, 22, 40), 255);
+    hole(0, 0, 0, 0);
     vgrad(8, 8, CW - 16, CH - 16, rgb(12, 26, 46), rgb(4, 9, 20));
-    if (clip(&b, 3 * 16, 3 * 16, (CW - 3) * 16, (CH - 3) * 16))
-        for (py = b.y0; py < b.y1; py++)
-            if (py & 1)
-                for (px = b.x0; px < b.x1; px++) {
-                    uint32_t* p = PX(px, py);
-                    if ((*p >> 24) == 255) *p = 0xFF000000u | shade(*p & 0xFFFFFFu, 236);
-                }
     /* the scan visor's corner brackets */
     for (i = 0; i < 4; i++) {
         int cx = i & 1 ? CW - 10 : 10, cy = i & 2 ? CH - 10 : 10, sx = i & 1 ? -1 : 1, sy = i & 2 ? -1 : 1;
@@ -707,19 +785,19 @@ static void band_out(uint8_t* dst, int pitch, int dst_y0) {
     }
 }
 
-/* the whole card, band by band, into dst (pitch bytes; its row 0 = the card's) */
-static void render(uint8_t* dst, int pitch) {
-    for (s_by0 = 0; s_by0 < s_dh; s_by0 += BAND) {
-        s_by1 = s_by0 + BAND > s_dh ? s_dh : s_by0 + BAND;
-        memset(s_band, 0, sizeof s_band);
-        draw_band(&s_view);
-        band_out(dst, pitch, 0);
-    }
+/* one band (device rows y .. y + BAND) into dst, whose row 0 is the card's */
+static void render_band(uint8_t* dst, int pitch, int y) {
+    s_by0 = y;
+    s_by1 = y + BAND > s_dh ? s_dh : y + BAND;
+    memset(s_band, 0, sizeof s_band);
+    draw_band(&s_view);
+    band_out(dst, pitch, 0);
 }
 
 /* -------------------------------------------------------------- the API */
 static void geometry(void) {
     const xhw_video_mode* vm = xhw_video();
+    int i;
     if (vm->height >= 720) s_sx = s_sy = 24;
     else s_sy = 16, s_sx = vm->widescreen ? 12 : 16;
     s_dw = CW * s_sx / 16;
@@ -727,6 +805,14 @@ static void geometry(void) {
     s_bpp = vm->bpp;
     if (s_dw > MAXW) s_dw = MAXW;
     if (s_dh > MAXH) s_dh = MAXH;
+    for (i = 0; i < MAXW; i++) s_lx[i] = ((i * 16 + 8) * 16) / s_sx;
+    for (i = 0; i < MAXH; i++) s_ly[i] = ((i * 16 + 8) * 16) / s_sy;
+    s_aa = 8 * 32 / (s_sx + s_sy);
+    s_aa_k = (128 << 16) / s_aa;
+    for (i = 0; i < 2; i++) {
+        s_gw[i] = 8 * (i + 1) * s_sx / 16;
+        s_gh[i] = 16 * (i + 1) * s_sy / 16;
+    }
 }
 
 static void drop(void) {
@@ -735,6 +821,46 @@ static void drop(void) {
     free(s_body);
     s_body = NULL;
     s_body_ok = 0;
+    free(s_gl_mem);
+    s_gl_mem = NULL;
+    memset(s_gl, 0, sizeof s_gl);
+    s_gl_used = s_gl_cap = 0;
+}
+
+/* logical rows [y0, y1) are to be drawn again */
+static void dirty(int y0, int y1) {
+    int d0 = (y0 - 2) * s_sy / 16, d1 = ((y1 + 2) * s_sy + 15) / 16;
+    d0 = d0 < 0 ? 0 : d0 / BAND * BAND;
+    d1 = d1 > s_dh ? s_dh : d1;
+    if (s_pend0 >= s_pend1) {
+        s_pend0 = d0, s_pend1 = d1;
+    } else {
+        if (d0 < s_pend0) s_pend0 = d0;
+        if (d1 > s_pend1) s_pend1 = d1;
+    }
+}
+
+#define DIFF(f) memcmp(&o->f, &v->f, sizeof v->f)
+/* what changed between the view drawn (o) and the new one (v) */
+static void dirty_diff(const xhw_menu_view* o, const xhw_menu_view* v) {
+    int r;
+    if (o->tab != v->tab || o->tabs != v->tabs || o->page != v->page || DIFF(tab_name) || DIFF(status)) {
+        dirty(0, CH);
+        s_whole = 1;
+        return;
+    }
+    if (DIFF(help) || DIFF(value_help) || DIFF(note)) dirty(v->page ? 296 : ROW_Y + ROWS_FIT * ROW_H, CH - 34);
+    if (v->page == 1) {
+        if (o->pad_sel != v->pad_sel || DIFF(pad_map) || DIFF(pad_changed) || o->pad_ok != v->pad_ok ||
+            o->pad_buttons != v->pad_buttons || o->pad_lx != v->pad_lx || o->pad_rx != v->pad_rx ||
+            o->pad_lt != v->pad_lt || o->pad_rt != v->pad_rt)
+            dirty(84, 296);
+        return;
+    }
+    for (r = 0; r < ROWS_FIT; r++)
+        if (o->rows != v->rows || (r == o->sel) != (r == v->sel) || DIFF(label[r]) || DIFF(value[r]) ||
+            o->choices[r] != v->choices[r] || o->choice[r] != v->choice[r] || o->flags[r] != v->flags[r])
+            dirty(ROW_Y + r * ROW_H, ROW_Y + (r + 1) * ROW_H);
 }
 
 void xhw_menu_show(const xhw_menu_view* v) {
@@ -749,22 +875,27 @@ void xhw_menu_show(const xhw_menu_view* v) {
         bytes = (uint32_t)s_dw * (uint32_t)s_dh * (uint32_t)(s_bpp / 8);
         s_cache = (uint8_t*)malloc(bytes);
         if (!s_cache && xhw_mem_reclaim(bytes / 1024 + 256, 0)) s_cache = (uint8_t*)malloc(bytes);
+        s_gl_cap = GLYPHS * (s_gw[0] * s_gh[0] + s_gw[1] * s_gh[1]);
+        s_gl_mem = (uint8_t*)malloc((size_t)s_gl_cap);
         if (!s_logged || !s_cache) {
             s_logged = 1;
-            xhw_logf("[MENU] card %dx%d at %d-bit: %s (%u KB free)", s_dw, s_dh, s_bpp,
-                     s_cache ? "cached" : "no memory for the cache, drawn each frame", xhw_mem_free_kb());
+            xhw_logf("[MENU] card %dx%d at %d-bit: %s, glyph cache %s (%u KB free)", s_dw, s_dh, s_bpp,
+                     s_cache ? "cached" : "no memory for the cache, drawn each frame", s_gl_mem ? "on" : "off",
+                     xhw_mem_free_kb());
         }
         s_on = 1;
-        s_dirty = 1;
+        s_ready = 0;
+        s_view = *v;
+        s_pend0 = 0, s_pend1 = s_dh;
+    } else if (memcmp(v, &s_view, sizeof *v)) {
+        dirty_diff(&s_view, v);
+        s_view = *v;
     }
     if (v->page == 1 && !s_body) body_cache();
-    if (s_dirty || memcmp(v, &s_view, sizeof *v)) {
-        s_view = *v;
-        s_dirty = 1;
-    }
 }
 
 int xhw_menu_active(void) { return s_on; }
+int xhw_menu_busy(void) { return s_on && s_pend0 < s_pend1; }
 
 /* nv2a.c: the GPU is idle and the frame finished; the card goes on it */
 void xhw_menu_draw(void* fb, int w, int h, int bpp, int pitch) {
@@ -775,13 +906,22 @@ void xhw_menu_draw(void* fb, int w, int h, int bpp, int pitch) {
     y0 = (h - s_dh) / 2;
     if (x0 < 0 || y0 < 0) return;
     if (!s_cache) {   /* no cache: drawn straight into the frame, every frame */
-        render(f + (size_t)y0 * (size_t)pitch + (size_t)x0 * (size_t)(bpp / 8), pitch);
+        uint8_t* d = f + (size_t)y0 * (size_t)pitch + (size_t)x0 * (size_t)(bpp / 8);
+        for (y = 0; y < s_dh; y += BAND) render_band(d, pitch, y);
+        s_pend0 = s_pend1 = 0;
         return;
     }
-    if (s_dirty) {
-        s_dirty = 0;
-        render(s_cache, s_dw * (s_bpp / 8));
+    if (s_pend0 < s_pend1) {   /* what changed, a band at a time, within the frame's budget */
+        uint64_t t0 = xhw_time_ns();
+        do {
+            render_band(s_cache, s_dw * (s_bpp / 8), s_pend0);
+            s_pend0 += BAND;
+        } while (s_pend0 < s_pend1 &&
+                 xhw_time_ns() - t0 <
+                     (uint64_t)(s_ready && !s_whole ? XHW_MENU_BUDGET_US : XHW_MENU_OPEN_BUDGET_US) * 1000u);
+        if (s_pend0 >= s_pend1) s_pend0 = s_pend1 = 0, s_ready = 1, s_whole = 0;
     }
+    if (!s_ready) return;   /* the first drawing isn't whole yet: a few frames */
     for (y = 0; y < s_dh; y++) {
         int a = s_span[y][0], b = s_span[y][1], bytes = bpp / 8;
         if (b <= a) continue;
