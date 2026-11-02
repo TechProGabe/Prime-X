@@ -22,7 +22,7 @@ def main():
                 os.path.join(ROOT, "tests/xbox/test_fog.c")))
         cmd = [cc, "-O1", "-Wall", "-o", exe, wrapper,
                "-I" + os.path.join(ROOT, "xbox/src/hw"), "-lm"]
-        r = subprocess.run(cmd)
+        r = subprocess.run(cmd + ["-lm"])
         if r.returncode:
             return r.returncode
         return subprocess.run([exe]).returncode

@@ -37,7 +37,7 @@ def build_and_run(tmp, name, source, defines):
            "-I" + os.path.join(ROOT, "src/sdk_include"),
            "-I" + os.path.join(ROOT, "xbox/src/sdk"),
            "-I" + os.path.join(ROOT, "xbox/src/sdk/gx")]
-    r = subprocess.run(cmd)
+    r = subprocess.run(cmd + ["-lm"])
     if r.returncode:
         sys.exit(r.returncode)
     r = subprocess.run([exe], stdout=subprocess.PIPE, text=True)

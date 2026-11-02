@@ -32,7 +32,7 @@ def main():
         exe = os.path.join(tmp, "test_pool")
         with open(c, "w") as f:
             f.write(PRELUDE + src[a:b] + test)
-        r = subprocess.run([cc, "-O2", "-w", "-o", exe, c])
+        r = subprocess.run([cc, "-O2", "-w", "-o", exe, c, "-lm"])
         if r.returncode:
             return r.returncode
         return subprocess.run([exe]).returncode
