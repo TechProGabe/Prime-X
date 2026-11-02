@@ -105,10 +105,20 @@ prompt equals `to_wstring`'s address); string literals are now skipped
 (bbf0b6a).
 
 xemu showed the popup right at 480i and 720p, from the main menu and from
-the pause screen (`menu`, `menu_pause` scenarios). **Not checked yet**: how
-long a redraw takes on a P3 and the ~1 MB it allocates while up (on the
-consoles now), and the notice from a bad settings.ini on screen (the host
-test covers the parsing).
+the pause screen (`menu`, `menu_pause` scenarios).
+
+**The consoles' verdict** (the user: "every time you move in the port
+options it like glitches at everything", the music skipping, worst on gold
+at 720p; logs in `C:\xemu\hw\prime\logsportmenured`, gold had Log File
+off): red's boot.log had `MP stall: frame ... took 336 ms` to `581 ms` on
+every move, all of it in the frame's draw: the card's full redraw on a P3.
+Not the sounds, though the user asked for them gone and they are. Fixed
+after: only the changed rows redrawn, a band at a time within 3 ms a frame,
+and the drawing ~20x cheaper (docs/ui.md "The card";
+`tools/xbox/bench_menu.py`). That build is on `dev`, not on the consoles
+(the user: "hold until we finish the test"). **Next**: when the user says,
+the ship build to both, and on red a move should log no `MP stall`.
+Still not seen: the notice from a bad settings.ini on screen.
 
 ## Session 2026-11-01: the beta's first three bug reports
 

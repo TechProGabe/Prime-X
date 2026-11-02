@@ -16,13 +16,13 @@
 // Input: the Xbox controllers as they are (not the remapped GameCube pad), so
 // a layout can never lock the player out: up/down (D-pad or left stick,
 // held to repeat) pick, left/right change, A changes too, LT/RT switch tabs,
-// Y twice restores the tab's defaults, B or START close. The game reads a
-// neutral pad while the popup is up and until the buttons that closed it
-// are let go (xsdk_menu_block, pad.c).
+// Y twice restores the tab's defaults, B or START close. It makes no
+// sound (the user, 2026-11-01, when the music skipped on the consoles; the
+// skips were the card's redraw, xhw_menu.c). The game reads a neutral pad while the popup is up and
+// until the buttons that closed it are let go (xsdk_menu_block, pad.c).
 #include "port_xbox_options.h"
 #include "port_debug.h"
 
-#include "Kyoto/Audio/CSfxManager.hpp"
 #include "MetroidPrime/Player/CGameState.hpp"
 
 #include <dolphin/pad.h>
@@ -234,14 +234,6 @@ xhw_menu_view sView;
 
 uint32_t NowMs() { return static_cast< uint32_t >(xhw_time_ns() / 1000000ull); }
 
-void Sfx(ushort id) {
-  CSfxManager::SfxStart(id, 0x7f, 0x40, false, CSfxManager::kMedPriority, false, CSfxManager::kAllAreas);
-}
-// the pause screen's own: a move, a change, a tab, back
-void SfxMove() { Sfx(0x59c); }
-void SfxChange() { Sfx(0x59d); }
-void SfxTab() { Sfx(0x599); }
-void SfxBack() { Sfx(0x597); }
 
 int RowCount(int tab) { return tab == kTabButtons ? XHW_MENU_IN_MAPPABLE : kTabs[tab].count; }
 
@@ -395,7 +387,6 @@ void Close() {
   sOpen = false;
   sRelease = true;
   xhw_menu_show(nullptr);
-  SfxBack();
   Save(); // settings.ini, once, if anything changed
   xhw_logf("[MENU] Port Options closed");
 }
@@ -405,7 +396,6 @@ void Change(int delta) {
   const int sel = sSel[sTab];
   if (sTab == kTabButtons) {
     Step(kXO_BindFirst + sel, delta);
-    SfxChange();
     xhw_logf("[MENU] %s: %s", kButtonNames[sel], ActionOf(BindGc(sel)).name);
     return;
   }
@@ -415,7 +405,6 @@ void Change(int delta) {
   }
   const int val = Get(row.option);
   SetValue(row.option, ((val + delta) % row.count + row.count) % row.count);
-  SfxChange();
   const int now = Get(row.option);
   xhw_logf("[MENU] %s: %s", row.label, row.values[now < 0 || now >= row.count ? 0 : now]);
 }
@@ -429,13 +418,11 @@ void Act() { // A on an action row
   if (sConfirmUntil != 0 && sConfirmTab == sTab && now < sConfirmUntil) {
     sConfirmUntil = 0;
     RestoreAll();
-    Sfx(0x598);
     xhw_logf("[MENU] every setting restored");
     return;
   }
   sConfirmUntil = now + 3000;
   sConfirmTab = sTab;
-  SfxMove();
 }
 
 void Frame() {
@@ -497,11 +484,9 @@ void Frame() {
   if (fire & 1) {
     sSel[sTab] = (sSel[sTab] + rows - 1) % rows;
     sConfirmUntil = 0;
-    SfxMove();
   } else if (fire & 2) {
     sSel[sTab] = (sSel[sTab] + 1) % rows;
     sConfirmUntil = 0;
-    SfxMove();
   } else if (fire & 4) {
     Change(-1);
   } else if (fire & 8) {
@@ -510,7 +495,6 @@ void Frame() {
   if (trigPress & 3) {
     sTab = (sTab + (trigPress & 1 ? kTabCount - 1 : 1)) % kTabCount;
     sConfirmUntil = 0;
-    SfxTab();
   }
   if (press & XHW_BTN_A) {
     if (sTab != kTabButtons && kTabs[sTab].rows[sSel[sTab]].count == 0) {
@@ -523,12 +507,10 @@ void Frame() {
     if (sConfirmUntil != 0 && sConfirmTab == sTab && sTab != kTabSystem) {
       sConfirmUntil = 0;
       RestoreTab(sTab);
-      Sfx(0x598);
       xhw_logf("[MENU] %s tab restored", kTabNames[sTab]);
     } else if (sTab != kTabSystem) {
       sConfirmUntil = now + 3000;
       sConfirmTab = sTab;
-      SfxMove();
     }
   }
   Fill();
@@ -557,7 +539,6 @@ void OpenMenu() {
     }
   }
   sDir = 15; // a held direction waits to be let go
-  Sfx(0x598);
   Fill();
   xhw_menu_show(&sView);
   xhw_logf("[MENU] Port Options opened");

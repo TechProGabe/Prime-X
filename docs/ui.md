@@ -100,10 +100,24 @@ same in every mode. Nothing reads the framebuffer (write-combined). The card
 is drawn in 16-row bands in RAM, where the shapes blend, into a cache of the
 whole card in the framebuffer's format (~0.9 MB at 480, ~1.1 MB at 720p)
 that exists only while the popup is up; each frame copies each row's opaque
-span. It is drawn again only when what it shows changes. If the cache can't
-be allocated (after asking the reclaimers), the bands go straight into
-every frame: more CPU, same picture; `[MENU] card ...` in boot.log says
-which.
+span. If the cache can't be allocated (after asking the reclaimers), the
+bands go straight into every frame: more CPU, same picture; `[MENU] card
+...` in boot.log says which.
+
+**Redraws never stall the game** (the first console build did: red's log
+had `MP stall ... 336 ms` to `581 ms` on every move, the music skipping and
+the picture hitching, worst at 720p). Only the rows that changed are drawn
+again (a move: the two rows and the help box; a tab: the whole card), a
+band at a time within 3 ms of each frame (10 ms for the first drawing and a
+whole-card change; nothing shows until the first drawing is whole). The
+drawing itself got ~20x cheaper: the device pixels' logical positions come
+from tables (no divide per pixel), each glyph's supersampled coverage is
+made once per scale (~185 KB at 720p while the popup is up), lines use
+floats, and the glass's two rims skip the inside the gradient covers, with
+the scanlines folded into the gradient. `tools/xbox/bench_menu.py` times it
+on the host (a P3 is ~34x slower): a move 0.25 ms at 480 and 0.5 ms at
+720p, from 10 and 22 ms. The popup makes no sounds (the game's menu sounds
+were the user's first suspect).
 
 ### The rows (`xbox/src/port/port_menu.cpp`)
 
@@ -136,8 +150,9 @@ The Xbox controllers as they are, not the remapped GameCube pad, so no
 layout can lock a player out: up/down (D-pad or left stick; held, it repeats
 after 300 ms every 85 ms) pick, left/right change, A changes too (or acts on
 Restore All Defaults), LT/RT switch tabs, Y twice within 3 s restores the
-tab's defaults, B or START close. The game's own pause-screen sounds: move,
-change, tab, back.
+tab's defaults, B or START close. No sounds (the user, after the first
+console build: the music skipped; the cause was the redraw, above, but the
+sounds stay out).
 
 ### settings.ini by hand
 
