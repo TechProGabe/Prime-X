@@ -80,12 +80,14 @@ has each one's why.
 xemu (slot 2): the popup at the title (`menu`, shots), the restart prompt
 (`menu_restart`), the pause screen's row in Tallon at 720p (`menu_pause`);
 the ship image (LTO + PGO, `-DXHW_LOG_ALWAYS=1`, MD5
-8df6a91ac8d77d71a2bc505d09e197f3, with Dual Stick) booted clean for 120 s. Console round
+91f1c9a881a9853164ca990ab4a72307: Dual Stick by default, the amber Port Options) booted clean for 120 s. Console round
 to check: backing out of the game and in again many times (the crash's
 path), the popup from the main menu and the pause screen (moves instant,
 music on), the Buttons tab's moves, Video Mode's prompt (Restart now once on
 red: relaunches have stuck its audio before), free aim (RT, push up looks
-up), the Display category (two rows).
+up), the Display category (two rows); Dual Stick's feel (Aim Speed, the
+curve, strafing, lock-on, scan, Black + right stick for beams); the amber
+popup on a TV at 480 and 720p, and its open (the one read of the frame).
 
 ## Where it stands (2026-11-01): v1.0-beta2
 
