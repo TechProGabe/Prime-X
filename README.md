@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/release-v1.0%20beta-orange" alt="release: v1.0 beta">
+  <img src="https://img.shields.io/badge/release-v1.0%20beta%203-orange" alt="release: v1.0 beta 3">
   <img src="https://img.shields.io/badge/platform-Original%20Xbox-107c10" alt="platform: Original Xbox">
   <img src="https://img.shields.io/badge/target-real%20hardware-2ea44f" alt="target: real hardware">
   <img src="https://img.shields.io/badge/video-480i%20%7C%20480p%20%7C%20720p-1f6fe0" alt="video: 480i, 480p, 720p">
@@ -12,7 +12,7 @@
 
 Metroid Prime, running natively on an original Xbox. No emulator. The game's own decompiled code, rebuilt for the Xbox's Pentium III and drawn by its NV2A GPU.
 
-> **v1.0 beta 2.** This is still a beta. The whole game should be playable from the Frigate to the credits, but it hasn't had wide testing yet, so you will run into bugs. If you do, turn on Xbox Port Options > System > Log File, play until it happens again, and send the `boot.log` with your report. Known problems are listed below.
+> **v1.0 beta 3.** This is still a beta. The whole game should be playable from the Frigate to the credits, but it hasn't had wide testing yet, so you will run into bugs. If you do, turn on Xbox Port Options > System > Log File, play until it happens again, and send the `boot.log` with your report. Known problems are listed below.
 
 This is the third port in the family, after [OpenCrossing-Xbox](https://github.com/TechProGabe/OpenCrossing-Xbox) (Animal Crossing) and [Melee-X](https://github.com/TechProGabe/Melee-X) (Super Smash Bros. Melee). Melee-X proved the Xbox can run a decompiled GameCube game at full speed; Prime-X takes the same GameCube-on-Xbox layer and puts Metroid Prime on it.
 
@@ -25,7 +25,8 @@ What you get:
 - The whole game, Frigate Orpheon to the credits
 - 480i, 480p or 720p, with **16:9 widescreen at both 480 and 720**, up to whatever your dashboard allows
 - The game always runs at its proper speed. When a room is too heavy, the frame rate drops but the game doesn't slow down
-- **Xbox Port Options**, on the main menu (no save file needed) and in the pause menu's Options: every setting says what it does, and buttons are remapped on a picture of the controller
+- **Dual Stick aiming** by default: the left stick moves, the right stick aims, as in most modern shooters. The GameCube's controls are one setting away
+- **Xbox Port Options**, on the main menu (no save file needed) and in the pause menu's Options, styled like the game's own pause menu: every setting says what it does, and buttons are remapped on a picture of the controller
 - A few extras on top of the GameCube game, all off or retail by default: skippable cutscenes, an edge-to-edge widescreen HUD, a field-of-view setting, an FPS counter, screenshots, button remapping, and the Fusion Suit (a GBA-link bonus on the GameCube)
 - Rumble, and saves in the GameCube `.gci` format. Moving saves to and from Dolphin should work, but it hasn't been tested yet
 - **L + R + Back + Black** on any controller quits to the dashboard
@@ -79,16 +80,18 @@ The same as Melee-X: grab the latest `Prime-X-<version>.zip` from Releases, put 
 | X | B | jump |
 | B | X | Morph Ball |
 | Y | Y | missile |
-| White or Black | Z | map |
+| White | Z | map |
+| Black + right stick | C-stick | switch beams |
 | Left trigger | L (analog) | lock on, scan |
-| Right trigger | R (analog) | free aim |
-| Left stick | Control stick | move |
-| Right stick | C-stick | switch beams |
+| Left stick | Control stick | move and strafe |
+| Right stick | | aim |
 | D-pad | D-pad | switch visors |
 | Start | Start | pause |
 | L + R + Back + Black | | quit to the dashboard |
 
-The buttons sit where they do on a GameCube pad, as on Melee-X. They can be remapped in Xbox Port Options > Buttons: give a button another's action and the two swap, and Fire and Pause always stay on some button. In menus, A confirms and B goes back, whatever the layout.
+That's **Dual Stick** aiming, the default. Aim Speed (Low, Medium, High) is in Xbox Port Options > Controller, and Reverse Y-Axis in the game's own Options flips up and down. Set Aiming to **GameCube** there for the original controls: the left stick turns, holding the right trigger makes it aim instead, and the right stick switches beams.
+
+The face buttons sit where they do on a GameCube pad, as on Melee-X. They can be remapped in Xbox Port Options > Buttons: give a button another's action and the two swap, and Fire and Pause always stay on some button. In menus, A confirms and B goes back, whatever the layout.
 
 ## Video
 

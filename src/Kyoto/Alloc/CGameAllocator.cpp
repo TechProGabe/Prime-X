@@ -330,6 +330,26 @@ CGameAllocator::SGameMemInfo* CGameAllocator::FindFreeBlock(uint len) {
     SGameMemInfo* candidate = x14_bins[binIndex];
     SGameMemInfo* last = nullptr;
     for (; candidate; last = candidate, candidate = candidate->GetNextFree()) {
+#ifdef TARGET_XBOX
+      // PORT_XBOX: a free-list link outside the heap (something wrote into a
+      // free block's header) faulted here (beta2, a tester's crash.log): the
+      // rest of the bin is cut off, its blocks lost to this session, logged
+      // once, and the game goes on
+      if (candidate < xc_first || candidate >= x10_last) {
+        static int sBadLinks = 0;
+        if (sBadLinks++ < 4) {
+          PortLog::Write("[MEM] CGameAllocator: bin %u link %p outside the heap (%p-%p) after %p; bin cut off\n",
+                         binIndex, static_cast< void* >(candidate), static_cast< void* >(xc_first),
+                         static_cast< void* >(x10_last), static_cast< void* >(last));
+        }
+        if (last != nullptr) {
+          last->SetNextFree(nullptr);
+        } else {
+          x14_bins[binIndex] = nullptr;
+        }
+        break;
+      }
+#endif
       if (!candidate->IsAllocated() && candidate->x4_len >= len) {
         delta = candidate->x4_len - len;
         if (delta < bestDelta && candidate->GetNext()) {

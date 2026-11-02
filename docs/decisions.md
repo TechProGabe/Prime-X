@@ -439,6 +439,106 @@ swaps it, as Melee-X's does.
   runs after the link: any of nxdk's "Not implemented" pdclib objects in the
   map fails the build.
 
+- **Disc reads cancelled and closed for real** (2026-11-02): `DVDClose`,
+  `DVDCancel` and `DVDCancelAsync` (`xbox/src/sdk/dvd.c`) were no-ops, but
+  the game frees a request's buffer and its `DVDFileInfo` right after them
+  (`CRealDvdRequest`'s destructor counts on `DVDClose` to drain, as
+  MetroidPrimePort's aurora does). A read still queued then landed in freed
+  memory and its delivery wrote `cb->state` there: beta2's tester crashed in
+  `CGameAllocator::Alloc` on a free-list link of `0x1ea44400` (title screen,
+  `CMoviePlayer` posting its next read, after backing out of the game and
+  in again a few times). Now they drain the block: a read still waiting is
+  cancelled (`DVD_STATE_CANCELED`, callback with `DVD_RESULT_CANCELED`, as
+  aurora), one the worker is doing is waited for, and finished ones are
+  delivered there and then. `CGameAllocator::FindFreeBlock` also cuts a bin
+  whose link points outside the heap (logged `[MEM] CGameAllocator: bin ...`)
+  instead of faulting, should anything else write into a free block.
+- **Display options that did nothing are gone** (2026-11-02): Screen
+  Brightness, Screen Offset X/Y and Screen Stretch were the GameCube's copy
+  filter and VI registers, which the Xbox's GX and VI ignore (a tester:
+  "Adjusting screen brightness doesn't seem to work"; the user: "Just rip out
+  the brightness settings"). The Display category keeps the Xbox Port
+  Options row and Restore Defaults, on the pause screen and the title's
+  Options.
+- **Free aim is modern by default** (2026-11-02): the disc's PlayerControls
+  tweak maps Look Up to the stick's down, so with Reverse Y-Axis Off the
+  GameCube aims flight style. A tester read that as the setting being
+  backwards; the user: "make it modern play style instead of flight style
+  please by default". On the Xbox, Off pushes up to look up, On is the
+  GameCube's flight style (`CPlayer::ComputeFreeLook`).
+- **The Port Options popup holds the game** (2026-11-02, the user:
+  "the port options menu is heavy and laggy, streamline the whole thing for
+  performance"): `OpenMenu` runs a modal loop at 60 Hz (pads, view, the
+  changed bands drawn by the CPU straight onto the frame on screen;
+  alarms and the card's, disc's and ARAM's completions as while the game
+  waits for a read). Before, the game ran on behind it, every frame waited
+  for the GPU and copied a ~1 MB cache of the card in, and a change was
+  drawn 3 ms a frame over several of the game's frames. The card cache is
+  gone (~1 MB less while it is up). The Buttons tab no longer lights what is
+  held (each press redrew the controller twice), the D-pad moves over the
+  callouts as they stand (it stepped A, B, X, Y... up and across the card),
+  LT/RT/D-pad/sticks can be selected and say why they are fixed, and A/X
+  step the action. Closing with a new Video Mode asks "Restart later /
+  Restart now", Later selected (a tester's idea); Restart now saves and
+  relaunches the XBE (`xhw_reboot_self`).
+- **The restart question as a dialog** (2026-11-02, round hw19; the user:
+  the stick didn't work there, only the D-pad, and it looked like rows to
+  change, and Restart now "prompted a crash, then it restarted"): page 2 of
+  the card, no tabs, the question in a box and **Later | Restart now** side
+  by side, the D-pad or the left stick picks, footer A OK / B Later. Restart
+  now shows "Restarting Prime-X in 720p..." for 3 frames before the save and
+  the relaunch. The "crash" was the watchdog's hang card: gold's stock drive
+  took over 6 s to save settings.ini (the game thread in `WriteFile`). The
+  watchdog is told now: `xhw_watchdog_busy` is a count, held around every
+  settings save and the whole relaunch / quit path (`launch`,
+  `xhw_quit_to_dashboard`), and settings.ini goes out in one write (an 8 KB
+  stdio buffer; pdclib's was 1 KB).
+- **Dual Stick aiming** (2026-11-02, GitHub #2; the user: "make sure it's
+  high performance and works well, easy to configure"): Port Options >
+  Controller > **Aiming: GameCube / Dual Stick** and
+  **Aim Speed: Low / Medium / High** (120 / 180 / 250 degrees a second at
+  full tilt, up and down at 3/4; a fifth linear, the rest squared, so a
+  light tilt aims finely). It is MetroidPrimePort's twin stick: the game
+  side (CPlayer's direct-aim path: the left stick moves and strafes, the
+  retail free look is off, RT does nothing) was already imported; the
+  Xbox's `port_debug.cpp` had it stubbed and now keeps the aim state
+  (`PortMouse::AimState`, in radians) with the same presented-frame lag
+  between 30 Hz ticks. The stick is read by pad.c at full precision past
+  the C-stick dead zone (the C-stick values are cut to the GameCube's +-59
+  gate), not through `PADClamp`. Beams: a **Beam Select** action (settings.ini
+  `BEAM`, the popup's "Beams"): held, the right stick is the C-stick again.
+  Turning Dual Stick on gives it to Black when Black only duplicates Map (the
+  default) or is free, else to the first free stick click or BACK. Reverse
+  Y-Axis On is flight style here too. settings.ini: `[input] aim = gamecube |
+  dual`, `aim_speed = low | medium | high`.
+  **Dual Stick is the default** (the user, 2026-11-02: "make dual stick on by
+  default"; asked, the agent agreed: the Xbox pads have the stick, players
+  expect it, Remastered defaults to it), an exception to "retail by
+  default". The default layout's Black is Beam Select (White stays Map); a
+  settings.ini with Dual Stick and no Beam Select gets one at load, as the
+  row does.
+- **Port Options look like Prime's pause Options** (2026-11-02, the user:
+  "match the game vibe better and be as high performance as possible, as
+  light as possible"; picked mockup A of four): an amber hologram (the
+  frame behind the card read once at open, shown through the glass at
+  ~22% under an amber tint, every third row darker as the pause screen's
+  scanlines), chamfered frames and tabs, and the disc's Deface fonts
+  (14B, Large) lifted through the game's font loader and decoded once into
+  texel cells (`port_menu.cpp` `LiftFont`, a few KB), drawn with their
+  outline; unscii if a font can't be had. Lighter: no rounded-box distance
+  fields for the glass, no per-pixel scanline gradient, the controller a
+  flat hologram from a few shapes (the shaded, cached body is gone: up to
+  ~0.5 MB), and a move on the Buttons page redraws only the two callouts'
+  rows and spots. Cost while it's up: the backdrop (~1 MB at 720p, freed at
+  close; opaque glass without it).
+
+- **`_snwprintf` has a body** (2026-11-02, `xbox/src/sdk/libc_fill.c`): nxdk's
+  is `assert(0)`; libc++'s `std::to_wstring(float/double)` formats through
+  it. `check_stubs.py` flagged it after a relink (the chain ran through a
+  float constant's bytes, likely an accidental match, but it gets a real
+  body rather than an allowance): the wide format narrowed, `vsnprintf`,
+  the result widened, MSVC's -1 when the buffer is short.
+
 ## Edits to imported code
 
 One line per edit to `src/`, `include/`, `extern/musyx` or
@@ -506,9 +606,14 @@ One line per edit to `src/`, `include/`, `extern/musyx` or
 | `src/MetroidPrime/CParticleDatabase.cpp`, `src/MetroidPrime/CParticleGenInfo.cpp`, `include/MetroidPrime/CParticleGenInfo.hpp` | `UpdateParticleGenDB` takes a generator's locator segment from `CParticleGenInfo::PortLocatorSeg`, which looks the (never changing) locator name up once per layout instead of every tick | speed: a string-map lookup per attached particle generator per tick (`GetSegIdFromString` and the map's tree walk, ~0.5% of Lava Lake, hw15); the same segment |
 | `src/Kyoto/Particles/CElementGen.cpp` | The untextured quads (`RenderBasicParticles*`, and `RenderParticles`' plain, rotated, oriented and motion-blur ones: nine places) collect their four positions with the calls' own statements (`PortQ`) and go through one `GXPortVertices3fC1s16` call (`PortBasicQuad`), which makes the twelve calls itself when the batch isn't that layout; the original calls under `#else` | speed: Lava Lake's particles were ~4% of the console's CPU in their per-vertex calls (`GXTexCoord1s16` 1.8%, `GXColor1u32` 0.9%, `GXPosition3f32` 0.7%, round hw15); same bytes (`-DXGX_DYN_VERIFY=1` compares them) |
 | `src/Kyoto/Alloc/CGameAllocator.cpp`, `src/Kyoto/Particles/CElementGen.cpp`, `src/Kyoto/Particles/CParticleSwoosh.cpp` | the clock reads that only feed write-only timing stats are left out: `gAllocatorTime` (two a game allocation), `CElementGen`'s `x2cc`/`x2d0` and `CParticleSwoosh`'s `x1c4_`/`x1c8_` (two per system update and render) | speed: `xhw_time_ns` was ~1% of the fight's CPU (round hw13), most of it from these; nothing reads the stats |
-| `src/MetaRender/CCubeRenderer.cpp` | `AddStaticGeometry` registers the room's geometry memory (the hull of its arrays and display lists) with `GXPortStaticAdd`; `RemoveStaticGeometry` unregisters it (`GXPortStaticRemove`, which drops the lists cached from it) | speed: the content checks of Main Plaza's ~1600 cached world lists were ~5% of the console's CPU (round hw15); the disc's geometry never changes in place, and the game removes it before freeing or moving it (heap compaction does remove/add) |
+| `src/MetaRender/CCubeRenderer.cpp` | `AddStaticGeometry` registers the room's geometry memory with `GXPortStaticAdd`: since 2026-11-02 the blocks its arrays and display lists lie in (pieces under 1 KB apart joined, `PortRegisterStaticGeometry`), before that their hull, which took any other allocation between the blocks as static too; `RemoveStaticGeometry` unregisters it (`GXPortStaticRemove`, which drops the lists cached from it) | speed: the content checks of Main Plaza's ~1600 cached world lists were ~5% of the console's CPU (round hw15); the disc's geometry never changes in place, and the game removes it before freeing or moving it (heap compaction does remove/add) |
 | `src/Kyoto/Alloc/CMemory.cpp` | `CMemory::Alloc`/`Free` take only `HeapMutex`, not `OSDisableInterrupts` as well | a deadlock on red (free play, a Map Station's jingle ending): the mixer held the MusyX lock and freed a one-shot stream's buffer (`StopStream`), waiting for the interrupt lock, while the game thread held the interrupt lock in `CDSPStreamManager::IsStreamAvailable` and waited for the MusyX lock. `OSDisableInterrupts` is a no-op on PC, a real lock on the Xbox (os.c); `HeapMutex` alone serialises the heap |
 | `include/MetroidPrime/CSortedLists.hpp`, `src/MetroidPrime/CSortedLists.cpp` | `CSortedListManager` keeps each sorted list's coordinates in list order (`xPortKey`, 24 KB), moved with the ids; the binary searches and `MoveInList` read them | speed: every near-list query runs twelve binary searches over 44-byte nodes scattered through 45 KB (`BuildNearList` ~3% of a fight's ticks, round hw12); the same comparisons on the same values |
+| `src/Kyoto/Alloc/CGameAllocator.cpp` | `FindFreeBlock`: a free-list link outside the heap cuts that bin off (logged once per bad link, up to 4) instead of being followed | beta2 crash: a link overwritten through a read into freed memory faulted here (dvd.c fixed; this is the guard) |
+| `src/MetroidPrime/CPauseScreenFrame.cpp` | the Display category is the Xbox Port Options row and Restore Defaults, on the pause screen and the title's Options (`skFrontOptions`); A on the row opens the popup from the title's Options too | Screen Brightness/Offset/Stretch were no-ops on the Xbox (copy filter, VI); the user: "rip out the brightness settings" |
+| `src/MetroidPrime/Player/CPlayer.cpp` | `ComputeFreeLook`: Reverse Y-Axis Off swaps Look Up/Down (modern), On keeps the disc's mapping (flight) | the user: free aim "modern play style instead of flight style please by default" |
+| `src/MetroidPrime/Player/CGameState.cpp` | both `CSystemState` constructors start the Fusion Suit bit from settings.ini (`xsdk_fusion_suit`, `[game] fusion_suit`) | the bit isn't in the save (the GameCube picks it on the Fusion bonuses screen each time): the Port Options row's suit was gone after a restart (a forum report, 2026-11-02) |
+| `src/Kyoto/Input/CDolphinController.cpp` | the twin-stick block takes port 1's right stick from pad.c (`xsdk_pad_aim`, full precision past the dead zone) instead of the gate-clamped C-stick, and leaves the C-stick to the game while Beam Select is held (`xsdk_pad_beam_held`) | Dual Stick aiming (GitHub #2): ~60 steps of C-stick for a half turn a second was too coarse to aim with; beams need a way to be picked |
 
 Imported unchanged but added to the game build (MetroidPrimePort compiles
 them as game code): `src/platform/port_raster_font.cpp`,

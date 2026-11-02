@@ -33,6 +33,8 @@ enum EOption {
   kXO_BindLast = kXO_BindFirst + 9,
   // the pause screen's "Port Options" row: A opens the popup (port_menu.cpp)
   kXO_OpenMenu,
+  kXO_AimMode,  // GameCube / Dual Stick (GitHub #2)
+  kXO_AimSpeed, // Low / Medium / High: Dual Stick's turn rate
 };
 
 const wchar_t* Title(int option);

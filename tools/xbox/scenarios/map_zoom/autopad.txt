@@ -1,0 +1,29 @@
+# map_zoom: a forum report (2026-11-02): the map sat at its farthest zoom
+# and the triggers did nothing (PortDebug::TakeMapZoom gave 0, the map
+# divides its distance by it). Tallon's Landing Site; the popup's Buttons
+# tab put back to the defaults (Y twice: White is Map; the xemu slots'
+# settings.ini carry other scenarios' remaps), closed; White opens the map,
+# R zooms in, L out, White closes; then the right stick must still aim
+# (Dual Stick stopped after the map: a stale "map screen open" flag, round
+# hw19). White is held 8 frames: gameplay ticks slower than frames in xemu.
+env PX_DISC_CHECK=quick
+env MP_BOOT_WORLD=39F2DE28
+env PX_MENU_AT=1900
+1960 R for 2
+2000 R for 2
+2040 SHOT
+2080 Y for 2
+2100 Y for 2
+2140 SHOT
+2180 B for 2
+2400 SHOT
+2440 WHITE for 8
+2600 SHOT
+2640 R for 60
+2720 SHOT
+2760 L for 30
+2820 SHOT
+2860 WHITE for 8
+3000 SHOT
+3040 CR for 30
+3100 SHOT

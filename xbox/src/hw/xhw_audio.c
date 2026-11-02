@@ -191,6 +191,8 @@ static void aci_start(void) {
  * in every [PERF] line: the ring never drained). Clear the sticky status,
  * and restart a halted or stuck engine. */
 static unsigned s_aci_restarts, s_aci_stuck, s_aci_last_civ = 99, s_aci_dead, s_aci_resets;
+/* cold resets in a row that brought no finished buffer back */
+static unsigned s_aci_fails;
 static int s_aci_played;   /* a buffer has finished since the boot */
 static int s_aci_silent;   /* stuck since the boot: given up, the pump drains the ring in real time */
 static uint64_t s_drain_ns;
@@ -229,9 +231,10 @@ static int aci_halt(unsigned base, unsigned* us) {
 static void aci_give_up(unsigned civ, uint8_t sr, uint8_t sr2) {
     volatile uint32_t* m = (volatile uint32_t*)ACI;
     unsigned us;
-    xhw_logf("[AUDIO] stuck since boot: civ %u lvi %u sr %02x/%02x picb %u after %u restarts and %u cold resets "
+    xhw_logf("[AUDIO] stuck %s: civ %u lvi %u sr %02x/%02x picb %u after %u restarts and %u cold resets "
              "(global control %08x status %08x); silent until the Xbox is switched off and on",
-             civ, ACI[0x115] & 31u, sr, sr2, (unsigned)*(volatile uint16_t*)(ACI + 0x118), s_aci_restarts,
+             s_aci_played ? "after playing" : "since boot", civ, ACI[0x115] & 31u, sr, sr2,
+             (unsigned)*(volatile uint16_t*)(ACI + 0x118), s_aci_restarts,
              s_aci_resets, (unsigned)m[0x12C >> 2], (unsigned)m[0x130 >> 2]);
     aci_halt(0x110, &us);
     aci_halt(0x170, &us);
@@ -256,6 +259,7 @@ static void aci_check(unsigned civ) {
     if (sr2 & 0x1C) ACI[0x176] = (uint8_t)(sr2 & 0x1C);
     if (civ != s_aci_last_civ) {   /* a buffer finished: the engine runs */
         s_aci_dead = 0;
+        s_aci_fails = 0;
         s_aci_played = 1;
     }
     s_aci_stuck = civ == s_aci_last_civ ? s_aci_stuck + 1 : 0;
@@ -270,14 +274,20 @@ static void aci_check(unsigned civ) {
          * eight restarts, silent for the whole boot. If the codec isn't
          * taking frames, after three restarts without a finished buffer,
          * cold-reset the AC-link (with a pause that grows) as well. */
-        if (++s_aci_dead >= 3 && s_aci_resets < 32) {
+        if (++s_aci_dead >= 3) {
             volatile uint32_t* m = (volatile uint32_t*)ACI;
             LARGE_INTEGER d;
-            if (!s_aci_played && s_aci_resets >= 1) {
+            /* beta2, a tester's crash.log: stuck mid-game, cold resets 28 to
+             * 32 a few seconds apart and none bringing it back; past 32 the
+             * engine was restarted every ~100 ms for good, each restart
+             * polling the bus masters up to a million times on this thread.
+             * Eight cold resets in a row without a finished buffer: give up */
+            if ((!s_aci_played && s_aci_resets >= 1) || s_aci_fails >= 8 || s_aci_resets >= 32) {
                 aci_give_up(civ, sr, sr2);
                 return;
             }
             s_aci_resets++;
+            s_aci_fails++;
             d.QuadPart = -10 * 1000 * (int64_t)(s_aci_resets < 10 ? s_aci_resets * 10 : 100);
             KeDelayExecutionThread(KernelMode, FALSE, &d);
             xhw_logf("[AUDIO] AC97 cold reset (%u): global control %08x status %08x", s_aci_resets,

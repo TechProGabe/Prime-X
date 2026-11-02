@@ -1189,7 +1189,10 @@ static uint32_t s_st_swz, s_st_swz_stages;   /* draws whose combiners extract sw
 static uint32_t s_st_ind, s_st_ind_approx;   /* draws with indirect stages: offset / drawn direct */
 static volatile int s_fbdump_once;
 
-unsigned xgx_present_count(void) { return s_frame; }
+/* the popup's modal frames count too: the screen changes, the watchdog
+ * mustn't take the held game for a hang */
+static unsigned s_modal_frames;
+unsigned xgx_present_count(void) { return s_frame + s_modal_frames; }
 static void frame_open(void);
 static void vp_frame_end(void);
 
@@ -1824,6 +1827,48 @@ static void stats_report(void) {
 void xgx_stats_now(void) { stats_report(); }
 
 static void z16_frame_end(void);
+
+/* ---- the Port Options popup's modal loop (port_menu.cpp, xhw.h) ----
+ * The game is held while the popup is up: nothing is drawn or flipped, and
+ * the card is written by the CPU into the frame being scanned out, only
+ * where it changed. Begin waits for the GPU (the last frame and its flip
+ * done) and a retrace, so the buffer on screen is the one that stays. */
+static uint8_t* s_modal_fb;
+
+void xhw_menu_modal_begin(void) {
+    DWORD vbl;
+    int ms;
+    frame_open();
+    wait_idle();
+    vbl = pb_get_vbl_counter();
+    for (ms = 0; ms < 50 && pb_get_vbl_counter() == vbl; ms++) xhw_sleep_ms(1);
+    s_modal_fb = NULL;
+}
+
+void xhw_menu_modal_frame(void) {
+    /* the buffer on screen, through the back buffer's own mapping */
+    const uint32_t front = PCRTC_START_REG & 0x03FFFFFFu;
+    uint8_t* fb = (uint8_t*)fb_cpu((void*)(((uintptr_t)pb_back_buffer() & ~(uintptr_t)0x03FFFFFFu) | front));
+    const int pitch = (int)pb_back_buffer_pitch();
+    if (fb != s_modal_fb) {   /* the first frame, or the screen moved: the whole card */
+        s_modal_fb = fb;
+        xhw_menu_capture(fb, s_fbw, s_fbh, s_bpp, pitch);   /* the game behind it, read once */
+        xhw_menu_redraw();
+    }
+    xhw_menu_draw_changes(fb, s_fbw, s_fbh, s_bpp, pitch);
+    s_modal_frames++;
+    /* screenshots and test builds' SHOTs come from the screen, as it is */
+    if (s_shot_req || s_shot_once) {
+        s_shot_req = s_shot_once = 0;
+        xhw_fbdump_file(fb, s_fbw, s_fbh, s_bpp, pitch);
+    }
+    if (s_fbdump_req || s_fbdump_once) {
+        s_fbdump_req = s_fbdump_once = 0;
+        xhw_fbdump(fb, s_fbw, s_fbh, s_bpp, pitch);
+    }
+}
+
+void xhw_menu_modal_end(void) { s_modal_fb = NULL; }
 
 void xgx_present(int black) {
     int ovl, note, menu;

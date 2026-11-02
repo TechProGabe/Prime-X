@@ -48,13 +48,14 @@ static const struct { const char* name; uint16_t bits; } k_gc[] = {
     { "NONE", 0 }, { "A", PAD_BUTTON_A }, { "B", PAD_BUTTON_B }, { "X", PAD_BUTTON_X },
     { "Y", PAD_BUTTON_Y }, { "Z", PAD_TRIGGER_Z }, { "L", PAD_TRIGGER_L }, { "R", PAD_TRIGGER_R },
     { "START", PAD_BUTTON_START }, { "UP", PAD_BUTTON_UP }, { "DOWN", PAD_BUTTON_DOWN },
-    { "LEFT", PAD_BUTTON_LEFT }, { "RIGHT", PAD_BUTTON_RIGHT },
+    { "LEFT", PAD_BUTTON_LEFT }, { "RIGHT", PAD_BUTTON_RIGHT }, { "BEAM", XSDK_PAD_BEAM },
 };
 #define N_GC (int)(sizeof k_gc / sizeof k_gc[0])
 
-/* the default layout: GameCube-like by position */
+/* the default layout: GameCube-like by position; Black is Beam Select for
+ * Dual Stick aiming, the default since 2026-11-02 (White is the map) */
 static const char* const k_default[N_XBOX] = {
-    "A", "X", "B", "Y", "Z", "Z", "START", "NONE", "NONE", "NONE", "UP", "DOWN", "LEFT", "RIGHT",
+    "A", "X", "B", "Y", "Z", "BEAM", "START", "NONE", "NONE", "NONE", "UP", "DOWN", "LEFT", "RIGHT",
 };
 
 static uint16_t gc_bits(const char* name) {
@@ -85,7 +86,10 @@ static void defaults(xsdk_settings* st) {
     st->hud_wide = 0;
     st->fov = 55;
     st->skip_cutscenes = 0;
+    st->fusion_suit = 0;
     st->sim_mode = XSDK_SIM_AUTO;
+    st->aim = XSDK_AIM_DUAL;   /* the user, 2026-11-02: "make dual stick on by default" */
+    st->aim_speed = XSDK_AIM_SPEED_MEDIUM;
     for (p = 0; p < 4; p++) {
         xsdk_port_settings* ps = &st->port[p];
         ps->stick_deadzone = 0.20f;
@@ -199,6 +203,7 @@ static int gc_lookup(const char* name, uint16_t* out) {
         { "lock", PAD_TRIGGER_L }, { "lock on", PAD_TRIGGER_L }, { "aim", PAD_TRIGGER_R },
         { "free aim", PAD_TRIGGER_R }, { "pause", PAD_BUTTON_START }, { "d-up", PAD_BUTTON_UP },
         { "d-down", PAD_BUTTON_DOWN }, { "d-left", PAD_BUTTON_LEFT }, { "d-right", PAD_BUTTON_RIGHT },
+        { "beam select", XSDK_PAD_BEAM }, { "beams", XSDK_PAD_BEAM },
     };
     int i;
     for (i = 0; i < N_GC; i++)
@@ -284,6 +289,7 @@ static int parse(FILE* f, xsdk_settings* st) {
             if (_stricmp(key, "hud_wide") == 0) set_flag(n, key, val, &st->hud_wide);
             else if (_stricmp(key, "fov") == 0) set_num(n, key, val, 45, 75, &st->fov);
             else if (_stricmp(key, "skip_cutscenes") == 0) set_flag(n, key, val, &st->skip_cutscenes);
+            else if (_stricmp(key, "fusion_suit") == 0) set_flag(n, key, val, &st->fusion_suit);
             /* "timing" and the older "game_timing" are ignored: Game Timing
              * is always Auto since 2026-10-30 (the user's call; Fixed and
              * Flex only through the test builds' PX_SIM_AUTO=0 and
@@ -296,6 +302,16 @@ static int parse(FILE* f, xsdk_settings* st) {
                 v = pct(st->rumble);
                 set_num(n, key, val, 0, 100, &v);
                 st->rumble = v / 100.0f;
+            } else if (_stricmp(key, "aim") == 0) {
+                if (_stricmp(val, "gamecube") == 0 || _stricmp(val, "0") == 0) st->aim = XSDK_AIM_GAMECUBE;
+                else if (_stricmp(val, "dual") == 0 || _stricmp(val, "dual stick") == 0 || _stricmp(val, "1") == 0)
+                    st->aim = XSDK_AIM_DUAL;
+                else problem(n, "aim = %s: use gamecube or dual", val, "");
+            } else if (_stricmp(key, "aim_speed") == 0) {
+                if (_stricmp(val, "low") == 0 || _stricmp(val, "0") == 0) st->aim_speed = XSDK_AIM_SPEED_LOW;
+                else if (_stricmp(val, "medium") == 0 || _stricmp(val, "1") == 0) st->aim_speed = XSDK_AIM_SPEED_MEDIUM;
+                else if (_stricmp(val, "high") == 0 || _stricmp(val, "2") == 0) st->aim_speed = XSDK_AIM_SPEED_HIGH;
+                else problem(n, "aim_speed = %s: use low, medium or high", val, "");
             } else if (_stricmp(key, "cstick_1p") == 0) {
                 /* Melee-X's (smash attacks in 1P modes): no effect in Prime */
             } else {
@@ -351,6 +367,22 @@ static int parse(FILE* f, xsdk_settings* st) {
             for (i = 0; i < N_XBOX; i++) ps->bind[i].gc = gc_bits(k_default[i]);
         }
     }
+    /* Dual Stick aiming with no Beam Select button (a settings.ini from
+     * before it, whose Black is the map): Black takes it if it only doubles
+     * White's map or does nothing, else the first free stick click or BACK */
+    if (st->aim == XSDK_AIM_DUAL) {
+        for (p = 0; p < 4; p++) {
+            xsdk_port_settings* ps = &st->port[p];
+            int i, have = 0, pick = -1;
+            for (i = 0; i < N_XBOX; i++) have |= ps->bind[i].gc == XSDK_PAD_BEAM;
+            if (have) continue;
+            if (ps->bind[5].gc == 0 || (ps->bind[5].gc == PAD_TRIGGER_Z && ps->bind[4].gc == PAD_TRIGGER_Z)) pick = 5;
+            else if (ps->bind[9].gc == 0) pick = 9;
+            else if (ps->bind[8].gc == 0) pick = 8;
+            else if (ps->bind[7].gc == 0) pick = 7;
+            if (pick >= 0) ps->bind[pick].gc = XSDK_PAD_BEAM;
+        }
+    }
     return saw;
 }
 
@@ -360,7 +392,8 @@ int xsdk_settings_equal(const xsdk_settings* a, const xsdk_settings* b) {
     if (a->video_720p != b->video_720p || a->progressive != b->progressive || a->widescreen != b->widescreen ||
         a->fps != b->fps || a->shots != b->shots || a->led != b->led || a->log != b->log ||
         pct(a->rumble) != pct(b->rumble) || a->cstick_1p != b->cstick_1p || a->hud_wide != b->hud_wide ||
-        a->fov != b->fov || a->skip_cutscenes != b->skip_cutscenes)
+        a->fov != b->fov || a->skip_cutscenes != b->skip_cutscenes || a->fusion_suit != b->fusion_suit || a->aim != b->aim ||
+        a->aim_speed != b->aim_speed)
         return 0;
     for (p = 0; p < 4; p++) {
         const xsdk_port_settings *x = &a->port[p], *y = &b->port[p];
@@ -374,15 +407,16 @@ int xsdk_settings_equal(const xsdk_settings* a, const xsdk_settings* b) {
 }
 
 int xsdk_cstick_1p(void) { return g_xsdk_settings.cstick_1p; }
+int xsdk_fusion_suit(void) { return g_xsdk_settings.fusion_suit; }
 
 static void log_summary(const char* what) {
     const xsdk_settings* st = &g_xsdk_settings;
     const xsdk_port_settings* p1 = &st->port[0];
     xhw_logf("[SETTINGS] %s: 720p %d, progressive %d, widescreen %d, fps %d, screenshots %d, led %d, log %d, "
-             "HUD wide %d, FOV %d, rumble %d, C-stick in 1P %d, port 1 dead zones %d/%d, trigger click %d, trigger Z %d",
+             "HUD wide %d, FOV %d, rumble %d, aim %s (speed %d), port 1 dead zones %d/%d, trigger click %d, trigger Z %d",
              what, st->video_720p, st->progressive, st->widescreen, st->fps, st->shots, st->led, st->log,
              st->hud_wide,
-             st->fov, pct(st->rumble), st->cstick_1p,
+             st->fov, pct(st->rumble), st->aim == XSDK_AIM_DUAL ? "dual" : "gamecube", st->aim_speed,
              pct(p1->stick_deadzone), pct(p1->cstick_deadzone), p1->trigger_click, p1->trigger_z);
 }
 
@@ -475,6 +509,7 @@ static const char* action_name(uint16_t gc) {
     case PAD_TRIGGER_R: return "Free Aim";
     case PAD_BUTTON_START: return "Pause";
     case PAD_BUTTON_UP: case PAD_BUTTON_DOWN: case PAD_BUTTON_LEFT: case PAD_BUTTON_RIGHT: return "D-pad (visors)";
+    case XSDK_PAD_BEAM: return "Beam Select (Dual Stick: held, the right stick picks beams)";
     default: return "nothing";
     }
 }
@@ -500,17 +535,24 @@ static void write_all(FILE* f, const xsdk_settings* st) {
     fprintf(f, "; log_file = 1: boot.log in this folder, for bug reports (0: nothing written while you play).\n");
     fprintf(f, "[system]\nscreenshots = %d\nlog_file = %d\n\n", st->shots, st->log);
     fprintf(f, "; hud_wide = 1: at 16:9 the HUD reaches the screen's edges. fov: 45 to 75 degrees, 55 is the\n");
-    fprintf(f, "; GameCube's. skip_cutscenes = 1: START skips any cutscene.\n");
-    fprintf(f, "[game]\nhud_wide = %d\nfov = %d\nskip_cutscenes = %d\n\n", st->hud_wide, st->fov,
-            st->skip_cutscenes);
+    fprintf(f, "; GameCube's. skip_cutscenes = 1: START skips any cutscene. fusion_suit = 1: Samus wears the\n");
+    fprintf(f, "; Fusion Suit (the GameCube's Game Boy Advance link bonus).\n");
+    fprintf(f, "[game]\nhud_wide = %d\nfov = %d\nskip_cutscenes = %d\nfusion_suit = %d\n\n", st->hud_wide,
+            st->fov, st->skip_cutscenes, st->fusion_suit);
     fprintf(f, "; rumble: 0 to 100 percent (rumble on or off is in the game's own Options).\n");
-    fprintf(f, "[input]\nrumble = %d\n\n", pct(st->rumble));
+    fprintf(f, "; aim = gamecube: RT and the left stick aim, the right stick picks beams. aim = dual: the right\n");
+    fprintf(f, "; stick aims and the left one moves and strafes; hold Beam Select (BEAM below) and tilt the\n");
+    fprintf(f, "; right stick to pick a beam. aim_speed (dual): low, medium or high.\n");
+    fprintf(f, "[input]\nrumble = %d\naim = %s\naim_speed = %s\n\n", pct(st->rumble),
+            st->aim == XSDK_AIM_DUAL ? "dual" : "gamecube",
+            st->aim_speed == XSDK_AIM_SPEED_LOW ? "low" : st->aim_speed == XSDK_AIM_SPEED_HIGH ? "high" : "medium");
     fprintf(f, "; Each controller port. stick_deadzone, cstick_deadzone: 0 to 60 percent.\n");
     fprintf(f, "; trigger_click: 64 to 255, how far LT and RT go in before they count as pressed.\n");
     fprintf(f, "; trigger_z = left or right: that trigger opens the map instead of locking on (left) or\n");
     fprintf(f, "; aiming (right); off: both as on the GameCube.\n");
     fprintf(f, "; Buttons: Xbox button = GameCube button: A (Fire) B (Jump) X (Morph Ball) Y (Missile)\n");
-    fprintf(f, "; Z (Map) L (Lock On) R (Free Aim) START (Pause) UP DOWN LEFT RIGHT (the D-pad) NONE.\n");
+    fprintf(f, "; Z (Map) L (Lock On) R (Free Aim) START (Pause) UP DOWN LEFT RIGHT (the D-pad) BEAM (Beam\n");
+    fprintf(f, "; Select, for aim = dual) NONE.\n");
     fprintf(f, "; Fire, Jump... work too. Some button must be A and some START, or the port is reset.\n");
     for (port = 0; port < 4; port++) {
         const xsdk_port_settings* ps = &st->port[port];
@@ -529,7 +571,25 @@ static void write_all(FILE* f, const xsdk_settings* st) {
     fprintf(f, END_MARK "\n");
 }
 
+void xhw_watchdog_busy(int on);   /* hw: a long, deliberate stall */
+
+static int save_body(void);
+
+/* The write, the flush, the read-back and the rename took over 6 s on gold's
+ * stock drive (round hw19): the watchdog took it for a hang and showed its
+ * card. The watchdog is told; the file goes out in one write. */
 int xsdk_settings_save(void) {
+    int ok;
+    xhw_watchdog_busy(1);
+    ok = save_body();
+    xhw_watchdog_busy(0);
+    return ok;
+}
+
+static int save_body(void) {
+    /* settings.ini is ~4 KB: pdclib's 1 KB buffer wrote it in pieces (and
+     * its setvbuf doesn't allocate one) */
+    static char wbuf[8192];
     char p[260], t[260];
     FILE* f;
     int ok, r = XHW_REPLACE_FAILED;
@@ -540,6 +600,7 @@ int xsdk_settings_save(void) {
         xhw_logf("[SETTINGS] save failed: can't create %s (errno %d)", t, errno);
         return 0;
     }
+    setvbuf(f, wbuf, _IOFBF, sizeof wbuf);
     write_all(f, &g_xsdk_settings);
     xhw_flush(f);
     ok = !ferror(f);

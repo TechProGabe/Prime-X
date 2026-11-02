@@ -121,6 +121,30 @@ void xsdk_frame_boundary(void) {
     if (s_post_cb) s_post_cb(s_retrace);
 }
 
+/* A frame of the Port Options popup's modal loop (port_menu.cpp), the game
+ * held: 60 Hz, the retrace count on (test builds' autopad scripts count it),
+ * memory reclaim, and the alarms and the card's, disc's and ARAM's
+ * completions (the music's stream reads) as when the game waits on a disc
+ * read; no retrace callbacks, no game frame. */
+void xsdk_modal_tick(void) {
+    static u64 next_ns;
+    const u64 period = 16666667ull;
+    u64 now = xhw_time_ns();
+    if (next_ns == 0 || now > next_ns + period * 2) {
+        next_ns = now;
+    } else {
+        while (now + 1500000ull < next_ns) {
+            xhw_sleep_ms(1);
+            now = xhw_time_ns();
+        }
+        while (now < next_ns) now = xhw_time_ns();
+    }
+    next_ns += period;
+    s_retrace++;
+    xhw_mem_tick();
+    xsdk_run_alarms();
+}
+
 void VIWaitForRetrace(void) { xsdk_frame_boundary(); }
 
 /* Prime's EndScene (DolphinCGraphics.cpp) swaps its XFBs in the retrace

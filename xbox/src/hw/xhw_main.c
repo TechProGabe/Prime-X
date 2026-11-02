@@ -271,6 +271,7 @@ int main(void) {
 }
 
 void xhw_quit_to_dashboard(void) {
+    xhw_watchdog_busy(1);
     xsdk_card_flush();
     xhw_exit_write(s_exit_why[0] ? s_exit_why : "quit to the dashboard");
     xhw_led_shutdown();
@@ -287,6 +288,9 @@ void xhw_quit_to_dashboard(void) {
  * quick-reboots and doesn't come back; it returns only when the path has
  * no folder in it, and then the console reboots. */
 static void __attribute__((noreturn)) launch(char* path) {
+    /* the saves and shutdowns below can take seconds on a slow drive: not
+     * a hang (round hw19, the hang card came up on the way out) */
+    xhw_watchdog_busy(1);
     xsdk_card_flush();
     xhw_exit_write(s_exit_why[0] ? s_exit_why : "relaunch");
     xhw_led_shutdown();

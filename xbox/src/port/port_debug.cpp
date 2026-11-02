@@ -12,7 +12,12 @@
 //     teleport requests, from getenv (a test build's autopad.txt "env" lines).
 #include "port_debug.h"
 #include "port_env.h"
+#include "port_mouse.h"
 
+#include "MetroidPrime/Player/CGameOptions.hpp"
+#include "MetroidPrime/Player/CGameState.hpp"
+
+#include <cmath>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -356,47 +361,147 @@ bool MapPickupKinds() { return false; }
 bool MapStationPickups() { return false; }
 bool RevealMap() { return false; }
 void SetRevealMap(bool) {}
-bool MapScreenOpen() { return sMapScreenOpen; }
-void SetMapScreenOpen(bool open) { sMapScreenOpen = open; }
+// CAutoMapper sets it each tick it takes input on the map screen, and stops
+// calling once the map is left (the closing transition): not refreshed for
+// 300 ms counts as closed, as MetroidPrimePort's input.cpp. A plain flag stayed
+// on after the map closed, and Dual Stick aiming (CDolphinController) stopped
+// for good (round hw19).
+unsigned sMapScreenStamp = 0;
+bool MapScreenOpen() { return sMapScreenOpen && xsdk_frame_count() - sMapScreenStamp < 18u; }
+void SetMapScreenOpen(bool open) {
+  sMapScreenOpen = open;
+  sMapScreenStamp = xsdk_frame_count();
+}
 void SetMinimapRect(bool, bool, float, float, float, float) {}
 bool TakeMapPan(float*, float*, float*) { return false; }
 float TakeMapRotate() { return 0.f; }
-float TakeMapZoom() { return 0.f; }
+// the pinch ratio the map divides its distance by: 1 is none (0 sent it to
+// the farthest zoom every tick, the triggers no use: a forum report, 2026-11-02)
+float TakeMapZoom() { return 1.f; }
 void SetPauseScreenOpen(bool, bool) {}
 
-// ---- aim: the pad only (no mouse, gyro, touch, twin stick) ----
+// ---- aim: the pad; Dual Stick (GitHub #2) is MetroidPrimePort's twin stick ----
+// The right stick turns the view directly, through MetroidPrimePort's aim
+// state (port_mouse.h AimState, as its mouse and twin stick do); the game
+// side is MetroidPrimePort's direct-aim path (CPlayer::UpdateMouseAim: the
+// left stick moves and strafes, the retail free look is off). No mouse,
+// gyro, touch or pointer aim: their settings read off. Travel is in radians
+// (sensitivity 1). Each tick: BeginFrameMouse clears it, the controller read
+// adds the stick's turn for the tick (AddStickAim), the player's update
+// applies it once. Between 30 Hz ticks the presented frames draw the last
+// tick's turn spread over the period after it (PresentedAimDelta, as
+// MetroidPrimePort: drawing it ahead put the stick a tick ahead of the world).
+namespace {
+PortMouse::AimState sAim;
+float sStickYaw = 0.f;   // this tick's stick travel: right / down positive (the aim state's)
+float sStickPitch = 0.f;
+bool sAimAppliedLastTick = false;
+bool sAimGameplayActive = false;
+float sTwinStickRightY = 0.f;
+
+// Aim Speed: the turn at full tilt, radians a second (120, 180, 250 degrees);
+// up and down at 3/4 of it (a level view is most of play)
+const float kAimYawRate[3] = {2.094f, 3.142f, 4.363f};
+const float kAimPitchShare = 0.75f;
+} // namespace
+
 bool AimCrosshair() { return false; }
-bool AimInitialized() { return false; }
+bool AimInitialized() { return sAim.initialized; }
 bool AutoAim() { return false; }
-bool DirectAim() { return false; }
+bool TwinStick() { return g_xsdk_settings.aim == XSDK_AIM_DUAL; }
+bool PadTwinStick() { return TwinStick(); }
+void SetTwinStick(bool on) { g_xsdk_settings.aim = on ? XSDK_AIM_DUAL : XSDK_AIM_GAMECUBE; }
+bool DirectAim() { return TwinStick(); }
 bool MouseAim() { return false; }
 bool PointerAim() { return false; }
 bool PointerAimPosition(float&, float&) { return false; }
-bool PresentedAimDelta(float, float&, float&) { return false; }
 bool PresentedPointerAimPosition(float, float&, float&) { return false; }
-float AimPitch() { return 0.f; }
-float AimYaw() { return 0.f; }
-void AddStickAim(float, float, float) {}
+float AimPitch() { return sAim.pitch; }
+float AimYaw() { return sAim.yaw; }
+
+// x right, y up, -1..1 past the dead zone (pad.c xsdk_pad_aim); dt the tick
+void AddStickAim(float x, float y, float dt) {
+  if (!TwinStick() || !(dt > 0.f) || !std::isfinite(x) || !std::isfinite(y)) {
+    return;
+  }
+  float m = std::sqrt(x * x + y * y);
+  if (m < 1e-4f) {
+    return;
+  }
+  if (m > 1.f) {
+    x /= m;
+    y /= m;
+    m = 1.f;
+  }
+  // The response curve: a fifth linear, the rest squared. Small tilts aim
+  // finely, full tilt turns at the full rate; along the stick's own direction,
+  // so diagonals stay diagonal.
+  const float k = (0.2f + 0.8f * m);
+  x *= k;
+  y *= k;
+  // Reverse Y-Axis On is flight style here as in free aim (CPlayer::ComputeFreeLook)
+  if (gpGameState != nullptr && gpGameState->GameOptions().GetInvertYAxis()) {
+    y = -y;
+  }
+  const int speed = g_xsdk_settings.aim_speed < 0 ? 0 : g_xsdk_settings.aim_speed > 2 ? 2 : g_xsdk_settings.aim_speed;
+  sStickYaw += x * kAimYawRate[speed] * dt;
+  sStickPitch -= y * kAimYawRate[speed] * kAimPitchShare * dt;
+}
 float StickAimRate() { return 0.f; }
 void SetStickAimRate(float) {}
-bool UpdateMouseAim(bool, bool, float, float, float, bool, bool) { return false; }
-void SynchronizeMouseAim(float, float, float) {}
-void TurnMouseAim(float) {}
-void ResetMouseAim() {}
+
+bool UpdateMouseAim(bool active, bool locked, float x, float y, float z, bool, bool) {
+  sAimGameplayActive = active;
+  // all of the tick's travel is the stick's: drawn after the tick (its lag)
+  const bool applied =
+      sAim.Update(active, locked, x, y, z, sStickYaw, sStickPitch, 1.f, false, false, sStickYaw, sStickPitch);
+  if (applied) {
+    // a second update in the tick mustn't turn by it again
+    sStickYaw = sStickPitch = 0.f;
+  }
+  sAimAppliedLastTick = applied;
+  return applied;
+}
+void SynchronizeMouseAim(float x, float y, float z) { sAim.Synchronize(x, y, z); }
+void TurnMouseAim(float dyaw) { sAim.Turn(dyaw, 0.f); }
+void ResetMouseAim() {
+  sAim.Reset();
+  sStickYaw = sStickPitch = 0.f;
+  sAimGameplayActive = false;
+  sAimAppliedLastTick = false;
+}
+
+bool PresentedAimDelta(float fraction, float& dyaw, float& dpitch) {
+  dyaw = dpitch = 0.f;
+  if (!XboxPresentBlend() || !sAimGameplayActive || !sAimAppliedLastTick || !std::isfinite(fraction) ||
+      fraction < 0.f) {
+    return false;
+  }
+  const float lag = 1.f - (fraction > 1.f ? 1.f : fraction);
+  float yaw = 0.f, pitch = 0.f;
+  if (!sAim.Preview(0.f, 0.f, 1.f, false, false, yaw, pitch, lag)) {
+    return false;
+  }
+  dyaw = static_cast< float >(std::remainder(double(yaw) - sAim.yaw, 2.0 * PortMouse::kPi));
+  dpitch = pitch - sAim.pitch;
+  return dyaw != 0.f || dpitch != 0.f;
+}
+
 bool MouseCaptured() { return false; }
 void SetMouseCaptured(bool) {}
-bool MouseGameplayActive() { return false; }
-void SetMouseGameplayActive(bool) {}
+bool MouseGameplayActive() { return sAimGameplayActive; }
+void SetMouseGameplayActive(bool active) { sAimGameplayActive = active; }
 unsigned MouseHeldButtons() { return 0; }
 void AddMouseDelta(float, float) {}
 void NoteMouseButton(bool, unsigned, bool) {}
 void ClearMouseButtons() {}
-void BeginFrameMouse() {}
-bool PadTwinStick() { return false; }
-bool TwinStick() { return false; }
-void SetTwinStick(bool) {}
-float TwinStickRightY() { return 0.f; }
-void SetTwinStickRightY(float) {}
+// each tick, before the controller is read
+void BeginFrameMouse() {
+  sStickYaw = sStickPitch = 0.f;
+  sAimAppliedLastTick = false;
+}
+float TwinStickRightY() { return sTwinStickRightY; }
+void SetTwinStickRightY(float y) { sTwinStickRightY = y; }
 bool TakeTouchLook(float&, float&) { return false; }
 bool TouchAimDown() { return false; }
 bool TapUpdateToast(float, float) { return false; }

@@ -1,0 +1,17 @@
+# menu_restart: Video Mode changed, then B asks "Later / Restart now"
+# (2026-11-02; a dialog of its own since round hw19). Later is lit; the
+# left stick picks (right, then left), the stick again and A restarts:
+# "Restarting" shows first.
+# Presses last 2 frames: at xemu's ~6 fps a longer one auto-repeats.
+env PX_MENU_AT=1500
+1560 SHOT
+1600 RIGHT for 2
+1660 B for 2
+1720 SHOT
+1760 SR for 2
+1820 SHOT
+1860 SL for 2
+1920 SHOT
+1960 SR for 2
+2020 A for 2
+2024 SHOT

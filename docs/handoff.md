@@ -3,32 +3,37 @@
 Update this at the end of every session: what was done, what's next,
 what's broken, anything the next agent would otherwise rediscover.
 
-## Where it stands (2026-11-01): v1.0-beta2
+## Where it stands (2026-11-02): v1.0-beta3
 
-**v1.0-beta2 is `main` at the merge of `dev` (2026-11-01)**, released by
-GitHub Actions from the `v1.0-beta2` tag. Its ship build (e9526cd, the
-same source) is in `Prime-X` on both consoles (red `F:\Applications`, gold
-`E:\Applications`); the user approved it after free play. What it has over
-v1.0-beta (docs/history.md "Session 2026-11-01" for the detail,
-docs/decisions.md for the why):
+**v1.0-beta3 is `main` at the merge of `dev` (2026-11-02)**, released by
+GitHub Actions from the `v1.0-beta3` tag. Its ship build (MD5
+66872d4978c206cd6dd19cd256539853, LTO + PGO with `-DXHW_LOG_ALWAYS=1`;
+the release's own XBE is CI's) is in `Prime-X` on both consoles; the user
+approved it after testing. What it has over v1.0-beta2 (docs/history.md
+"Session 2026-11-02" for the detail, docs/decisions.md for the why):
 
-- **Xbox Port Options**, a popup of its own (docs/ui.md): from the main
-  menu's gold row, the New Game popup and every pause Options category;
-  tabs, a box explaining each row and value, the button remap on a drawn
-  controller (N64Recomp-X's). Redraws only what changed within 3 ms a
-  frame (the first console build stalled 336-581 ms a move). No sounds.
-- **The crash after the Frigate escape** ("Assertion failed ... exp2f"):
-  nxdk's `exp2f` is `assert(0)`; Prime-X has its own, and the link fails if
-  any nxdk stub is reachable (`tools/xbox/check_stubs.py`).
-- **settings.ini checked line by line**: bad values keep the default, the
-  problems shown on screen and written into the file, the old one kept as
-  settings.bad.ini.
-- GitHub #1 (Jump on A): a remap swaps, Fire and Pause stay on some button,
-  A confirms in every menu.
-- Upgraded/overclocked CPUs (Cerbios AdvCPUSupport): the code check puts
-  back a BIOS patcher's bytes, the TSC is sanity-checked, the clock is
-  checked against VBlank.
-- Error cards wait for a button; screenshots written in 64 KB pieces.
+- **Dual Stick aiming, on by default** (GitHub #2): the right stick aims,
+  Beam Select (Black by default) held with the right stick picks beams,
+  Aim Speed Low / Medium / High; Aiming: GameCube puts the original back.
+  Free aim is modern by default (push up looks up).
+- **The crash after quitting to the title and loading again**: DVDClose /
+  DVDCancel drain their request now (a read landed in freed memory). The
+  same corruption most likely explains the "GPU fault" photo and the black
+  chunks of room geometry.
+- **Xbox Port Options as Prime's pause Options** (amber hologram, the
+  disc's Deface fonts, a black controller on the Buttons tab), modal (the
+  game is held, moves are instant). Its glyphs are rebuilt at each open
+  (the second open drew freed memory). Changing Video Mode asks in a
+  dialog of its own: Later | Restart now, D-pad or left stick.
+- **The map**: the zoom works (`TakeMapZoom` gave 0); Dual Stick isn't
+  switched off for good by a stale "map open" flag.
+- **Fusion Suit** kept in settings.ini (`[game] fusion_suit`), so it stays
+  on after a restart.
+- **The watchdog** is held off around settings saves and the relaunch /
+  quit path: gold's drive took over 6 s to save before Restart now.
+- Audio: 8 cold resets in a row without a buffer give up (silent, with the
+  notice) instead of restarting every ~100 ms. Brightness, Screen Offset
+  and Stretch are gone from the Display options (they did nothing).
 
 Performance is RC1c's (round hw18d, median of the profiler's 5 s lines):
 
@@ -52,23 +57,18 @@ from slot 2's toml with its own paths, or keep using 2 and 3.
 
 ## Next session, in order
 
-0. **v1.0-beta2 is out** (2026-11-01): https://github.com/TechProGabe/Prime-X/releases/tag/v1.0-beta2,
-   published by a manual run of the workflow on `main` (9a142a9) with
-   `release=v1.0-beta2`; the tag stays on f49c3d5 (main differs only in
-   host tests). It was the first CI run to pass: the Tests step had failed
-   since RC1 (`test_aram`'s stubs behind `ar.c`; the C tests needing `-lm`
-   on Linux; `test_settings` used `_stricmp`). GitHub #1 closed. **Byte
-   check**: the zip's CRCs pass and its `default.xbe` (MD5
-   1a69db87fe79c1b697eb7649ea025c67) is CI's artifact byte for byte; it is
-   not the consoles' MSYS2 image (7df2779e...): nxdk's source paths are
-   baked in (`C:Þv
-xdk` against `/home/runner/toolchain/nxdk`) and CI
-   builds its own LLVM 21, so 25 of 17,674 functions differ in inlining
-   (same source, `default.tbn` identical). The released XBE booted clean in
-   xemu (code check, 130 s, no stall). Player reports come with a boot.log
-   only if they turn Log File on (Xbox Port Options > System). On the
-   consoles, with Log File on, a move in the popup should log no `MP
-   stall`; the notice from a bad settings.ini hasn't been seen on a screen.
+0. **v1.0-beta3 is out** (2026-11-02):
+   https://github.com/TechProGabe/Prime-X/releases/tag/v1.0-beta3, from
+   the `v1.0-beta3` tag on `main`; notes in `.github/release-notes.md`.
+   As with beta2, the release's `default.xbe` is CI's build, not the
+   consoles' MSYS2 image (nxdk's source paths are baked in and CI builds
+   its own LLVM 21: a few dozen functions inline differently from the
+   same source). Player reports come with a boot.log only if they turn
+   Log File on (Xbox Port Options > System). GitHub #2 (Dual Stick) is
+   still open: reply or close only when the user says.
+   - Saved for later (the user): **Xbox button glyphs** in the game's own
+     text, sized up in docs/history.md "Session 2026-11-02" (~96 strings,
+     48 textures, a `CTextParser` hook; ~2-3 days plus the art).
 1. **Watch in the next round** (none planned: hardware only when truly
    needed, the user):
    - the page-0 repair: a `[MEM] page 0 at 0x80000000 read-only ...

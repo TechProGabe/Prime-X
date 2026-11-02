@@ -2681,7 +2681,16 @@ void CPlayer::ComputeFreeLook(const CFinalInput& input) {
   float lookUp = ControlMapper::GetAnalogInput(ControlMapper::kC_LookUp, input);
   float lookDown = ControlMapper::GetAnalogInput(ControlMapper::kC_LookDown, input);
 
+#ifdef TARGET_XBOX
+  // PORT_XBOX: the disc's controls tweak puts Look Up on the stick's down
+  // (flight style) with Reverse Y-Axis Off; a tester found free aim "the
+  // opposite of whatever inversion setting you have enabled" and the user
+  // asked for the modern way by default: Off pushes up to look up, On is the
+  // GameCube's flight style
+  if (!gpGameState->GameOptions().GetInvertYAxis()) {
+#else
   if (gpGameState->GameOptions().GetInvertYAxis()) {
+#endif
     lookUp = ControlMapper::GetAnalogInput(ControlMapper::kC_LookDown, input);
     lookDown = ControlMapper::GetAnalogInput(ControlMapper::kC_LookUp, input);
   }

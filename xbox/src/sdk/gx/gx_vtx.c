@@ -2273,7 +2273,11 @@ static void check_verts(const DlEntry* e, const DlBatch* b, int nb, const uint8_
 #ifndef XGX_STATIC_LISTS
 #define XGX_STATIC_LISTS 1
 #endif
-#define STATIC_MAX 32
+/* A room registers each block of its memory (the MREA's section buffers, as
+ * CCubeRenderer::AddStaticGeometry finds them), not their hull: another
+ * allocation between two blocks (an actor's model, a skin workspace) would
+ * have had its lists marked static and never checked again (2026-11-02) */
+#define STATIC_MAX 256
 static struct {
     const void* key;
     uintptr_t lo, hi;
@@ -2299,35 +2303,38 @@ static int dlc_static(const DlEntry* e) {
     return 1;
 }
 
+/* one more range of `key`'s memory (GXPortStaticRemove(key) first to start over) */
 void GXPortStaticAdd(const void* key, const void* lo, unsigned bytes) {
-    int i;
+    int i, first = 1;
     if (!XGX_STATIC_LISTS || !key || !lo || !bytes) return;
     for (i = 0; i < s_nstatic; i++)
-        if (s_static[i].key == key) break;
-    if (i == s_nstatic) {
-        if (s_nstatic == STATIC_MAX) return;   /* not static then: the lists keep their checks */
-        s_nstatic++;
-    }
-    s_static[i].key = key;
-    s_static[i].lo = (uintptr_t)lo;
-    s_static[i].hi = (uintptr_t)lo + bytes;
-    xhw_logf("[DLC] static memory: %u KB at %p (%d ranges; %u lists marked, %u dropped so far)", bytes / 1024, lo,
-             s_nstatic, s_st_static_lists, s_st_static_drops);
+        if (s_static[i].key == key) first = 0;
+    if (s_nstatic == STATIC_MAX) return;   /* not static then: the lists keep their checks */
+    s_static[s_nstatic].key = key;
+    s_static[s_nstatic].lo = (uintptr_t)lo;
+    s_static[s_nstatic].hi = (uintptr_t)lo + bytes;
+    s_nstatic++;
+    if (first)
+        xhw_logf("[DLC] static memory: %u KB at %p (%d ranges; %u lists marked, %u dropped so far)", bytes / 1024, lo,
+                 s_nstatic, s_st_static_lists, s_st_static_drops);
 }
 
 void GXPortStaticRemove(const void* key) {
     int i, k;
-    for (i = 0; i < s_nstatic; i++)
-        if (s_static[i].key == key) break;
-    if (i == s_nstatic) return;
-    /* the lists marked static that start in it go: the memory is freed next */
-    for (k = 0; k < DLC_MAX; k++)
-        if (s_dlc[k].dl && s_dlc[k].stable == DLC_STATIC &&
-            (uintptr_t)s_dlc[k].dl >= s_static[i].lo && (uintptr_t)s_dlc[k].dl < s_static[i].hi) {
-            dlc_drop(k);
-            s_st_static_drops++;
+    for (i = 0; i < s_nstatic;) {
+        if (s_static[i].key != key) {
+            i++;
+            continue;
         }
-    s_static[i] = s_static[--s_nstatic];
+        /* the lists marked static that start in it go: the memory is freed next */
+        for (k = 0; k < DLC_MAX; k++)
+            if (s_dlc[k].dl && s_dlc[k].stable == DLC_STATIC &&
+                (uintptr_t)s_dlc[k].dl >= s_static[i].lo && (uintptr_t)s_dlc[k].dl < s_static[i].hi) {
+                dlc_drop(k);
+                s_st_static_drops++;
+            }
+        s_static[i] = s_static[--s_nstatic];
+    }
 }
 
 static int dlc_build(DlEntry* e, uint32_t frame) {

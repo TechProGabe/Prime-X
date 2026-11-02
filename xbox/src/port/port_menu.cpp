@@ -16,14 +16,30 @@
 // Input: the Xbox controllers as they are (not the remapped GameCube pad), so
 // a layout can never lock the player out: up/down (D-pad or left stick,
 // held to repeat) pick, left/right change, A changes too, LT/RT switch tabs,
-// Y twice restores the tab's defaults, B or START close. It makes no
+// Y twice restores the tab's defaults, B or START close. On the Buttons tab
+// the D-pad moves over the callouts as they stand (up/down in a column,
+// left/right across) and A/X step the action on and back. It makes no
 // sound (the user, 2026-11-01, when the music skipped on the consoles; the
-// skips were the card's redraw, xhw_menu.c). The game reads a neutral pad while the popup is up and
+// skips were the card's redraw, xhw_menu.c). The game reads a neutral pad
 // until the buttons that closed it are let go (xsdk_menu_block, pad.c).
+//
+// The game is held while the popup is up (RunModal): beta2's testers found
+// it "heavy and laggy" (the game ran on behind it, every frame waited for
+// the GPU and copied the card in, and a change took several of the game's
+// frames to appear); the user: "streamline the whole thing for performance".
+// Closing with a new Video Mode asks whether to restart now (a tester's
+// idea), "Later" first: a dialog of its own (page 2, the two choices side by
+// side), the D-pad or the left stick picks, as on the rest of the popup.
 #include "port_xbox_options.h"
 #include "port_debug.h"
 
 #include "MetroidPrime/Player/CGameState.hpp"
+#include "Kyoto/CSimplePool.hpp"
+#include "Kyoto/Graphics/CTexture.hpp"
+#include "Kyoto/Text/CRasterFont.hpp"
+#include "port_font_accent.h"
+
+#include <vector>
 
 #include <dolphin/pad.h>
 
@@ -34,6 +50,7 @@
 #include "xhw.h"
 extern "C" {
 #include "xsdk_settings.h"
+void xsdk_modal_tick(void); // vi.c: a frame of the modal loop
 }
 
 namespace PortXboxOptions {
@@ -98,6 +115,23 @@ const SRow kVideo[] = {
      false},
 };
 const SRow kController[] = {
+    {"Aiming",
+     kXO_AimMode,
+     2,
+     {"GameCube", "Dual Stick"},
+     "How you aim and look around. Dual Stick is the modern way, as in the Remastered edition.",
+     {"Hold RT and tilt the left stick to aim; the right stick picks beams.",
+      "The right stick aims and looks, the left one moves and strafes. Hold Beam Select (Buttons tab) "
+      "and tilt the right stick to pick a beam."},
+     false},
+    {"Aim Speed",
+     kXO_AimSpeed,
+     3,
+     {"Low", "Medium", "High"},
+     "How fast the right stick turns the view with Dual Stick aiming. A light tilt always aims finely.",
+     {"120 degrees a second at full tilt.", "180 degrees a second at full tilt.",
+      "250 degrees a second at full tilt."},
+     false},
     {"Rumble Strength",
      kXO_RumbleStrength,
      3,
@@ -117,7 +151,7 @@ const SRow kController[] = {
      kXO_CStickDeadZone,
      3,
      {"Low", "Medium", "High"},
-     "The same for the right stick (the GameCube's C-stick: beams). Raise it if beams change on their own.",
+     "The same for the right stick (beams, or aiming with Dual Stick). Raise it if beams change or the view drifts on its own.",
      {"15%: the most responsive.", "25%: suits most controllers.", "35%: for worn sticks."},
      false},
     {"Trigger Click",
@@ -141,7 +175,7 @@ const SRow kGameplay[] = {
      2,
      {"Off", "On"},
      "The Fusion Suit was a reward for linking a Game Boy Advance. An Xbox can't link, so it is here.",
-     {"Samus's own Power Suit.", "Samus wears the Fusion Suit. Kept with the game's options in your save."},
+     {"Samus's own Power Suit.", "Samus wears the Fusion Suit, in every game, after a restart too."},
      false},
 };
 const SRow kSystem[] = {
@@ -206,6 +240,8 @@ const SAction kActionHelp[] = {
     {PAD_BUTTON_DOWN, "D-Down", "The D-pad's down: picks a visor (or a beam with Swap Beam Controls)."},
     {PAD_BUTTON_LEFT, "D-Left", "The D-pad's left: picks a visor (or a beam with Swap Beam Controls)."},
     {PAD_BUTTON_RIGHT, "D-Right", "The D-pad's right: picks a visor (or a beam with Swap Beam Controls)."},
+    {XSDK_PAD_BEAM, "Beams",
+     "Beam Select, for Dual Stick aiming: hold it and tilt the right stick to pick a beam, as the GameCube's C-stick."},
 };
 const SAction& ActionOf(int gc) {
   for (const SAction& a : kActionHelp) {
@@ -216,8 +252,78 @@ const SAction& ActionOf(int gc) {
   return kActionHelp[0];
 }
 
+// the Buttons page's callouts as the card lays them out (xhw_menu.c k_call):
+// two columns, top to bottom, with each one's top in card pixels
+struct SPadSpot {
+  int in;
+  int y;
+};
+const SPadSpot kPadLeft[] = {{XHW_MENU_IN_LT, 92},    {XHW_MENU_IN_LSTICK, 124}, {XHW_MENU_IN_LCLICK, 156},
+                             {XHW_MENU_IN_BACK, 188}, {XHW_MENU_IN_START, 220},  {XHW_MENU_IN_DPAD, 252}};
+const SPadSpot kPadRight[] = {{XHW_MENU_IN_RT, 92},     {XHW_MENU_IN_Y, 114},      {XHW_MENU_IN_X, 136},
+                              {XHW_MENU_IN_B, 158},     {XHW_MENU_IN_A, 180},      {XHW_MENU_IN_WHITE, 202},
+                              {XHW_MENU_IN_BLACK, 224}, {XHW_MENU_IN_RSTICK, 246}, {XHW_MENU_IN_RCLICK, 268}};
+const int kPadLeftN = sizeof kPadLeft / sizeof kPadLeft[0];
+const int kPadRightN = sizeof kPadRight / sizeof kPadRight[0];
+
+// the input the D-pad moves to from `in`: dir 1 up, 2 down, 4 left, 8 right
+int PadMove(int in, int dir) {
+  for (int c = 0; c < 2; ++c) {
+    const SPadSpot* col = c ? kPadRight : kPadLeft;
+    const int n = c ? kPadRightN : kPadLeftN;
+    for (int i = 0; i < n; ++i) {
+      if (col[i].in != in) {
+        continue;
+      }
+      if (dir & 1) {
+        return col[(i + n - 1) % n].in;
+      }
+      if (dir & 2) {
+        return col[(i + 1) % n].in;
+      }
+      // left from the right column, right from the left: the other column's nearest
+      if ((dir & 4) ? c == 0 : c == 1) {
+        return in;
+      }
+      const SPadSpot* other = c ? kPadLeft : kPadRight;
+      const int on = c ? kPadLeftN : kPadRightN;
+      int best = 0;
+      for (int k = 1; k < on; ++k) {
+        if (abs(other[k].y - col[i].y) < abs(other[best].y - col[i].y)) {
+          best = k;
+        }
+      }
+      return other[best].in;
+    }
+  }
+  return XHW_MENU_IN_A;
+}
+
+// the inputs that keep their GameCube part (pad.c): what they do and why
+struct SFixed {
+  int in;
+  const char* help;
+  const char* value;
+};
+const SFixed kFixed[] = {
+    {XHW_MENU_IN_LT, "LT: Lock On. Fixed: it is the GameCube's L, a trigger the game reads by how far it is in.",
+     "Held, Samus locks on to a target; with nothing to lock on to, she strafes."},
+    {XHW_MENU_IN_RT, "RT: Free Aim. Fixed: it is the GameCube's R trigger.",
+     "Held, the left stick aims and looks around (Reverse Y-Axis is in the game's Controller options)."},
+    {XHW_MENU_IN_DPAD, "D-pad: Visors. Fixed: the GameCube's D-pad.",
+     "Picks a visor; with Swap Beam Controls on, it picks a beam."},
+    {XHW_MENU_IN_LSTICK, "Left stick: Move. Fixed: the GameCube's control stick.",
+     "Moves and turns Samus; with RT held, aims."},
+    {XHW_MENU_IN_RSTICK, "Right stick: Beams. Fixed: the GameCube's C-stick.",
+     "Picks a beam; with Swap Beam Controls on, it picks a visor."},
+};
+
 // ---- state ----
 bool sOpen = false;
+bool sAsk = false; // closing with a new Video Mode: restart now?
+int sAskSel;       // 0 later, 1 now
+bool sAskStick;    // the left stick was pushed last frame (a push picks once)
+int sRestarting;   // "Restart now" taken: frames spent drawing "Restarting" (0: not)
 bool sRelease = false; // closed: the game waits for the buttons to be let go
 int sTab = kTabVideo;
 int sSel[kTabCount];
@@ -239,9 +345,6 @@ int RowCount(int tab) { return tab == kTabButtons ? XHW_MENU_IN_MAPPABLE : kTabs
 
 // what a row would show with the defaults: Get() reads g_xsdk_settings
 int DefaultValue(O option) {
-  if (option == kXO_FusionSuit) {
-    return 0;
-  }
   const xsdk_settings now = g_xsdk_settings;
   g_xsdk_settings = sDefaults;
   const int v = Get(option);
@@ -280,7 +383,7 @@ void RestoreAll() {
 void Status(char* out, size_t cap) {
   const xhw_video_mode* vm = xhw_video();
   const char* mode = vm->height >= 720 ? "720p" : vm->progressive ? "480p" : "480i";
-  snprintf(out, cap, "Now: %s %s", mode, PortDebug::AspectMode() == PortDebug::kAspect_16_9 ? "16:9" : "4:3");
+  snprintf(out, cap, "%s %s", mode, PortDebug::AspectMode() == PortDebug::kAspect_16_9 ? "16:9" : "4:3");
 }
 
 void Fill() {
@@ -292,6 +395,29 @@ void Fill() {
     snprintf(v.tab_name[t], sizeof v.tab_name[t], "%s", kTabNames[t]);
   }
   Status(v.status, sizeof v.status);
+  if (sAsk) { // closing with a new Video Mode
+    static const char* const kModes[3] = {"480i", "480p", "720p"};
+    const int mode = Get(kXO_VideoOutput);
+    // page 2: a dialog of its own, no tabs, the two choices side by side
+    // (the user, round hw19: the stick did nothing here and the rows looked
+    // like settings to change, not a question)
+    v.page = 2;
+    v.pad_sel = -1;
+    if (sRestarting != 0) {
+      v.rows = 0;
+      snprintf(v.help, sizeof v.help, "Restarting Prime-X in %s...", kModes[mode < 0 || mode > 2 ? 0 : mode]);
+      return;
+    }
+    v.rows = 2;
+    v.sel = sAskSel;
+    snprintf(v.label[0], sizeof v.label[0], "Later");
+    snprintf(v.label[1], sizeof v.label[1], "Restart now");
+    snprintf(v.help, sizeof v.help, "Restart Prime-X to use %s?", kModes[mode < 0 || mode > 2 ? 0 : mode]);
+    snprintf(v.value_help, sizeof v.value_help, "%s",
+             sAskSel ? "Saves the settings and starts Prime-X again now. Progress since your last save is lost."
+                     : "Back to the game. The new mode is used the next time Prime-X starts.");
+    return;
+  }
   const int sel = sSel[sTab];
   v.pad_sel = -1;
   if (sTab == kTabButtons) {
@@ -304,30 +430,44 @@ void Fill() {
     }
     // the inputs that keep their GameCube part (pad.c)
     const bool swap = gpGameState != nullptr && gpGameState->GameOptions().GetSwapBeamControls();
+    const bool dual = g_xsdk_settings.aim == XSDK_AIM_DUAL;
     snprintf(v.pad_map[XHW_MENU_IN_LT], sizeof v.pad_map[0], "Lock On");
-    snprintf(v.pad_map[XHW_MENU_IN_RT], sizeof v.pad_map[0], "Free Aim");
+    snprintf(v.pad_map[XHW_MENU_IN_RT], sizeof v.pad_map[0], "%s", dual ? "-" : "Free Aim");
     snprintf(v.pad_map[XHW_MENU_IN_DPAD], sizeof v.pad_map[0], "%s", swap ? "Beams" : "Visors");
     snprintf(v.pad_map[XHW_MENU_IN_LSTICK], sizeof v.pad_map[0], "Move");
-    snprintf(v.pad_map[XHW_MENU_IN_RSTICK], sizeof v.pad_map[0], "%s", swap ? "Visors" : "Beams");
-    if (sPad1Ok) { // port 1 as it is: what is held lights up
-      v.pad_ok = 1;
-      v.pad_buttons = sPad1.buttons;
-      // tilted or not, pulled or not: a stick's jitter mustn't redraw the
-      // card every frame (it is drawn again whenever the view changes)
-      const long long lx = sPad1.lx, ly = sPad1.ly, rx = sPad1.rx, ry = sPad1.ry;
-      const bool lTilt = lx * lx + ly * ly > 12000LL * 12000;
-      const bool rTilt = rx * rx + ry * ry > 12000LL * 12000;
-      v.pad_lx = lTilt ? 32767 : 0;
-      v.pad_rx = rTilt ? 32767 : 0;
-      v.pad_lt = sPad1.lt > 128 ? 255 : 0;
-      v.pad_rt = sPad1.rt > 128 ? 255 : 0;
-    }
-    const SAction& a = ActionOf(BindGc(sel));
-    snprintf(v.help, sizeof v.help, "%s: %s. Left/right pick its action (a taken one swaps).",
-             kButtonNames[sel], a.name);
-    snprintf(v.value_help, sizeof v.value_help, "%s", a.help);
-    if (BindGc(sel) == PAD_BUTTON_A || BindGc(sel) == PAD_BUTTON_START) {
-      snprintf(v.note, sizeof v.note, "Fire and Pause always stay on some button.");
+    snprintf(v.pad_map[XHW_MENU_IN_RSTICK], sizeof v.pad_map[0], "%s", dual ? "Aim" : swap ? "Visors" : "Beams");
+    // No live lighting of what is held: every press redrew the controller
+    // (twice: down and up), the lag a tester felt moving around this page
+    v.pad_ok = sPad1Ok ? 1 : 0;
+    if (sel >= XHW_MENU_IN_MAPPABLE) {
+      for (const SFixed& f : kFixed) {
+        if (f.in == sel) {
+          snprintf(v.help, sizeof v.help, "%s", f.help);
+          snprintf(v.value_help, sizeof v.value_help, "%s", f.value);
+        }
+      }
+      if (dual && sel == XHW_MENU_IN_RSTICK) {
+        snprintf(v.help, sizeof v.help, "Right stick: Aim (Dual Stick, Controller tab). Fixed.");
+        snprintf(v.value_help, sizeof v.value_help,
+                 "Aims and looks around. Held, Beam Select makes it pick beams, as the GameCube's C-stick.");
+      } else if (dual && sel == XHW_MENU_IN_RT) {
+        snprintf(v.help, sizeof v.help, "RT: nothing with Dual Stick aiming (the right stick aims). Fixed.");
+        snprintf(v.value_help, sizeof v.value_help, "With GameCube aiming, held, the left stick aims and looks.");
+      } else if (dual && sel == XHW_MENU_IN_LSTICK) {
+        snprintf(v.value_help, sizeof v.value_help, "Moves and strafes Samus (Dual Stick aiming).");
+      }
+      snprintf(v.note, sizeof v.note, "This input can't be remapped.");
+    } else {
+      const SAction& a = ActionOf(BindGc(sel));
+      snprintf(v.help, sizeof v.help, "%s: %s.", kButtonNames[sel], a.name);
+      snprintf(v.value_help, sizeof v.value_help, "%s", a.help);
+      if (BindGc(sel) == PAD_BUTTON_A || BindGc(sel) == PAD_BUTTON_START) {
+        snprintf(v.note, sizeof v.note, "Fire and Pause always stay on some button.");
+      } else if (BindGc(sel) == XSDK_PAD_BEAM && !dual) {
+        snprintf(v.note, sizeof v.note, "Beam Select is for Dual Stick aiming (Controller tab).");
+      } else {
+        snprintf(v.note, sizeof v.note, "Taking another button's action swaps the two.");
+      }
     }
   } else {
     const STab& tab = kTabs[sTab];
@@ -373,6 +513,15 @@ void Fill() {
         }
       }
     }
+    if (!v.note[0] && sTab == kTabController && g_xsdk_settings.aim == XSDK_AIM_DUAL) {
+      bool beam = false;
+      for (int b = 0; b < XHW_MENU_IN_MAPPABLE; ++b) {
+        beam = beam || BindGc(b) == XSDK_PAD_BEAM;
+      }
+      if (!beam) {
+        snprintf(v.note, sizeof v.note, "No button has Beam Select: give one on the Buttons tab.");
+      }
+    }
     if (!v.note[0] && restartPending) {
       snprintf(v.note, sizeof v.note, "* Video Mode changes the next time Prime-X starts.");
     }
@@ -383,18 +532,38 @@ void Fill() {
   }
 }
 
+// the Video Mode chosen isn't the one Prime-X started in
+bool VideoRestartPending() {
+  const xsdk_settings& b = g_xsdk_settings_boot;
+  const int atBoot = b.video_720p ? 2 : b.progressive ? 1 : 0;
+  return Get(kXO_VideoOutput) != atBoot;
+}
+
 void Close() {
   sOpen = false;
+  sAsk = false;
   sRelease = true;
   xhw_menu_show(nullptr);
   Save(); // settings.ini, once, if anything changed
   xhw_logf("[MENU] Port Options closed");
 }
 
+// "Restart now": settings.ini, then this XBE again (xhw_main.c launch: the
+// card's saves flushed, the audio, LEDs and pads shut down first)
+void RestartNow() {
+  Save();
+  xhw_logf("[MENU] restart for Video Mode %d", Get(kXO_VideoOutput));
+  xhw_exit_reason("Video Mode changed in Port Options");
+  xhw_reboot_self();
+}
+
 // left/right or A on the selected row
 void Change(int delta) {
   const int sel = sSel[sTab];
   if (sTab == kTabButtons) {
+    if (sel >= XHW_MENU_IN_MAPPABLE) {
+      return; // fixed (the box says so)
+    }
     Step(kXO_BindFirst + sel, delta);
     xhw_logf("[MENU] %s: %s", kButtonNames[sel], ActionOf(BindGc(sel)).name);
     return;
@@ -455,7 +624,52 @@ void Frame() {
     sConfirmUntil = 0;
   }
 
+  if (sRestarting != 0) { // "Restarting" on screen first, then the restart
+    // the card draws a few bands a frame: wait until it is all there (at
+    // most ~2 s), then one frame more
+    if (xhw_menu_busy() && sRestarting < 120) {
+      ++sRestarting;
+      return;
+    }
+    RestartNow();
+    return;
+  }
+  if (sAsk) { // restart now or later
+    if (press & (XHW_BTN_B | XHW_BTN_START)) {
+      Close();
+      return;
+    }
+    // the D-pad or the left stick, any way: there are only two
+    const bool stick = lx != 0 || ly != 0;
+    if ((press & (XHW_BTN_UP | XHW_BTN_DOWN | XHW_BTN_LEFT | XHW_BTN_RIGHT)) || (stick && !sAskStick)) {
+      sAskSel ^= 1;
+    }
+    sAskStick = stick;
+    if (press & XHW_BTN_A) {
+      if (sAskSel) {
+        // drawn before the save and the relaunch, which take seconds on a
+        // slow drive (the screen sat still, round hw19)
+        sRestarting = 1;
+        Fill();
+        xhw_menu_show(&sView);
+        return;
+      }
+      Close();
+      return;
+    }
+    Fill();
+    xhw_menu_show(&sView);
+    return;
+  }
   if (press & (XHW_BTN_B | XHW_BTN_START)) {
+    if (VideoRestartPending()) {
+      sAsk = true;
+      sAskSel = 0; // "later" first: a stray press mustn't restart
+      sAskStick = lx != 0 || ly != 0; // a stick already pushed doesn't pick
+      Fill();
+      xhw_menu_show(&sView);
+      return;
+    }
     Close();
     return;
   }
@@ -481,7 +695,16 @@ void Frame() {
     sDirFrames = -1;
   }
   const int rows = RowCount(sTab);
-  if (fire & 1) {
+  if (sTab == kTabButtons) { // over the callouts as they stand
+    const int d = fire & 1 ? 1 : fire & 2 ? 2 : fire & 4 ? 4 : fire & 8 ? 8 : 0;
+    if (d != 0) {
+      sSel[sTab] = PadMove(sSel[sTab], d);
+      sConfirmUntil = 0;
+    }
+    if (press & XHW_BTN_X) {
+      Change(-1);
+    }
+  } else if (fire & 1) {
     sSel[sTab] = (sSel[sTab] + rows - 1) % rows;
     sConfirmUntil = 0;
   } else if (fire & 2) {
@@ -517,6 +740,117 @@ void Frame() {
   xhw_menu_show(&sView);
 }
 
+// ---- the game's lettering for the card (xhw.h xhw_menu_font) ----
+// The disc's Deface fonts through the game's own loader (the pause screen's
+// text and its large titles), their cells decoded once from the font
+// texture (the GameCube's tiled formats, PortFontAccent::Decode) into plain
+// texel values the card draws with: a few KB, kept for the run. The tokens
+// are let go at once. A font that can't be had leaves the card's unscii.
+const uint32_t kFontIds[2] = {0xC29C51F1, 0xFE94BD23}; // FONT_Deface14B, FONT_DefaceLarge
+xhw_menu_font sFont[2];
+std::vector< uint8_t > sFontCells[2];
+int sFontState[2]; // 0 not tried, 1 set, -1 failed
+
+bool LiftFont(int which) {
+  if (gpSimplePool == nullptr) {
+    return false;
+  }
+  TLockedToken< CRasterFont > font(gpSimplePool->GetObj(SObjectTag('FONT', kFontIds[which])));
+  if (*font == nullptr) {
+    return false;
+  }
+  TLockedToken< CTexture > tex(font->GetTexture());
+  if (*tex == nullptr) {
+    return false;
+  }
+  const ETexelFormat tf = tex->GetTexelFormat();
+  if (tf != kTF_I4 && tf != kTF_I8 && tf != kTF_C4 && tf != kTF_C8) {
+    xhw_logf("[MENU] font %08x: texel format %d, not used", (unsigned)kFontIds[which], (int)tf);
+    return false;
+  }
+  const PortFontAccent::Format format = static_cast< PortFontAccent::Format >(tf);
+  const int texW = tex->GetWidth(), texH = tex->GetHeight();
+  const uint8_t* texels = static_cast< const uint8_t* >(tex->GetConstBitMapData(0));
+  const size_t texSize = tex->GetMemoryAllocated();
+  if (texels == nullptr) {
+    return false;
+  }
+  xhw_menu_font& f = sFont[which];
+  std::vector< uint8_t >& cells = sFontCells[which];
+  memset(&f, 0, sizeof f);
+  cells.clear();
+  int inked = 0;
+  for (int ch = ' '; ch <= '~'; ++ch) {
+    const CGlyph* g = font->GetGlyph(static_cast< wchar_t >(ch));
+    xhw_menu_glyph& out = f.glyph[ch - ' '];
+    if (g == nullptr) {
+      continue;
+    }
+    out.a = g->GetA();
+    out.b = g->GetB();
+    out.c = g->GetC();
+    out.top = g->GetBaseLine();
+    const int x0 = static_cast< int >(g->GetStartU() * texW + 0.5f);
+    const int y0 = static_cast< int >(g->GetStartV() * texH + 0.5f);
+    const int w = g->GetCellWidth(), h = g->GetCellHeight();
+    if (w <= 0 || h <= 0 || w > 64 || h > 64 || x0 < 0 || y0 < 0 || x0 + w > texW || y0 + h > texH) {
+      continue;
+    }
+    out.w = static_cast< int16_t >(w);
+    out.h = static_cast< int16_t >(h);
+    out.off = static_cast< uint32_t >(cells.size());
+    for (int y = 0; y < h; ++y) {
+      for (int x = 0; x < w; ++x) {
+        uint8_t v = 0;
+        PortFontAccent::Decode(texels, texSize, format, texW, texH, x0 + x, y0 + y, v);
+        v &= 3; // bit 0 the ink, bit 1 the outline (value 3: neither, as the renderer's palette)
+        if (v == 3) {
+          v = 0;
+        }
+        inked += v & 1;
+        cells.push_back(v);
+      }
+    }
+  }
+  if (inked == 0) {
+    xhw_logf("[MENU] font %08x: no ink decoded (format %d), not used", (unsigned)kFontIds[which], (int)tf);
+    return false;
+  }
+  f.ascent = static_cast< int16_t >(font->GetBaseLine());
+  f.height = static_cast< int16_t >(font->GetMonoHeight());
+  f.cells = cells.data();
+  xhw_logf("[MENU] font %08x: %dx%d texture (format %d), line %d, baseline %d, %u KB of cells",
+           (unsigned)kFontIds[which], texW, texH, (int)tf, f.height, f.ascent,
+           (unsigned)(cells.size() + 1023) / 1024);
+  return true;
+}
+
+void EnsureFonts() {
+  for (int i = 0; i < 2; ++i) {
+    if (sFontState[i] == 0) {
+      sFontState[i] = LiftFont(i) ? 1 : -1;
+      xhw_menu_set_font(i, sFontState[i] > 0 ? &sFont[i] : nullptr);
+    }
+  }
+}
+
+// The game held until the popup closes: 60 times a second the pads are
+// read, the view filled and what changed drawn onto the frame on screen;
+// the disc's and ARAM's completions (the music's stream reads) and the
+// alarms go on as while the game waits for a disc read. The game's next
+// present, after this returns, replaces the card.
+void RunModal() {
+  xhw_menu_modal_begin();
+  while (sOpen) {
+    xsdk_modal_tick();
+    Frame();
+    if (sOpen) {
+      xhw_menu_modal_frame();
+    }
+  }
+  xhw_menu_modal_end();
+}
+
 } // namespace
 
 void OpenMenu() {
@@ -539,29 +873,38 @@ void OpenMenu() {
     }
   }
   sDir = 15; // a held direction waits to be let go
+  sAsk = false;
+  sRestarting = 0;
+  EnsureFonts();
   Fill();
   xhw_menu_show(&sView);
   xhw_logf("[MENU] Port Options opened");
+  RunModal();
 }
 
 bool MenuOpen() { return sOpen; }
 
 } // namespace PortXboxOptions
 
-// vi.c, once a frame (the game thread)
+// vi.c, once a frame (the game thread): test builds' PX_MENU_AT. The popup
+// itself runs in OpenMenu's modal loop.
 extern "C" void px_menu_frame(void) {
 #if XHW_TEST_BUILD
   // test builds: "env PX_MENU_AT=<frame>" in autopad.txt opens the popup at
   // that frame, wherever the game is (xemu is too slow for a script to walk
   // the main menu reliably)
-  static int sAt = -2;
+  // (PX_MENU_AGAIN=<frame>: a second open, the glyph cache made again)
+  static int sAt = -2, sAgain = -1;
   static unsigned sFrame;
   ++sFrame;
   if (sAt == -2) {
     const char* e = getenv("PX_MENU_AT");
     sAt = e != nullptr ? atoi(e) : -1;
+    e = getenv("PX_MENU_AGAIN");
+    sAgain = e != nullptr ? atoi(e) : -1;
   }
-  if (sAt > 0 && sFrame == static_cast< unsigned >(sAt)) {
+  if ((sAt > 0 && sFrame == static_cast< unsigned >(sAt)) ||
+      (sAgain > 0 && sFrame == static_cast< unsigned >(sAgain))) {
     PortXboxOptions::OpenMenu();
   }
 #endif

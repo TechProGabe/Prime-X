@@ -193,11 +193,6 @@ BOOL DVDOpen(const char* name, DVDFileInfo* fi) {
     return DVDFastOpen(e, fi);
 }
 
-BOOL DVDClose(DVDFileInfo* fi) {
-    (void)fi;
-    return TRUE;
-}
-
 static s32 read_now(DVDFileInfo* fi, void* addr, s32 length, s32 offset) {
     u32 len = (u32)length;
     if (offset < 0 || (u32)offset >= fi->length) return 0;
@@ -224,6 +219,7 @@ typedef struct Req {
     s32 length, offset;
     DVDCallback fcb;
     DVDCBCallback bcb;
+    int dead;                 /* finished early by dvd_drain: skipped, not delivered again */
 } Req;
 
 /* The read whose completion callback is running: lets ar.c leave ARAM
@@ -269,6 +265,16 @@ static xhw_event* s_qevent;
 static volatile int s_inflight;
 static int s_q_peak, s_q_waits;   /* the deepest the queue got, enqueues that found it full */
 
+/* the command block of the read the worker is doing (dvd_drain waits for it) */
+static DVDCommandBlock* volatile s_cur_cb;
+
+static DVDCommandBlock* req_cb(const Req* r) { return r->fi ? &r->fi->cb : r->block; }
+
+static s32 req_read(const Req* r) {
+    if (r->fi) return read_now(r->fi, r->addr, r->length, r->offset);
+    return img_read((u32)r->offset, r->addr, (u32)r->length) ? r->length : DVD_RESULT_FATAL_ERROR;
+}
+
 static void worker(void* arg) {
     (void)arg;
     xhw_tls_set(s_worker_tls, (void*)1);
@@ -282,13 +288,16 @@ static void worker(void* arg) {
             continue;
         }
         r = s_q[s_qhead];
+        if (r.dead) {   /* dvd_drain did it already */
+            s_qhead = (s_qhead + 1) % QUEUE;
+            s_qcount--;
+            xhw_mutex_unlock(s_qlock);
+            continue;
+        }
+        s_cur_cb = req_cb(&r);
         xhw_mutex_unlock(s_qlock);
 
-        if (r.fi) {
-            res = read_now(r.fi, r.addr, r.length, r.offset);
-        } else {
-            res = img_read((u32)r.offset, r.addr, (u32)r.length) ? r.length : DVD_RESULT_FATAL_ERROR;
-        }
+        res = req_read(&r);
         /* the game thread finishes it (xsdk_dvd_deliver): Prime's callbacks
          * take the game's own locks, which deadlocks from this thread */
         xhw_mutex_lock(s_qlock);
@@ -296,6 +305,7 @@ static void worker(void* arg) {
         s_qcount--;
         if (s_dcount == QUEUE) OSPanic(__FILE__, __LINE__, "DVD completion queue overflow");
         s_d[(s_dhead + s_dcount++) % QUEUE] = (Done){ r, res };
+        s_cur_cb = NULL;
         xhw_mutex_unlock(s_qlock);
     }
 }
@@ -361,15 +371,34 @@ void xsdk_dvd_log(void) {
 
 int aurora_dvd_inflight(void) { return __atomic_load_n(&s_inflight, __ATOMIC_ACQUIRE); }
 
-/* On the game thread (the frame boundary, OSYieldThread, the alarm wait):
- * each finished read's state and callback together, with interrupts off,
- * as the DVD interrupt did. */
+/* A finished read's state and callback together, with interrupts off, as
+ * the DVD interrupt did. */
+static void finish(const Req* r, s32 res) {
+    DVDCommandBlock* cb = req_cb(r);
+    const u8* outer_addr = s_done_read.addr;   /* a finish nested in another's callback (dvd_drain) */
+    u32 outer_len = s_done_read.len, outer_off = s_done_read.image_off;
+    BOOL intr = OSDisableInterrupts();
+    cb->transferredSize = res > 0 ? (u32)res : 0;
+    cb->state = res == DVD_RESULT_CANCELED ? DVD_STATE_CANCELED : res < 0 ? DVD_STATE_FATAL_ERROR : DVD_STATE_END;
+    if (res > 0) {
+        s_done_read.addr = (const u8*)r->addr;
+        s_done_read.len = (u32)res;
+        s_done_read.image_off = r->fi ? r->fi->startAddr + (u32)r->offset : (u32)r->offset;
+    }
+    if (r->fi && r->fcb) r->fcb(res, r->fi);
+    else if (!r->fi && r->bcb) r->bcb(res, r->block);
+    s_done_read.addr = outer_addr;
+    s_done_read.len = outer_len;
+    s_done_read.image_off = outer_off;
+    OSRestoreInterrupts(intr);
+    __atomic_sub_fetch(&s_inflight, 1, __ATOMIC_RELEASE);
+}
+
+/* On the game thread (the frame boundary, OSYieldThread, the alarm wait) */
 void xsdk_dvd_deliver(void) {
     if (!s_qlock || !__atomic_load_n(&s_dcount, __ATOMIC_ACQUIRE)) return;
     for (;;) {
         Done d;
-        DVDCommandBlock* cb;
-        BOOL intr;
         xhw_mutex_lock(s_qlock);
         if (s_dcount == 0) {
             xhw_mutex_unlock(s_qlock);
@@ -379,20 +408,60 @@ void xsdk_dvd_deliver(void) {
         s_dhead = (s_dhead + 1) % QUEUE;
         s_dcount--;
         xhw_mutex_unlock(s_qlock);
-        cb = d.r.fi ? &d.r.fi->cb : d.r.block;
-        intr = OSDisableInterrupts();
-        cb->transferredSize = d.res > 0 ? (u32)d.res : 0;
-        cb->state = d.res < 0 ? DVD_STATE_FATAL_ERROR : DVD_STATE_END;
-        if (d.res > 0) {
-            s_done_read.addr = (const u8*)d.r.addr;
-            s_done_read.len = (u32)d.res;
-            s_done_read.image_off = d.r.fi ? d.r.fi->startAddr + (u32)d.r.offset : (u32)d.r.offset;
+        if (!d.r.dead) finish(&d.r, d.res);
+    }
+}
+
+/* Finishes every read of command block `cb` now: one still waiting is
+ * cancelled (DVD_STATE_CANCELED, its callback given DVD_RESULT_CANCELED, as
+ * MetroidPrimePort's aurora does); one the worker is doing is waited for,
+ * and it and any read done but not yet delivered are delivered now, as
+ * xsdk_dvd_deliver would. A callback that posts its next read on the same
+ * block has that one cancelled, so a stream doesn't run on. Returns how
+ * many. DVDClose, DVDCancel and DVDCancelAsync come here: they were no-ops, and the game frees a request's buffer and its DVDFileInfo
+ * (CRealDvdRequest) right after them, so a read still queued landed in
+ * freed memory and its delivery wrote cb->state there too (beta2, a tester:
+ * the heap's free list overwritten, CGameAllocator::Alloc faulted from the
+ * title's CMoviePlayer after backing out of the game and in again).
+ * MetroidPrimePort's DVDClose drains the same way (CDvdRequest.cpp). */
+static int dvd_drain(DVDCommandBlock* cb) {
+    int n = 0;
+    if (!s_qlock || !cb || !__atomic_load_n(&s_inflight, __ATOMIC_ACQUIRE)) return 0;
+    if (xhw_tls_get(s_worker_tls)) return 0;   /* never from the worker: it would wait for itself */
+    for (;;) {
+        Req r;
+        s32 res = 0;
+        int i, have = 0, done = 0, busy;
+        xhw_mutex_lock(s_qlock);
+        for (i = 0; i < s_dcount && !have; i++) {
+            Done* d = &s_d[(s_dhead + i) % QUEUE];
+            if (!d->r.dead && req_cb(&d->r) == cb) {
+                r = d->r;
+                res = d->res;
+                d->r.dead = 1;
+                have = done = 1;
+            }
         }
-        if (d.r.fi && d.r.fcb) d.r.fcb(d.res, d.r.fi);
-        else if (!d.r.fi && d.r.bcb) d.r.bcb(d.res, d.r.block);
-        s_done_read.addr = NULL;
-        OSRestoreInterrupts(intr);
-        __atomic_sub_fetch(&s_inflight, 1, __ATOMIC_RELEASE);
+        /* a waiting one: the worker's current read is the queue's head, still
+         * in it, and isn't taken from under it */
+        for (i = s_cur_cb ? 1 : 0; i < s_qcount && !have; i++) {
+            Req* q = &s_q[(s_qhead + i) % QUEUE];
+            if (!q->dead && req_cb(q) == cb) {
+                r = *q;
+                q->dead = 1;
+                have = 1;
+            }
+        }
+        busy = s_cur_cb == cb;
+        xhw_mutex_unlock(s_qlock);
+        if (have) {
+            finish(&r, done ? res : DVD_RESULT_CANCELED);
+            n++;
+        } else if (busy) {
+            xhw_sleep_ms(1);
+        } else {
+            return n;
+        }
     }
 }
 
@@ -410,8 +479,19 @@ void DVDReset(void) {}
 int DVDResetRequired(void) { return 0; }
 void* DVDGetFSTLocation(void) { return s_fst; }
 
-s32 DVDCancel(volatile DVDCommandBlock* block) { (void)block; return 0; }
+/* the block's reads cancelled or finished: its buffer is the caller's again (dvd_drain) */
+BOOL DVDClose(DVDFileInfo* fi) {
+    if (fi) dvd_drain(&fi->cb);
+    return TRUE;
+}
+
+s32 DVDCancel(volatile DVDCommandBlock* block) {
+    dvd_drain((DVDCommandBlock*)block);
+    return 0;
+}
+
 int DVDCancelAsync(DVDCommandBlock* block, DVDCBCallback cb) {
+    dvd_drain(block);
     if (cb) cb(0, block);
     return 1;
 }

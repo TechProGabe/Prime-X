@@ -141,7 +141,11 @@ class ByteRefs:
                 continue
             i = b.find(pat)
             while i >= 0:
-                out.append(va + i)
+                # in data, a pointer sits on a 4-byte boundary: unaligned, the
+                # bytes are two neighbours' halves (450.0f twice in
+                # CMorphBall's kGlowBoosted read as mbrtowc's 0x0043e100)
+                if ex or (va + i) % 4 == 0:
+                    out.append(va + i)
                 i = b.find(pat, i + 1)
         return out
 

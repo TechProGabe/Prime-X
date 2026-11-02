@@ -199,11 +199,12 @@ static const SGameOption skPortVisorOptions[] = {
     PX_PORT_ROW,
     {kGO_RestoreDefaults, 35, 0.f, 1.f, 1.f, kOT_RestoreDefaults},
 };
+// PORT_XBOX: no Screen Brightness, Screen Offset or Screen Stretch rows: the
+// GameCube did them in the copy filter and the video interface, which the
+// Xbox's GX and VI ignore, so they changed nothing (beta2, a tester: "Adjusting
+// screen brightness doesn't seem to work"); the user: "rip out the brightness
+// settings". The TV and the dashboard do these on an Xbox.
 static const SGameOption skPortDisplayOptions[] = {
-    {kGO_ScreenBrightness, 25, 0.f, 8.f, 1.f, kOT_Float},
-    {kGO_ScreenOffsetX, 26, -30.f, 30.f, 1.f, kOT_Float},
-    {kGO_ScreenOffsetY, 27, -30.f, 30.f, 1.f, kOT_Float},
-    {kGO_ScreenStretch, 28, -10.f, 10.f, 1.f, kOT_Float},
     PX_PORT_ROW,
     {kGO_RestoreDefaults, 35, 0.f, 1.f, 1.f, kOT_RestoreDefaults},
 };
@@ -222,8 +223,13 @@ static const SGameOption skPortControllerOptions[] = {
     {kGO_RestoreDefaults, 35, 0.f, 1.f, 1.f, kOT_RestoreDefaults},
 };
 static SOptionCategory skPauseOptions[] = {
-    {6, skPortVisorOptions},      {6, skPortDisplayOptions}, {5, skPortSoundOptions},
+    {6, skPortVisorOptions},      {2, skPortDisplayOptions}, {5, skPortSoundOptions},
     {5, skPortControllerOptions}, {0, nullptr},
+};
+// PORT_XBOX: the title screen's Options: the retail tables but Display, as above
+static SOptionCategory skFrontOptions[] = {
+    {5, skVisorOptions},      {2, skPortDisplayOptions}, {4, skSoundOptions},
+    {4, skControllerOptions}, {0, nullptr},
 };
 
 static bool IsPortOption(EGameOption option) { return option > kGO_RestoreDefaults; }
@@ -237,8 +243,8 @@ static void SetPortOption(EGameOption option, int value) {
   PortXboxOptions::Set(static_cast< int >(option), value);
 }
 static const SOptionCategory& GetOptionCategory(int category, bool frontEnd) {
-  if (frontEnd) { // the title screen's Options: the retail tables
-    return skGameOptions[category];
+  if (frontEnd) { // the title screen's Options
+    return skFrontOptions[category];
   }
   return skPauseOptions[category];
 }
@@ -1284,7 +1290,11 @@ void SOptionsFrontEndFrame::FinishedLoading() {
   DeactivateRightMenu();
 }
 
+#ifdef TARGET_XBOX
+#define PX_FRONT_CATEGORY(sel) skFrontOptions[sel] // PORT_XBOX: Display without its no-op rows
+#else
 #define PX_FRONT_CATEGORY(sel) skGameOptions[sel]
+#endif
 
 void SOptionsFrontEndFrame::SetRightUIText() {
   const SOptionCategory& options = PX_FRONT_CATEGORY(x24_tablegroup_leftmenu->GetUserSelection());
@@ -1514,6 +1524,16 @@ bool SOptionsFrontEndFrame::ProcessUserInput(const CFinalInput& input, CSaveGame
       x1c_loadedFrame->ProcessUserInput(input);
       CGameOptions::TryRestoreDefaults(input, x24_tablegroup_leftmenu->GetUserSelection(),
                                        x28_tablegroup_rightmenu->GetUserSelection(), true);
+#ifdef TARGET_XBOX
+      // PORT_XBOX: A on the Display category's "Xbox Port Options" row opens the popup
+      if (input.PA() && x28_tablegroup_rightmenu->GetIsActive()) {
+        const SOptionCategory& cat = PX_FRONT_CATEGORY(x24_tablegroup_leftmenu->GetUserSelection());
+        const int sel = x28_tablegroup_rightmenu->GetUserSelection();
+        if (sel >= 0 && sel < cat.count && cat.options[sel].option == PORT_OPTION(PortXboxOptions::kXO_OpenMenu)) {
+          PortXboxOptions::OpenMenu();
+        }
+      }
+#endif
     }
   }
   return !x134_25_exitOptions;
