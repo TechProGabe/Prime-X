@@ -77,6 +77,32 @@ static u16 map_buttons(uint32_t b, const xsdk_port_settings* ps) {
     return out;
 }
 
+/* Dual Stick aiming (GitHub #2): port 1's right stick at the last read,
+ * past the C-stick dead zone and rescaled to -1..1 at full float precision
+ * (the C-stick values are cut to the GameCube's +-59 gate by PADClamp:
+ * ~60 steps for a whole half turn a second), and Beam Select held */
+static float s_aim_x, s_aim_y;
+static int s_aim_ok, s_beam_held;
+
+int xsdk_pad_aim(float* x, float* y) {
+    *x = s_aim_ok ? s_aim_x : 0.0f;
+    *y = s_aim_ok ? s_aim_y : 0.0f;
+    return s_aim_ok;
+}
+int xsdk_pad_beam_held(void) { return s_beam_held; }
+
+static void aim_stick(int16_t x, int16_t y, float deadzone) {
+    float fx = x / 32767.0f, fy = y / 32767.0f, mag = sqrtf(fx * fx + fy * fy), scale;
+    if (mag <= deadzone || mag < 1e-6f) {
+        s_aim_x = s_aim_y = 0.0f;
+        return;
+    }
+    if (mag > 1.0f) mag = 1.0f;
+    scale = (mag - deadzone) / (1.0f - deadzone) / sqrtf(fx * fx + fy * fy);
+    s_aim_x = fx * scale;
+    s_aim_y = fy * scale;
+}
+
 /* the controllers as PADRead last read them, for the settings menu (menu.c) */
 static xhw_pad s_raw[PORTS];
 static int s_raw_ok[PORTS];
@@ -126,6 +152,8 @@ u32 PADRead(PADStatus* status) {
     s_reads++;
     /* the settings menu is up, or its closing press is still held */
     block = xsdk_menu_block(all);
+    s_aim_ok = 0;
+    s_beam_held = 0;
     for (i = 0; i < PORTS; i++) {
         PADStatus* s = &status[i];
         const xsdk_port_settings* ps = &g_xsdk_settings.port[i];
@@ -155,6 +183,14 @@ u32 PADRead(PADStatus* status) {
                               ((p.buttons & XHW_BTN_A) ? PAD_BUTTON_A : 0) | ((p.buttons & XHW_BTN_B) ? PAD_BUTTON_B : 0));
         else
             s->button = map_buttons(p.buttons, ps);
+        if (s->button & XSDK_PAD_BEAM) {   /* not a GameCube button */
+            s->button &= (u16)~XSDK_PAD_BEAM;
+            if (i == 0) s_beam_held = 1;
+        }
+        if (i == 0 && g_xsdk_settings.aim == XSDK_AIM_DUAL && !menu_up()) {
+            aim_stick(p.rx, p.ry, ps->cstick_deadzone);
+            s_aim_ok = 1;
+        }
         stick(p.lx, p.ly, ps->stick_deadzone, &s->stickX, &s->stickY);
         stick(p.rx, p.ry, ps->cstick_deadzone, &s->substickX, &s->substickY);
         if (ps->trigger_z == XSDK_TRIGGER_Z_LEFT) {   /* a Z button: no analog L, no L click */

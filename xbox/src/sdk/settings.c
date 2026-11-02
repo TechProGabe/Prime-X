@@ -48,7 +48,7 @@ static const struct { const char* name; uint16_t bits; } k_gc[] = {
     { "NONE", 0 }, { "A", PAD_BUTTON_A }, { "B", PAD_BUTTON_B }, { "X", PAD_BUTTON_X },
     { "Y", PAD_BUTTON_Y }, { "Z", PAD_TRIGGER_Z }, { "L", PAD_TRIGGER_L }, { "R", PAD_TRIGGER_R },
     { "START", PAD_BUTTON_START }, { "UP", PAD_BUTTON_UP }, { "DOWN", PAD_BUTTON_DOWN },
-    { "LEFT", PAD_BUTTON_LEFT }, { "RIGHT", PAD_BUTTON_RIGHT },
+    { "LEFT", PAD_BUTTON_LEFT }, { "RIGHT", PAD_BUTTON_RIGHT }, { "BEAM", XSDK_PAD_BEAM },
 };
 #define N_GC (int)(sizeof k_gc / sizeof k_gc[0])
 
@@ -86,6 +86,8 @@ static void defaults(xsdk_settings* st) {
     st->fov = 55;
     st->skip_cutscenes = 0;
     st->sim_mode = XSDK_SIM_AUTO;
+    st->aim = XSDK_AIM_GAMECUBE;
+    st->aim_speed = XSDK_AIM_SPEED_MEDIUM;
     for (p = 0; p < 4; p++) {
         xsdk_port_settings* ps = &st->port[p];
         ps->stick_deadzone = 0.20f;
@@ -199,6 +201,7 @@ static int gc_lookup(const char* name, uint16_t* out) {
         { "lock", PAD_TRIGGER_L }, { "lock on", PAD_TRIGGER_L }, { "aim", PAD_TRIGGER_R },
         { "free aim", PAD_TRIGGER_R }, { "pause", PAD_BUTTON_START }, { "d-up", PAD_BUTTON_UP },
         { "d-down", PAD_BUTTON_DOWN }, { "d-left", PAD_BUTTON_LEFT }, { "d-right", PAD_BUTTON_RIGHT },
+        { "beam select", XSDK_PAD_BEAM }, { "beams", XSDK_PAD_BEAM },
     };
     int i;
     for (i = 0; i < N_GC; i++)
@@ -296,6 +299,16 @@ static int parse(FILE* f, xsdk_settings* st) {
                 v = pct(st->rumble);
                 set_num(n, key, val, 0, 100, &v);
                 st->rumble = v / 100.0f;
+            } else if (_stricmp(key, "aim") == 0) {
+                if (_stricmp(val, "gamecube") == 0 || _stricmp(val, "0") == 0) st->aim = XSDK_AIM_GAMECUBE;
+                else if (_stricmp(val, "dual") == 0 || _stricmp(val, "dual stick") == 0 || _stricmp(val, "1") == 0)
+                    st->aim = XSDK_AIM_DUAL;
+                else problem(n, "aim = %s: use gamecube or dual", val, "");
+            } else if (_stricmp(key, "aim_speed") == 0) {
+                if (_stricmp(val, "low") == 0 || _stricmp(val, "0") == 0) st->aim_speed = XSDK_AIM_SPEED_LOW;
+                else if (_stricmp(val, "medium") == 0 || _stricmp(val, "1") == 0) st->aim_speed = XSDK_AIM_SPEED_MEDIUM;
+                else if (_stricmp(val, "high") == 0 || _stricmp(val, "2") == 0) st->aim_speed = XSDK_AIM_SPEED_HIGH;
+                else problem(n, "aim_speed = %s: use low, medium or high", val, "");
             } else if (_stricmp(key, "cstick_1p") == 0) {
                 /* Melee-X's (smash attacks in 1P modes): no effect in Prime */
             } else {
@@ -360,7 +373,8 @@ int xsdk_settings_equal(const xsdk_settings* a, const xsdk_settings* b) {
     if (a->video_720p != b->video_720p || a->progressive != b->progressive || a->widescreen != b->widescreen ||
         a->fps != b->fps || a->shots != b->shots || a->led != b->led || a->log != b->log ||
         pct(a->rumble) != pct(b->rumble) || a->cstick_1p != b->cstick_1p || a->hud_wide != b->hud_wide ||
-        a->fov != b->fov || a->skip_cutscenes != b->skip_cutscenes)
+        a->fov != b->fov || a->skip_cutscenes != b->skip_cutscenes || a->aim != b->aim ||
+        a->aim_speed != b->aim_speed)
         return 0;
     for (p = 0; p < 4; p++) {
         const xsdk_port_settings *x = &a->port[p], *y = &b->port[p];
@@ -379,10 +393,10 @@ static void log_summary(const char* what) {
     const xsdk_settings* st = &g_xsdk_settings;
     const xsdk_port_settings* p1 = &st->port[0];
     xhw_logf("[SETTINGS] %s: 720p %d, progressive %d, widescreen %d, fps %d, screenshots %d, led %d, log %d, "
-             "HUD wide %d, FOV %d, rumble %d, C-stick in 1P %d, port 1 dead zones %d/%d, trigger click %d, trigger Z %d",
+             "HUD wide %d, FOV %d, rumble %d, aim %s (speed %d), port 1 dead zones %d/%d, trigger click %d, trigger Z %d",
              what, st->video_720p, st->progressive, st->widescreen, st->fps, st->shots, st->led, st->log,
              st->hud_wide,
-             st->fov, pct(st->rumble), st->cstick_1p,
+             st->fov, pct(st->rumble), st->aim == XSDK_AIM_DUAL ? "dual" : "gamecube", st->aim_speed,
              pct(p1->stick_deadzone), pct(p1->cstick_deadzone), p1->trigger_click, p1->trigger_z);
 }
 
@@ -475,6 +489,7 @@ static const char* action_name(uint16_t gc) {
     case PAD_TRIGGER_R: return "Free Aim";
     case PAD_BUTTON_START: return "Pause";
     case PAD_BUTTON_UP: case PAD_BUTTON_DOWN: case PAD_BUTTON_LEFT: case PAD_BUTTON_RIGHT: return "D-pad (visors)";
+    case XSDK_PAD_BEAM: return "Beam Select (Dual Stick: held, the right stick picks beams)";
     default: return "nothing";
     }
 }
@@ -504,13 +519,19 @@ static void write_all(FILE* f, const xsdk_settings* st) {
     fprintf(f, "[game]\nhud_wide = %d\nfov = %d\nskip_cutscenes = %d\n\n", st->hud_wide, st->fov,
             st->skip_cutscenes);
     fprintf(f, "; rumble: 0 to 100 percent (rumble on or off is in the game's own Options).\n");
-    fprintf(f, "[input]\nrumble = %d\n\n", pct(st->rumble));
+    fprintf(f, "; aim = gamecube: RT and the left stick aim, the right stick picks beams. aim = dual: the right\n");
+    fprintf(f, "; stick aims and the left one moves and strafes; hold Beam Select (BEAM below) and tilt the\n");
+    fprintf(f, "; right stick to pick a beam. aim_speed (dual): low, medium or high.\n");
+    fprintf(f, "[input]\nrumble = %d\naim = %s\naim_speed = %s\n\n", pct(st->rumble),
+            st->aim == XSDK_AIM_DUAL ? "dual" : "gamecube",
+            st->aim_speed == XSDK_AIM_SPEED_LOW ? "low" : st->aim_speed == XSDK_AIM_SPEED_HIGH ? "high" : "medium");
     fprintf(f, "; Each controller port. stick_deadzone, cstick_deadzone: 0 to 60 percent.\n");
     fprintf(f, "; trigger_click: 64 to 255, how far LT and RT go in before they count as pressed.\n");
     fprintf(f, "; trigger_z = left or right: that trigger opens the map instead of locking on (left) or\n");
     fprintf(f, "; aiming (right); off: both as on the GameCube.\n");
     fprintf(f, "; Buttons: Xbox button = GameCube button: A (Fire) B (Jump) X (Morph Ball) Y (Missile)\n");
-    fprintf(f, "; Z (Map) L (Lock On) R (Free Aim) START (Pause) UP DOWN LEFT RIGHT (the D-pad) NONE.\n");
+    fprintf(f, "; Z (Map) L (Lock On) R (Free Aim) START (Pause) UP DOWN LEFT RIGHT (the D-pad) BEAM (Beam\n");
+    fprintf(f, "; Select, for aim = dual) NONE.\n");
     fprintf(f, "; Fire, Jump... work too. Some button must be A and some START, or the port is reset.\n");
     for (port = 0; port < 4; port++) {
         const xsdk_port_settings* ps = &st->port[port];

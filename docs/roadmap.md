@@ -93,8 +93,7 @@ Open:
   sanity-checked, the clock is checked against VBlank (a correction the
   next window doesn't confirm is undone), rdtsc traps are detected and
   avoided, and `steady_clock` runs on Prime-X's clock. Test build 3 ran
-  right on the tester's console ("two reports of working"); not in the
-  v1.0 beta release, in the next.
+  right on the tester's console ("two reports of working"); in v1.0-beta2.
 
 Fixed on hardware since hw10: fights 17-18 -> 30-32 fps (Auto, GPU
 skinning; hw12); the pause screen 14-17 -> 58-60 (hw12); Main Plaza at

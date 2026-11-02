@@ -24,6 +24,13 @@
 #include <cmath>
 #include <string.h>
 
+#ifdef TARGET_XBOX
+extern "C" {
+int xsdk_pad_aim(float* x, float* y); // PORT_XBOX: pad.c, Dual Stick aiming
+int xsdk_pad_beam_held(void);
+}
+#endif
+
 namespace {
 static_assert(PortInputMap::kPadA == PAD_BUTTON_A && PortInputMap::kPadL == PAD_TRIGGER_L &&
                   PortInputMap::kPadR == PAD_TRIGGER_R && PortInputMap::kPadUp == PAD_BUTTON_UP &&
@@ -136,6 +143,24 @@ void CDolphinController::ReadDevices() {
   // so it does not also drive the game's own free-look. The map screen keeps
   // the C-stick: it pans the map there. So does the free camera (photo mode):
   // it turns with it.
+#ifdef TARGET_XBOX
+  // PORT_XBOX: Dual Stick aiming (GitHub #2): the right stick as pad.c read
+  // it, past its dead zone at full precision (the C-stick here is cut to the
+  // GameCube's +-59 gate). Held, Beam Select leaves it the C-stick (beams);
+  // a menu leaves it alone too (pad.c reports no aim there).
+  float aimX = 0.f;
+  float aimY = 0.f;
+  if (PortDebug::TwinStick() && !PortDebug::MapScreenOpen() && x4_status[0].err == PAD_ERR_NONE &&
+      xsdk_pad_aim(&aimX, &aimY) && !xsdk_pad_beam_held()) {
+    PortDebug::AddStickAim(aimX, aimY, PortDebug::TickPeriod());
+    // the spring ball's flick threshold was tuned on the clamped scale (59 of 127)
+    PortDebug::SetTwinStickRightY(aimY * (59.f / 127.f));
+    x4_status[0].substickX = 0;
+    x4_status[0].substickY = 0;
+  } else {
+    PortDebug::SetTwinStickRightY(0.f);
+  }
+#else
   if (PortDebug::TwinStick() && !PortDebug::MapScreenOpen() && !PortFreeCam::Active() &&
       x4_status[0].err == PAD_ERR_NONE) {
     // Under mouse aim the mouse aims, so a keyboard key on the C-stick picks a
@@ -173,6 +198,7 @@ void CDolphinController::ReadDevices() {
   } else {
     PortDebug::SetTwinStickRightY(0.f);
   }
+#endif
 
   // Start+Back is the debug overlay chord; do not also pause the game with it.
   // Either alone may be bound to Start (the Remastered preset pauses on Back).

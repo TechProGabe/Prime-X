@@ -48,6 +48,7 @@ const SAction kActions[] = {
     {L"Down", PAD_BUTTON_DOWN},
     {L"Left", PAD_BUTTON_LEFT},
     {L"Right", PAD_BUTTON_RIGHT},
+    {L"Beams", XSDK_PAD_BEAM}, // Beam Select: Dual Stick's beam chooser (pad.c)
 };
 const int kActionCount = static_cast< int >(sizeof kActions / sizeof kActions[0]);
 
@@ -332,10 +333,49 @@ int Get(int option) {
     return st.skip_cutscenes ? 1 : 0;
   case kXO_LogFile:
     return st.log ? 1 : 0;
+  case kXO_AimMode:
+    return st.aim == XSDK_AIM_DUAL ? 1 : 0;
+  case kXO_AimSpeed:
+    return st.aim_speed < 0 ? 0 : st.aim_speed > 2 ? 2 : st.aim_speed;
   default:
     return 0;
   }
 }
+
+namespace {
+// Dual Stick needs a Beam Select button: if none has it, Black takes it when
+// Black only duplicates Map (the default layout has Map on White and Black)
+// or does nothing, else the first of the right stick click, the left stick
+// click and BACK that does nothing. Returns the button, -1 if none was free.
+int GiveBeamSelect() {
+  xsdk_settings& st = g_xsdk_settings;
+  const int kBlack = 5, kWhite = 4;
+  for (int b = 0; b <= kXO_BindLast - kXO_BindFirst; ++b) {
+    if (st.port[0].bind[b].gc == XSDK_PAD_BEAM) {
+      return b;
+    }
+  }
+  int pick = -1;
+  const uint16_t black = st.port[0].bind[kBlack].gc;
+  if (black == 0 || (black == PAD_TRIGGER_Z && st.port[0].bind[kWhite].gc == PAD_TRIGGER_Z)) {
+    pick = kBlack;
+  } else {
+    const int kFree[] = {9, 8, 7}; // right stick click, left stick click, BACK
+    for (int b : kFree) {
+      if (st.port[0].bind[b].gc == 0) {
+        pick = b;
+        break;
+      }
+    }
+  }
+  if (pick >= 0) {
+    for (int p = 0; p < 4; ++p) {
+      st.port[p].bind[pick].gc = XSDK_PAD_BEAM;
+    }
+  }
+  return pick;
+}
+} // namespace
 
 void Set(int option, int value) {
   xsdk_settings& st = g_xsdk_settings;
@@ -405,6 +445,20 @@ void Set(int option, int value) {
     // at once: on opens boot.log (a new one), off closes it
     st.log = value > 0;
     xhw_log_set_file(st.log);
+    break;
+  case kXO_AimMode:
+    st.aim = value > 0 ? XSDK_AIM_DUAL : XSDK_AIM_GAMECUBE;
+    PortDebug::ResetMouseAim(); // the aim starts from the view as it is
+    if (st.aim == XSDK_AIM_DUAL) {
+      const int b = GiveBeamSelect();
+      xhw_logf("[OPTIONS] Dual Stick aiming; Beam Select on %s", b < 0 ? "no button (none free)" : b == 5 ? "Black"
+                                                                         : b == 9 ? "the right stick click"
+                                                                         : b == 8 ? "the left stick click"
+                                                                         : b == 7 ? "BACK" : "its button");
+    }
+    break;
+  case kXO_AimSpeed:
+    st.aim_speed = value < 0 ? 0 : value > 2 ? 2 : value;
     break;
   case kXO_FusionSuit:
     // What the Fusion bonuses screen does once a GBA has linked: the

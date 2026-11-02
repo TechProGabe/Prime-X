@@ -108,6 +108,23 @@ const SRow kVideo[] = {
      false},
 };
 const SRow kController[] = {
+    {"Aiming",
+     kXO_AimMode,
+     2,
+     {"GameCube", "Dual Stick"},
+     "How you aim and look around. Dual Stick is the modern way, as in the Remastered edition.",
+     {"Hold RT and tilt the left stick to aim; the right stick picks beams.",
+      "The right stick aims and looks, the left one moves and strafes. Hold Beam Select (Buttons tab) "
+      "and tilt the right stick to pick a beam."},
+     false},
+    {"Aim Speed",
+     kXO_AimSpeed,
+     3,
+     {"Low", "Medium", "High"},
+     "How fast the right stick turns the view with Dual Stick aiming. A light tilt always aims finely.",
+     {"120 degrees a second at full tilt.", "180 degrees a second at full tilt.",
+      "250 degrees a second at full tilt."},
+     false},
     {"Rumble Strength",
      kXO_RumbleStrength,
      3,
@@ -127,7 +144,7 @@ const SRow kController[] = {
      kXO_CStickDeadZone,
      3,
      {"Low", "Medium", "High"},
-     "The same for the right stick (the GameCube's C-stick: beams). Raise it if beams change on their own.",
+     "The same for the right stick (beams, or aiming with Dual Stick). Raise it if beams change or the view drifts on its own.",
      {"15%: the most responsive.", "25%: suits most controllers.", "35%: for worn sticks."},
      false},
     {"Trigger Click",
@@ -216,6 +233,8 @@ const SAction kActionHelp[] = {
     {PAD_BUTTON_DOWN, "D-Down", "The D-pad's down: picks a visor (or a beam with Swap Beam Controls)."},
     {PAD_BUTTON_LEFT, "D-Left", "The D-pad's left: picks a visor (or a beam with Swap Beam Controls)."},
     {PAD_BUTTON_RIGHT, "D-Right", "The D-pad's right: picks a visor (or a beam with Swap Beam Controls)."},
+    {XSDK_PAD_BEAM, "Beams",
+     "Beam Select, for Dual Stick aiming: hold it and tilt the right stick to pick a beam, as the GameCube's C-stick."},
 };
 const SAction& ActionOf(int gc) {
   for (const SAction& a : kActionHelp) {
@@ -400,11 +419,12 @@ void Fill() {
     }
     // the inputs that keep their GameCube part (pad.c)
     const bool swap = gpGameState != nullptr && gpGameState->GameOptions().GetSwapBeamControls();
+    const bool dual = g_xsdk_settings.aim == XSDK_AIM_DUAL;
     snprintf(v.pad_map[XHW_MENU_IN_LT], sizeof v.pad_map[0], "Lock On");
-    snprintf(v.pad_map[XHW_MENU_IN_RT], sizeof v.pad_map[0], "Free Aim");
+    snprintf(v.pad_map[XHW_MENU_IN_RT], sizeof v.pad_map[0], "%s", dual ? "-" : "Free Aim");
     snprintf(v.pad_map[XHW_MENU_IN_DPAD], sizeof v.pad_map[0], "%s", swap ? "Beams" : "Visors");
     snprintf(v.pad_map[XHW_MENU_IN_LSTICK], sizeof v.pad_map[0], "Move");
-    snprintf(v.pad_map[XHW_MENU_IN_RSTICK], sizeof v.pad_map[0], "%s", swap ? "Visors" : "Beams");
+    snprintf(v.pad_map[XHW_MENU_IN_RSTICK], sizeof v.pad_map[0], "%s", dual ? "Aim" : swap ? "Visors" : "Beams");
     // No live lighting of what is held: every press redrew the controller
     // (twice: down and up), the lag a tester felt moving around this page
     v.pad_ok = sPad1Ok ? 1 : 0;
@@ -415,6 +435,16 @@ void Fill() {
           snprintf(v.value_help, sizeof v.value_help, "%s", f.value);
         }
       }
+      if (dual && sel == XHW_MENU_IN_RSTICK) {
+        snprintf(v.help, sizeof v.help, "Right stick: Aim (Dual Stick, Controller tab). Fixed.");
+        snprintf(v.value_help, sizeof v.value_help,
+                 "Aims and looks around. Held, Beam Select makes it pick beams, as the GameCube's C-stick.");
+      } else if (dual && sel == XHW_MENU_IN_RT) {
+        snprintf(v.help, sizeof v.help, "RT: nothing with Dual Stick aiming (the right stick aims). Fixed.");
+        snprintf(v.value_help, sizeof v.value_help, "With GameCube aiming, held, the left stick aims and looks.");
+      } else if (dual && sel == XHW_MENU_IN_LSTICK) {
+        snprintf(v.value_help, sizeof v.value_help, "Moves and strafes Samus (Dual Stick aiming).");
+      }
       snprintf(v.note, sizeof v.note, "This input can't be remapped.");
     } else {
       const SAction& a = ActionOf(BindGc(sel));
@@ -423,6 +453,8 @@ void Fill() {
       snprintf(v.value_help, sizeof v.value_help, "%s", a.help);
       if (BindGc(sel) == PAD_BUTTON_A || BindGc(sel) == PAD_BUTTON_START) {
         snprintf(v.note, sizeof v.note, "Fire and Pause always stay on some button.");
+      } else if (BindGc(sel) == XSDK_PAD_BEAM && !dual) {
+        snprintf(v.note, sizeof v.note, "Beam Select is for Dual Stick aiming (Controller tab).");
       }
     }
   } else {
@@ -467,6 +499,15 @@ void Fill() {
         } else if (val == 1 && !xhw_video_480p_allowed()) {
           snprintf(v.note, sizeof v.note, "The dashboard doesn't allow 480p: the next start uses 480i.");
         }
+      }
+    }
+    if (!v.note[0] && sTab == kTabController && g_xsdk_settings.aim == XSDK_AIM_DUAL) {
+      bool beam = false;
+      for (int b = 0; b < XHW_MENU_IN_MAPPABLE; ++b) {
+        beam = beam || BindGc(b) == XSDK_PAD_BEAM;
+      }
+      if (!beam) {
+        snprintf(v.note, sizeof v.note, "No button has Beam Select: give one on the Buttons tab.");
       }
     }
     if (!v.note[0] && restartPending) {

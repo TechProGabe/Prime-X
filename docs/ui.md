@@ -130,11 +130,13 @@ were the user's first suspect).
 | Video | Widescreen HUD | Inner / Edges | where the visor's readouts sit at 16:9 |
 | Video | Field of View | 55 / 65 / 75 | the GameCube's / wider / widest |
 | Video | Frame Rate | Hide / Show | the counter top left |
+| Controller | Aiming | GameCube / Dual Stick | hold RT and the left stick aims, the right stick picks beams / the right stick aims and looks, the left one moves and strafes, hold Beam Select and tilt the right stick for a beam (GitHub #2, 2026-11-02) |
+| Controller | Aim Speed | Low / Medium / High | Dual Stick's turn at full tilt: 120 / 180 / 250 degrees a second |
 | Controller | Rumble Strength | Low / Medium / Full | 40 / 70 / 100% (On/Off is the game's own row) |
 | Controller | Stick Dead Zone | Low / Medium / High | 10 / 20 / 30% |
 | Controller | C-Stick Dead Zone | Low / Medium / High | 15 / 25 / 35% |
 | Controller | Trigger Click | Light / Medium / Firm | how far LT/RT go in |
-| Buttons | each remappable input | None, Fire, Jump, Morph Ball, Missile, Map, Lock On, Free Aim, Pause, D-Up/Down/Left/Right | what the action does in Prime |
+| Buttons | each remappable input | None, Fire, Jump, Morph Ball, Missile, Map, Lock On, Free Aim, Pause, D-Up/Down/Left/Right, Beams (Beam Select) | what the action does in Prime; Beam Select only matters with Dual Stick, which gives it to Black (or a free stick click or BACK) when turned on |
 | Buttons | LT, RT, D-pad, the sticks | fixed | what they do and why they stay (the GameCube's analog L/R, D-pad, sticks) |
 | Gameplay | Skip Cutscenes | Off / On | START skips any cutscene, from the next room |
 | Gameplay | Fusion Suit | Off / On | the GBA-link bonus, kept in the game's save |

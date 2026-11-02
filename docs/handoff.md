@@ -50,6 +50,14 @@ has each one's why.
   lighting (each press redrew the controller twice).
 - **"Restart now?"** after changing Video Mode (JayXbox): closing asks
   Restart later / Restart now, Later selected; Now saves and relaunches.
+- **Dual Stick aiming** (GitHub #2, the user: "add in GitHub issue 2 ...
+  high performance and works well, easy to configure"): Controller tab,
+  Aiming GameCube / Dual Stick and Aim Speed; MetroidPrimePort's twin stick
+  with the Xbox's aim state written (port_debug.cpp), the raw right stick
+  from pad.c, Beam Select (held: the right stick picks beams), given to
+  Black when Dual Stick is turned on. xemu: `dual_stick` scenario. Console:
+  feel of the speeds and curve, strafing, lock-on and scan, the morph ball,
+  Beam Select. GitHub #2 is still open (reply/close when the user says).
 - Not done, saved for later (the user, 2026-11-02): **Xbox button glyphs**
   in the game's own text (JayXbox offered to draw them). Sized up: of 2,323
   strings, ~96 show buttons, all as `&image=` tags (34 tags, 48 texture

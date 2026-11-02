@@ -481,6 +481,24 @@ swaps it, as Melee-X's does.
   step the action. Closing with a new Video Mode asks "Restart later /
   Restart now", Later selected (a tester's idea); Restart now saves and
   relaunches the XBE (`xhw_reboot_self`).
+- **Dual Stick aiming** (2026-11-02, GitHub #2; the user: "make sure it's
+  high performance and works well, easy to configure"): Port Options >
+  Controller > **Aiming: GameCube / Dual Stick** (GameCube the default) and
+  **Aim Speed: Low / Medium / High** (120 / 180 / 250 degrees a second at
+  full tilt, up and down at 3/4; a fifth linear, the rest squared, so a
+  light tilt aims finely). It is MetroidPrimePort's twin stick: the game
+  side (CPlayer's direct-aim path: the left stick moves and strafes, the
+  retail free look is off, RT does nothing) was already imported; the
+  Xbox's `port_debug.cpp` had it stubbed and now keeps the aim state
+  (`PortMouse::AimState`, in radians) with the same presented-frame lag
+  between 30 Hz ticks. The stick is read by pad.c at full precision past
+  the C-stick dead zone (the C-stick values are cut to the GameCube's +-59
+  gate), not through `PADClamp`. Beams: a **Beam Select** action (settings.ini
+  `BEAM`, the popup's "Beams"): held, the right stick is the C-stick again.
+  Turning Dual Stick on gives it to Black when Black only duplicates Map (the
+  default) or is free, else to the first free stick click or BACK. Reverse
+  Y-Axis On is flight style here too. settings.ini: `[input] aim = gamecube |
+  dual`, `aim_speed = low | medium | high`.
 
 ## Edits to imported code
 
@@ -555,6 +573,7 @@ One line per edit to `src/`, `include/`, `extern/musyx` or
 | `src/Kyoto/Alloc/CGameAllocator.cpp` | `FindFreeBlock`: a free-list link outside the heap cuts that bin off (logged once per bad link, up to 4) instead of being followed | beta2 crash: a link overwritten through a read into freed memory faulted here (dvd.c fixed; this is the guard) |
 | `src/MetroidPrime/CPauseScreenFrame.cpp` | the Display category is the Xbox Port Options row and Restore Defaults, on the pause screen and the title's Options (`skFrontOptions`); A on the row opens the popup from the title's Options too | Screen Brightness/Offset/Stretch were no-ops on the Xbox (copy filter, VI); the user: "rip out the brightness settings" |
 | `src/MetroidPrime/Player/CPlayer.cpp` | `ComputeFreeLook`: Reverse Y-Axis Off swaps Look Up/Down (modern), On keeps the disc's mapping (flight) | the user: free aim "modern play style instead of flight style please by default" |
+| `src/Kyoto/Input/CDolphinController.cpp` | the twin-stick block takes port 1's right stick from pad.c (`xsdk_pad_aim`, full precision past the dead zone) instead of the gate-clamped C-stick, and leaves the C-stick to the game while Beam Select is held (`xsdk_pad_beam_held`) | Dual Stick aiming (GitHub #2): ~60 steps of C-stick for a half turn a second was too coarse to aim with; beams need a way to be picked |
 
 Imported unchanged but added to the game build (MetroidPrimePort compiles
 them as game code): `src/platform/port_raster_font.cpp`,
