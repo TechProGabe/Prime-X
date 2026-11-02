@@ -137,6 +137,8 @@ without input).
 | 2026-10-31 | hw18 | red + gold | first both at once: red clean; gold 720p Main Plaza 36-40; gold froze with the ARQ worker on (backed out) and crashed once in `pb_init` |
 | 2026-10-31 | hw18b, hw18c | red + gold | RC1, RC1b: the `pb_init` crash on the launch after Lava Lake on both (page 0 read-only); gold's reclaims 1.1-1.7 s |
 | 2026-10-31 | hw18d | red + gold | RC1c (0ff5ed0): all 11 scenes on both, no fault; gold reclaims 0-370 ms, its screenshots 27-47 s (fixed after); release build left on both for free play |
+| 2026-11-01 | free play | red + gold | the first Xbox Port Options build: every move in the popup stalled 336-581 ms (red's log), the music skipping; fixed (incremental, time-budgeted redraws) |
+| 2026-11-01 | free play | red + gold | the fix (e9526cd) approved by the user: released as v1.0-beta2 |
 
 ## Performance per build
 

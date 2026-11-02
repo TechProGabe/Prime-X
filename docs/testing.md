@@ -21,6 +21,14 @@ checklist. Phase 1 copies its tools; this file grows with them.
 - New: `test_tsc_scale.py`, the TSC-rate scaling at 733 MHz, 1.0 GHz and
   1.4 GHz.
 - New: the `CHECK_SIZEOF` build (it fails to compile when a layout is wrong).
+- `test_settings.py`: settings.ini as players edit it (typos, unknown keys
+  and buttons, numbers out of range, a layout with no Fire or Pause, a BOM,
+  UTF-16, long lines) and a save read back (`settings.c`).
+- `bench_menu.py` (not a pass/fail test): the Xbox Port Options card drawn
+  on the host at 480 and 720p, each frame's time while a change is drawn
+  (a P3 is ~34x slower than this PC), and the card as a PPM.
+- At every link, `check_stubs.py`: the build fails if the image can reach
+  one of nxdk's `assert(0)` stubs (the Frigate escape's `exp2f` crash).
 - MetroidPrimePort's GPU-free port tests (`ctest -L port`) where they cover
   code Prime-X keeps (save bit fields, truncated streams, pathfinder bounds).
 
@@ -30,7 +38,11 @@ checklist. Phase 1 copies its tools; this file grows with them.
 `[FBDUMP]` screenshots for looking at frames (never the desktop). Use it for
 boot, correctness and Dolphin comparisons, not frame rates. Scenarios
 (`tools/xbox/scenarios/`) script the pad: per benchmark room
-(`docs/performance.md`), per visor, the boot-safety cases, settings rows.
+(`docs/performance.md`), per visor, the boot-safety cases, and the Xbox
+Port Options popup (`menu`: every tab, a change, a remap, close, with
+`env PX_MENU_AT=<frame>` opening it; `menu_pause`: the pause screen's row,
+from Tallon). xemu runs the title at ~6 fps: script presses `for 2`
+frames, or a press auto-repeats in the popup.
 
 ## Jumping to a room (level skip)
 
@@ -47,8 +59,9 @@ console put it next to `default.xbe`. Its `env` lines set what the game's
 | `env PX_MEM_BALLOON_KB=<n>` | test builds: hold n KB of RAM from boot, to play the console's low-memory moments in xemu (the reclaimers, `[MEM] low`, the swap file, the Out of memory screen); Main Plaza with 7000 runs at ~1 MB free |
 | `env PX_ALL_ITEMS=1` | with `MP_BOOT_WORLD`: every item (visors, beams, suits, 250 missiles, 14 tanks) |
 | `env PX_CARD_FILE=<0-2>` | with `MP_BOOT_WORLD`: the game is that memory-card file, so a save station offers to save (`MP_BOOT_WORLD=83F6FF6F:1D5E482C` is Chozo's Save Station 1, where Samus starts on the pad: step off and back on) |
-| `env PX_SKIPPABLE=1` | Port Options' Skip Cutscenes on, over settings.ini |
-| `env PX_WIDESCREEN=0`, `=1`, `=2` | Port Options' Widescreen: 4:3, as the dashboard, 16:9 (over settings.ini) |
+| `env PX_SKIPPABLE=1` | Xbox Port Options' Skip Cutscenes on, over settings.ini |
+| `env PX_WIDESCREEN=0`, `=1`, `=2` | Xbox Port Options' Widescreen: 4:3, as the dashboard, 16:9 (over settings.ini) |
+| `env PX_MENU_AT=<frame>` | test builds: open the Xbox Port Options popup at that frame, wherever the game is |
 | `env MP_INVULNERABLE=1` | no damage |
 | `env PX_LOCKSTEP=1` | one simulation tick per frame (comparable screenshots) |
 | `env PX_CLOCK_SKEW=<percent>` | test builds: the clock runs that much of the ACPI timer's rate (120: 20% fast), to exercise the display check's correction (`[CLOCK]` lines, `docs/boot-safety.md`; `scenarios/clock`) |
