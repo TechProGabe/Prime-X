@@ -132,7 +132,12 @@ report on older builds:
   spelled `mbrtowc`'s address and stopped an autopad build). xemu:
   `menu_restart` (stick picks both ways, Restarting shown, relaunch to
   720p). Ship image MD5 66872d4978c206cd6dd19cd256539853, 120 s clean in
-  xemu. The user: release once this is fixed.
+  xemu. The user: release once this is fixed. On both consoles
+  (2026-11-02 16:40, UDATA backed up). Confirmed there: Fusion Suit stays
+  on after a restart. Still to confirm: Restart now on gold (no hang card),
+  the stick in the dialog, Dual Stick after the map, the map's LT/RT zoom.
+  Then the user approves the release (v1.0-beta3: `dev` into `main`, tag,
+  the release workflow).
 
 xemu (slot 2): the popup at the title (`menu`, shots), the restart prompt
 (`menu_restart`), the pause screen's row in Tallon at 720p (`menu_pause`);
