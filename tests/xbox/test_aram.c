@@ -85,6 +85,21 @@ void* xhw_file_create_rw(const char* path) {
     s_swapf = (uint8_t*)calloc(1, ARAM_BYTES);
     return s_swapf;
 }
+/* ar.c's swap file since RC1 (kept at 8 MB) and its ARQ worker, which the
+ * test doesn't start: no thread, so the copies run on the caller as in
+ * release builds (XSDK_ARQ_ASYNC 0) */
+void* xhw_file_open_rw_sized(const char* path, uint32_t min_bytes) {
+    (void)min_bytes;
+    return xhw_file_create_rw(path);
+}
+xhw_event* xhw_event_create(void) { static int dummy; return (xhw_event*)&dummy; }
+int xhw_event_wait(xhw_event* e, uint32_t timeout_ms) { (void)e, (void)timeout_ms; return 0; }
+int xhw_thread_start(void (*fn)(void*), void* arg, int priority, uint32_t stack_bytes) {
+    (void)fn, (void)arg, (void)priority, (void)stack_bytes;
+    return 0;
+}
+void xhw_sleep_ms(uint32_t ms) { (void)ms; }
+void xsdk_dvd_log(void) {}
 int xhw_file_read(void* f, uint32_t off, void* dst, uint32_t len) {
     if (off + len > ARAM_BYTES) return 0;
     memcpy(dst, (uint8_t*)f + off, len);
