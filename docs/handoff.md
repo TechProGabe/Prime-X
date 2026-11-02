@@ -3,181 +3,37 @@
 Update this at the end of every session: what was done, what's next,
 what's broken, anything the next agent would otherwise rediscover.
 
-## Session 2026-11-02: beta2 tester feedback (on `dev`, not released)
+## Where it stands (2026-11-02): v1.0-beta3
 
-Two testers' reports on v1.0-beta2 (logs and photos in the user's
-Downloads: `crash (1).log`, `shot26.webp`, a photo of a hang screen), all
-taken in one batch, for a hardware round at the end (the user: "work on
-this in one big batch then we hardware test at end"). docs/decisions.md
-has each one's why.
+**v1.0-beta3 is `main` at the merge of `dev` (2026-11-02)**, released by
+GitHub Actions from the `v1.0-beta3` tag. Its ship build (MD5
+66872d4978c206cd6dd19cd256539853, LTO + PGO with `-DXHW_LOG_ALWAYS=1`;
+the release's own XBE is CI's) is in `Prime-X` on both consoles; the user
+approved it after testing. What it has over v1.0-beta2 (docs/history.md
+"Session 2026-11-02" for the detail, docs/decisions.md for the why):
 
-- **Crash after backing out of the game and in again** (Hellraiser988,
-  720p, a 1.4 GHz CPU): `CGameAllocator::Alloc` read a free-list link of
-  `0x1ea44400` (symbolized with CI's beta2 map: the run's artifact,
-  `prime_x.map`; `FindFreeBlock`'s `test [esi+16]`). Cause:
-  `DVDClose`/`DVDCancel`/`DVDCancelAsync` were no-ops in dvd.c while the
-  game frees a request's buffer and `DVDFileInfo` right after them, so a
-  queued read landed in freed memory and its delivery wrote `cb->state`
-  there. Now they drain the block (queued: cancelled with
-  `DVD_RESULT_CANCELED`; in progress: waited for; done: delivered).
-  `FindFreeBlock` cuts a bin whose link leaves the heap (`[MEM]
-  CGameAllocator: bin ...`). The same session's **GPU hang** (photo:
-  `GPU fault x1: kind 1 00000020 00000097 00000b38 4436c86c`, LIMIT_ZETA
-  trapped on method 0xB38 with float data, the words at GET floats) and the
-  **missing world geometry** (shot26: black chunks of a Chozo room) are
-  most likely the same corruption; not reproduced. Also for the geometry:
-  a room's static memory is registered as its blocks, not their hull
-  (another allocation inside the hull had its cached lists marked static,
-  never checked again).
-- **Audio stuck mid-game** in that log (AC97 cold resets 28-32 a few s
-  apart; past 32 it restarted the engine every ~100 ms for good, each
-  restart polling the bus masters up to 1M times): 8 cold resets in a row
-  without a finished buffer now give up (silent, the "Sound hardware is
-  stuck" notice).
-- **Screen Brightness did nothing** (JayXbox): it, Screen Offset X/Y and
-  Stretch are gone from the Display options (copy filter and VI, ignored on
-  the Xbox; the user: "rip out the brightness settings").
-- **Free aim inverted** (JayXbox: "the opposite of whatever inversion
-  setting"): that is the GameCube's own default (the disc's PlayerControls
-  tweak: Look Up on the stick's down). The user: modern by default. On the
-  Xbox, Reverse Y-Axis Off pushes up to look up; On is flight style.
-- **Port Options "heavy and laggy"** (JayXbox; the user: "streamline the
-  whole thing for performance"): the popup holds the game (modal loop at
-  60 Hz, the CPU draws only what changed onto the frame on screen; no
-  per-frame GPU wait, no ~1 MB copy, no card cache). Buttons tab: D-pad
-  moves over the callouts as laid out (it stepped A, B, X, Y... up and
-  across), fixed inputs selectable with why, A/X step the action, no live
-  lighting (each press redrew the controller twice).
-- **"Restart now?"** after changing Video Mode (JayXbox): closing asks
-  Restart later / Restart now, Later selected; Now saves and relaunches.
-- **Port Options restyled as Prime's pause Options** (the user picked
-  mockup A of four, "match the game vibe ... as light as possible"): amber
-  hologram over the game, the disc's Deface fonts, chamfered frames, the
-  controller as a flat hologram. **Dual Stick on by default** (the user),
-  Black is Beam Select by default.
-- **Dual Stick aiming** (GitHub #2, the user: "add in GitHub issue 2 ...
-  high performance and works well, easy to configure"): Controller tab,
-  Aiming GameCube / Dual Stick and Aim Speed; MetroidPrimePort's twin stick
-  with the Xbox's aim state written (port_debug.cpp), the raw right stick
-  from pad.c, Beam Select (held: the right stick picks beams), given to
-  Black when Dual Stick is turned on. xemu: `dual_stick` scenario. Console:
-  feel of the speeds and curve, strafing, lock-on and scan, the morph ball,
-  Beam Select. GitHub #2 is still open (reply/close when the user says).
-- Not done, saved for later (the user, 2026-11-02): **Xbox button glyphs**
-  in the game's own text (JayXbox offered to draw them). Sized up: of 2,323
-  strings, ~96 show buttons, all as `&image=` tags (34 tags, 48 texture
-  ids, some beam icons; the most used: A `05AF9CAA` x25, B `833BEE04` x14,
-  an animated L `46434ED3,34E79314` x14); 22 say START in plain text (fine).
-  Plan: decode the 48 TXTRs to PNG (size templates for the art), new
-  glyphs at the same sizes and frame counts, served through
-  MetroidPrimePort's custom resources (`CResLoader::PortCustomResource`),
-  and a `CTextParser` hook that picks the glyph of the Xbox button the
-  action is bound to now (the default layout is by position: the
-  GameCube's B, Jump, is on the Xbox's X). The pause and map screens' own
-  textures with buttons in them can only be swapped as fixed pictures.
-  ~2-3 days plus the art.
-
-**Console round hw19 (red, 2026-11-02, image 91f1c9a8...)** and a forum
-report on older builds:
-
-- **The popup's text was noise from its second open on** (photo): closing
-  freed the glyph arena but kept the game fonts' glyph pointers into it
-  (`s_gc`), so the next open drew freed memory. `drop()` clears them.
-  xemu only ever opened it once a boot; `PX_MENU_AGAIN=<frame>` (test
-  builds) opens it a second time, scenario `reopen_map`.
-- **Dual Stick stopped aiming for good** (red): `PortDebug::MapScreenOpen`
-  was a plain flag CAutoMapper sets while the map takes input, never
-  cleared once the map is left, and CDolphinController's twin stick is off
-  while it's set. Now stale after 300 ms, as MetroidPrimePort's.
-- **The map stuck at its farthest zoom, the triggers no use** (forum):
-  `PortDebug::TakeMapZoom` (the touch pinch) returned 0; the map divides its
-  distance by it unless it is 1. Returns 1.
-- **The Fusion Suit worked once, then never again** (forum): the row set a
-  bit the save doesn't hold. Now `[game] fusion_suit` in settings.ini, and
-  `CSystemState` starts from it.
-- Also in that report, from older builds: the Frigate's last elevator /
-  last cutscenes assertion (the `exp2f` stub, fixed in beta2), the GameCube
-  controls (Dual Stick is the default now), slowdown at 720p in the
-  Frigate's fights and the Parasite Queen (performance, known).
-- xemu: `reopen_map` (the popup's second open clean) and `map_zoom` (the
-  map opens at its usual distance, R zooms in, L out, White closes, the
-  right stick aims after it). The xemu slots' settings.ini carry other
-  scenarios' remaps (White was Missile): `map_zoom` restores the Buttons
-  tab first (Y twice). Gameplay presses want 8 frames (ticks are slower
-  than frames there). Fusion Suit after a restart: console only.
-- Image for the console (LTO + PGO, `-DXHW_LOG_ALWAYS=1`): MD5
-  e18428f8e05b72707ae0bae3ba527756, booted 120 s clean in xemu. Check on
-  red/gold: the popup opened several times (text clean every time), Dual
-  Stick after the map, the map's zoom on LT/RT, Fusion Suit On surviving a
-  restart, then the rest of the round's list below.
-- On both consoles (red 2026-11-02 13:52, gold 16:01; UDATA backed up
-  first). Red's first two runs on it (logs in `xemu/hw/logs-red-hw19`): no
-  crash or hang. The popup opened and closed 4 times in a row, and Aiming
-  and Fusion Suit changed and saved (`fusion_suit = 1` in settings.ini).
-  Gameplay ran 53-57 fps. The run before ended at 320 s with the popup open
-  for its last 200 s; frames kept presenting and nothing logged a fault, so
-  it was probably switched off there (asked). Fusion Suit after a restart:
-  the next boot shows it.
-- The user then: the restart question takes only the D-pad (the stick did
-  nothing), looks like rows to change, and Restart now "prompted a crash,
-  then it restarted". Gold's `hang.log`: frames stopped at the restart's
-  retrace with the game thread in `xsdk_settings_save` -> `WriteFile`; its
-  stock drive took over 6 s, the watchdog showed its hang card. Fixed
-  (docs/decisions.md "The restart question as a dialog"): a dialog page of
-  its own (Later | Restart now side by side, D-pad or left stick, A OK /
-  B Later), "Restarting Prime-X in ..." drawn in full before the save,
-  the watchdog held off (a count now) around settings saves and the
-  relaunch / quit path, settings.ini in one write. `check_stubs.py` reads
-  data sections at aligned words only (450.0f twice in `kGlowBoosted`
-  spelled `mbrtowc`'s address and stopped an autopad build). xemu:
-  `menu_restart` (stick picks both ways, Restarting shown, relaunch to
-  720p). Ship image MD5 66872d4978c206cd6dd19cd256539853, 120 s clean in
-  xemu. The user: release once this is fixed. On both consoles
-  (2026-11-02 16:40, UDATA backed up). Confirmed there: Fusion Suit stays
-  on after a restart; Dual Stick after the map and the map's LT/RT zoom
-  (the user tested them on the hw19 image). Still to confirm: Restart now
-  on gold (no hang card), the stick in the dialog.
-  Then the user approves the release (v1.0-beta3: `dev` into `main`, tag,
-  the release workflow).
-
-xemu (slot 2): the popup at the title (`menu`, shots), the restart prompt
-(`menu_restart`), the pause screen's row in Tallon at 720p (`menu_pause`);
-the ship image (LTO + PGO, `-DXHW_LOG_ALWAYS=1`, MD5
-91f1c9a881a9853164ca990ab4a72307: Dual Stick by default, the amber Port Options) booted clean for 120 s. Console round
-to check: backing out of the game and in again many times (the crash's
-path), the popup from the main menu and the pause screen (moves instant,
-music on), the Buttons tab's moves, Video Mode's prompt (Restart now once on
-red: relaunches have stuck its audio before), free aim (RT, push up looks
-up), the Display category (two rows); Dual Stick's feel (Aim Speed, the
-curve, strafing, lock-on, scan, Black + right stick for beams); the amber
-popup on a TV at 480 and 720p, and its open (the one read of the frame).
-
-## Where it stands (2026-11-01): v1.0-beta2
-
-**v1.0-beta2 is `main` at the merge of `dev` (2026-11-01)**, released by
-GitHub Actions from the `v1.0-beta2` tag. Its ship build (e9526cd, the
-same source) is in `Prime-X` on both consoles (red `F:\Applications`, gold
-`E:\Applications`); the user approved it after free play. What it has over
-v1.0-beta (docs/history.md "Session 2026-11-01" for the detail,
-docs/decisions.md for the why):
-
-- **Xbox Port Options**, a popup of its own (docs/ui.md): from the main
-  menu's gold row, the New Game popup and every pause Options category;
-  tabs, a box explaining each row and value, the button remap on a drawn
-  controller (N64Recomp-X's). Redraws only what changed within 3 ms a
-  frame (the first console build stalled 336-581 ms a move). No sounds.
-- **The crash after the Frigate escape** ("Assertion failed ... exp2f"):
-  nxdk's `exp2f` is `assert(0)`; Prime-X has its own, and the link fails if
-  any nxdk stub is reachable (`tools/xbox/check_stubs.py`).
-- **settings.ini checked line by line**: bad values keep the default, the
-  problems shown on screen and written into the file, the old one kept as
-  settings.bad.ini.
-- GitHub #1 (Jump on A): a remap swaps, Fire and Pause stay on some button,
-  A confirms in every menu.
-- Upgraded/overclocked CPUs (Cerbios AdvCPUSupport): the code check puts
-  back a BIOS patcher's bytes, the TSC is sanity-checked, the clock is
-  checked against VBlank.
-- Error cards wait for a button; screenshots written in 64 KB pieces.
+- **Dual Stick aiming, on by default** (GitHub #2): the right stick aims,
+  Beam Select (Black by default) held with the right stick picks beams,
+  Aim Speed Low / Medium / High; Aiming: GameCube puts the original back.
+  Free aim is modern by default (push up looks up).
+- **The crash after quitting to the title and loading again**: DVDClose /
+  DVDCancel drain their request now (a read landed in freed memory). The
+  same corruption most likely explains the "GPU fault" photo and the black
+  chunks of room geometry.
+- **Xbox Port Options as Prime's pause Options** (amber hologram, the
+  disc's Deface fonts, a black controller on the Buttons tab), modal (the
+  game is held, moves are instant). Its glyphs are rebuilt at each open
+  (the second open drew freed memory). Changing Video Mode asks in a
+  dialog of its own: Later | Restart now, D-pad or left stick.
+- **The map**: the zoom works (`TakeMapZoom` gave 0); Dual Stick isn't
+  switched off for good by a stale "map open" flag.
+- **Fusion Suit** kept in settings.ini (`[game] fusion_suit`), so it stays
+  on after a restart.
+- **The watchdog** is held off around settings saves and the relaunch /
+  quit path: gold's drive took over 6 s to save before Restart now.
+- Audio: 8 cold resets in a row without a buffer give up (silent, with the
+  notice) instead of restarting every ~100 ms. Brightness, Screen Offset
+  and Stretch are gone from the Display options (they did nothing).
 
 Performance is RC1c's (round hw18d, median of the profiler's 5 s lines):
 
@@ -201,23 +57,18 @@ from slot 2's toml with its own paths, or keep using 2 and 3.
 
 ## Next session, in order
 
-0. **v1.0-beta2 is out** (2026-11-01): https://github.com/TechProGabe/Prime-X/releases/tag/v1.0-beta2,
-   published by a manual run of the workflow on `main` (9a142a9) with
-   `release=v1.0-beta2`; the tag stays on f49c3d5 (main differs only in
-   host tests). It was the first CI run to pass: the Tests step had failed
-   since RC1 (`test_aram`'s stubs behind `ar.c`; the C tests needing `-lm`
-   on Linux; `test_settings` used `_stricmp`). GitHub #1 closed. **Byte
-   check**: the zip's CRCs pass and its `default.xbe` (MD5
-   1a69db87fe79c1b697eb7649ea025c67) is CI's artifact byte for byte; it is
-   not the consoles' MSYS2 image (7df2779e...): nxdk's source paths are
-   baked in (`C:Þv
-xdk` against `/home/runner/toolchain/nxdk`) and CI
-   builds its own LLVM 21, so 25 of 17,674 functions differ in inlining
-   (same source, `default.tbn` identical). The released XBE booted clean in
-   xemu (code check, 130 s, no stall). Player reports come with a boot.log
-   only if they turn Log File on (Xbox Port Options > System). On the
-   consoles, with Log File on, a move in the popup should log no `MP
-   stall`; the notice from a bad settings.ini hasn't been seen on a screen.
+0. **v1.0-beta3 is out** (2026-11-02):
+   https://github.com/TechProGabe/Prime-X/releases/tag/v1.0-beta3, from
+   the `v1.0-beta3` tag on `main`; notes in `.github/release-notes.md`.
+   As with beta2, the release's `default.xbe` is CI's build, not the
+   consoles' MSYS2 image (nxdk's source paths are baked in and CI builds
+   its own LLVM 21: a few dozen functions inline differently from the
+   same source). Player reports come with a boot.log only if they turn
+   Log File on (Xbox Port Options > System). GitHub #2 (Dual Stick) is
+   still open: reply or close only when the user says.
+   - Saved for later (the user): **Xbox button glyphs** in the game's own
+     text, sized up in docs/history.md "Session 2026-11-02" (~96 strings,
+     48 textures, a `CTextParser` hook; ~2-3 days plus the art).
 1. **Watch in the next round** (none planned: hardware only when truly
    needed, the user):
    - the page-0 repair: a `[MEM] page 0 at 0x80000000 read-only ...
