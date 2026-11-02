@@ -23,7 +23,7 @@ def main():
         cmd = [*cc, *FLAGS, *shlex.split(os.environ.get("CFLAGS", "")), "-o", exe,
                os.path.join(ROOT, "tests/xbox/test_dl_cull.c"), os.path.join(ROOT, "tests/xbox/dl_cull_ref.c"),
                "-I" + os.path.join(ROOT, "xbox/src/sdk/gx"), "-lm"]
-        r = subprocess.run(cmd)
+        r = subprocess.run(cmd + ["-lm"])
         if r.returncode:
             return r.returncode
         return subprocess.run([exe]).returncode

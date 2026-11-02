@@ -63,7 +63,7 @@ def main():
         with open(c, "w") as f:
             f.write(PRELUDE + "\n".join(parts) + test)
         r = subprocess.run([cc, "-O2", "-w", "-std=c99", "-I", os.path.join(ROOT, "xbox/src/port/include"),
-                            "-I", os.path.join(ROOT, "extern/musyx/include"), "-o", exe, c])
+                            "-I", os.path.join(ROOT, "extern/musyx/include"), "-o", exe, c, "-lm"])
         if r.returncode:
             return r.returncode
         return subprocess.run([exe]).returncode
@@ -109,7 +109,7 @@ def reverb():
             f.write(REVERB_PRELUDE + part + test)
         # SSE scalar floats, no contraction: as the console build
         r = subprocess.run([cc, "-O2", "-w", "-std=c99", "-DTARGET_XBOX", "-msse2", "-mfpmath=sse",
-                            "-ffp-contract=off", "-o", exe, c])
+                            "-ffp-contract=off", "-o", exe, c, "-lm"])
         if r.returncode:
             return r.returncode
         return subprocess.run([exe]).returncode
