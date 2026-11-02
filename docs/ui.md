@@ -151,7 +151,7 @@ were the user's first suspect).
 | Buttons | each remappable input | None, Fire, Jump, Morph Ball, Missile, Map, Lock On, Free Aim, Pause, D-Up/Down/Left/Right, Beams (Beam Select) | what the action does in Prime; Beam Select only matters with Dual Stick, which gives it to Black (or a free stick click or BACK) when turned on |
 | Buttons | LT, RT, D-pad, the sticks | fixed | what they do and why they stay (the GameCube's analog L/R, D-pad, sticks) |
 | Gameplay | Skip Cutscenes | Off / On | START skips any cutscene, from the next room |
-| Gameplay | Fusion Suit | Off / On | the GBA-link bonus, kept in the game's save |
+| Gameplay | Fusion Suit | Off / On | the GBA-link bonus, kept in settings.ini (`[game] fusion_suit`; the save doesn't hold it) |
 | System | Screen Capture | Off / On | BACK saves shotNN.bmp |
 | System | Log File | Off / On | boot.log for bug reports |
 | System | Restore All Defaults | A, then A again | every Port Options setting, buttons included |

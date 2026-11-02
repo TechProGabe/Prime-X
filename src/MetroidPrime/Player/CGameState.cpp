@@ -71,6 +71,10 @@ static int PalSaveLanguage() {
 }
 #endif
 
+#ifdef TARGET_XBOX
+extern "C" int xsdk_fusion_suit(void); // PORT_XBOX: settings.c
+#endif
+
 CSystemState::CSystemState() : x0_nesState(static_cast< uchar >(0))
 , x68_(static_cast< uchar >(0))
 , xbc_autoMapperKeyState(0)
@@ -88,6 +92,11 @@ CSystemState::CSystemState() : x0_nesState(static_cast< uchar >(0))
 , xd1_palField(0) {
 #else
 , xd0_29_allItemsCollected(false) {
+#endif
+#ifdef TARGET_XBOX
+  // PORT_XBOX: the Fusion Suit row is kept in settings.ini (this bit isn't
+  // saved): a new or loaded system state starts from it
+  xd0_28_fusionSuitActive = xsdk_fusion_suit() != 0;
 #endif
 }
 
@@ -108,6 +117,11 @@ CSystemState::CSystemState(CInputStream& in) : x0_nesState(static_cast< uchar >(
 , xd1_palField(0) {
 #else
 , xd0_29_allItemsCollected(false) {
+#endif
+#ifdef TARGET_XBOX
+  // PORT_XBOX: the Fusion Suit row is kept in settings.ini (this bit isn't
+  // saved): a new or loaded system state starts from it
+  xd0_28_fusionSuitActive = xsdk_fusion_suit() != 0;
 #endif
 #ifdef TARGET_PC
   // PAL keeps an 18-byte NES state where USA has 98.

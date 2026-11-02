@@ -861,6 +861,10 @@ static void drop(void) {
     free(s_gl_mem);
     s_gl_mem = NULL;
     memset(s_gl, 0, sizeof s_gl);
+    /* the game fonts' glyphs were in that arena too: made again at the next
+     * open (kept, the popup's second open drew them from freed memory as
+     * noise, round hw19) */
+    memset(s_gc, 0, sizeof s_gc);
     s_gl_used = s_gl_cap = 0;
 }
 

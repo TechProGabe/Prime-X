@@ -174,7 +174,7 @@ const SRow kGameplay[] = {
      2,
      {"Off", "On"},
      "The Fusion Suit was a reward for linking a Game Boy Advance. An Xbox can't link, so it is here.",
-     {"Samus's own Power Suit.", "Samus wears the Fusion Suit. Kept with the game's options in your save."},
+     {"Samus's own Power Suit.", "Samus wears the Fusion Suit, in every game, after a restart too."},
      false},
 };
 const SRow kSystem[] = {
@@ -342,9 +342,6 @@ int RowCount(int tab) { return tab == kTabButtons ? XHW_MENU_IN_MAPPABLE : kTabs
 
 // what a row would show with the defaults: Get() reads g_xsdk_settings
 int DefaultValue(O option) {
-  if (option == kXO_FusionSuit) {
-    return 0;
-  }
   const xsdk_settings now = g_xsdk_settings;
   g_xsdk_settings = sDefaults;
   const int v = Get(option);
@@ -868,14 +865,18 @@ extern "C" void px_menu_frame(void) {
   // test builds: "env PX_MENU_AT=<frame>" in autopad.txt opens the popup at
   // that frame, wherever the game is (xemu is too slow for a script to walk
   // the main menu reliably)
-  static int sAt = -2;
+  // (PX_MENU_AGAIN=<frame>: a second open, the glyph cache made again)
+  static int sAt = -2, sAgain = -1;
   static unsigned sFrame;
   ++sFrame;
   if (sAt == -2) {
     const char* e = getenv("PX_MENU_AT");
     sAt = e != nullptr ? atoi(e) : -1;
+    e = getenv("PX_MENU_AGAIN");
+    sAgain = e != nullptr ? atoi(e) : -1;
   }
-  if (sAt > 0 && sFrame == static_cast< unsigned >(sAt)) {
+  if ((sAt > 0 && sFrame == static_cast< unsigned >(sAt)) ||
+      (sAgain > 0 && sFrame == static_cast< unsigned >(sAgain))) {
     PortXboxOptions::OpenMenu();
   }
 #endif

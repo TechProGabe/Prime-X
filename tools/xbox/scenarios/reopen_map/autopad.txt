@@ -1,0 +1,22 @@
+# reopen_map: round hw19's two bugs (2026-11-02). Tallon's Landing Site;
+# the popup opened, closed and opened again (its second open drew the game
+# font's glyphs from freed memory: noise), closed; the right stick turns
+# right; the map opened and closed with White; the right stick turns right
+# again (a stale "map screen open" flag stopped Dual Stick aiming for good
+# after the map). Presses 2 frames (xemu's ~6 fps repeats longer).
+env PX_DISC_CHECK=quick
+env MP_BOOT_WORLD=39F2DE28
+env PX_MENU_AT=1900
+env PX_MENU_AGAIN=1960
+1960 B for 2
+2080 SHOT
+2120 B for 2
+2300 SHOT
+2340 CR for 30
+2400 SHOT
+2440 WHITE for 2
+2600 SHOT
+2640 WHITE for 2
+2800 SHOT
+2840 CR for 30
+2900 SHOT

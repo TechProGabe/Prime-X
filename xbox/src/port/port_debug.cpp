@@ -361,12 +361,23 @@ bool MapPickupKinds() { return false; }
 bool MapStationPickups() { return false; }
 bool RevealMap() { return false; }
 void SetRevealMap(bool) {}
-bool MapScreenOpen() { return sMapScreenOpen; }
-void SetMapScreenOpen(bool open) { sMapScreenOpen = open; }
+// CAutoMapper sets it each tick it takes input on the map screen, and stops
+// calling once the map is left (the closing transition): not refreshed for
+// 300 ms counts as closed, as MetroidPrimePort's input.cpp. A plain flag stayed
+// on after the map closed, and Dual Stick aiming (CDolphinController) stopped
+// for good (round hw19).
+unsigned sMapScreenStamp = 0;
+bool MapScreenOpen() { return sMapScreenOpen && xsdk_frame_count() - sMapScreenStamp < 18u; }
+void SetMapScreenOpen(bool open) {
+  sMapScreenOpen = open;
+  sMapScreenStamp = xsdk_frame_count();
+}
 void SetMinimapRect(bool, bool, float, float, float, float) {}
 bool TakeMapPan(float*, float*, float*) { return false; }
 float TakeMapRotate() { return 0.f; }
-float TakeMapZoom() { return 0.f; }
+// the pinch ratio the map divides its distance by: 1 is none (0 sent it to
+// the farthest zoom every tick, the triggers no use: a forum report, 2026-11-02)
+float TakeMapZoom() { return 1.f; }
 void SetPauseScreenOpen(bool, bool) {}
 
 // ---- aim: the pad; Dual Stick (GitHub #2) is MetroidPrimePort's twin stick ----

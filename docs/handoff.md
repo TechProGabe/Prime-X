@@ -77,6 +77,40 @@ has each one's why.
   textures with buttons in them can only be swapped as fixed pictures.
   ~2-3 days plus the art.
 
+**Console round hw19 (red, 2026-11-02, image 91f1c9a8...)** and a forum
+report on older builds:
+
+- **The popup's text was noise from its second open on** (photo): closing
+  freed the glyph arena but kept the game fonts' glyph pointers into it
+  (`s_gc`), so the next open drew freed memory. `drop()` clears them.
+  xemu only ever opened it once a boot; `PX_MENU_AGAIN=<frame>` (test
+  builds) opens it a second time, scenario `reopen_map`.
+- **Dual Stick stopped aiming for good** (red): `PortDebug::MapScreenOpen`
+  was a plain flag CAutoMapper sets while the map takes input, never
+  cleared once the map is left, and CDolphinController's twin stick is off
+  while it's set. Now stale after 300 ms, as MetroidPrimePort's.
+- **The map stuck at its farthest zoom, the triggers no use** (forum):
+  `PortDebug::TakeMapZoom` (the touch pinch) returned 0; the map divides its
+  distance by it unless it is 1. Returns 1.
+- **The Fusion Suit worked once, then never again** (forum): the row set a
+  bit the save doesn't hold. Now `[game] fusion_suit` in settings.ini, and
+  `CSystemState` starts from it.
+- Also in that report, from older builds: the Frigate's last elevator /
+  last cutscenes assertion (the `exp2f` stub, fixed in beta2), the GameCube
+  controls (Dual Stick is the default now), slowdown at 720p in the
+  Frigate's fights and the Parasite Queen (performance, known).
+- xemu: `reopen_map` (the popup's second open clean) and `map_zoom` (the
+  map opens at its usual distance, R zooms in, L out, White closes, the
+  right stick aims after it). The xemu slots' settings.ini carry other
+  scenarios' remaps (White was Missile): `map_zoom` restores the Buttons
+  tab first (Y twice). Gameplay presses want 8 frames (ticks are slower
+  than frames there). Fusion Suit after a restart: console only.
+- Image for the console (LTO + PGO, `-DXHW_LOG_ALWAYS=1`): MD5
+  e18428f8e05b72707ae0bae3ba527756, booted 120 s clean in xemu. Check on
+  red/gold: the popup opened several times (text clean every time), Dual
+  Stick after the map, the map's zoom on LT/RT, Fusion Suit On surviving a
+  restart, then the rest of the round's list below.
+
 xemu (slot 2): the popup at the title (`menu`, shots), the restart prompt
 (`menu_restart`), the pause screen's row in Tallon at 720p (`menu_pause`);
 the ship image (LTO + PGO, `-DXHW_LOG_ALWAYS=1`, MD5

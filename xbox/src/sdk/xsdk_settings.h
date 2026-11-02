@@ -50,6 +50,7 @@ typedef struct {
     int hud_wide;            /* 1: at 16:9 the HUD spreads to the screen's edges (PortDebug::HudWide) */
     int fov;                 /* first-person field of view, degrees (55: the GameCube's) */
     int skip_cutscenes;      /* 1: every cutscene can be skipped (PortSkipCutscenes) */
+    int fusion_suit;         /* 1: Samus wears the Fusion Suit (the GBA-link bonus; CSystemState starts from it) */
     int sim_mode;            /* XSDK_SIM_*: Game Timing (port_debug.cpp) */
     int aim;                 /* XSDK_AIM_*: Aiming */
     int aim_speed;           /* XSDK_AIM_SPEED_*: Dual Stick's turn rate */
@@ -63,6 +64,7 @@ void xsdk_settings_defaults(xsdk_settings* st);   /* what a first boot writes */
 void xsdk_settings_load(void);
 int xsdk_settings_save(void);   /* 0: failed, settings.ini left as it was */
 int xsdk_settings_equal(const xsdk_settings* a, const xsdk_settings* b);   /* as settings.ini would hold them */
+int xsdk_fusion_suit(void);     /* game code (CGameState.cpp PORT_XBOX): g_xsdk_settings.fusion_suit */
 int xsdk_cstick_1p(void);       /* game code (fighter.c, camera.c PORT): g_xsdk_settings.cstick_1p */
 
 /* pad.c, for Dual Stick aiming (CDolphinController.cpp): port 1's right

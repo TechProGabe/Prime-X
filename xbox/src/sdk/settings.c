@@ -86,6 +86,7 @@ static void defaults(xsdk_settings* st) {
     st->hud_wide = 0;
     st->fov = 55;
     st->skip_cutscenes = 0;
+    st->fusion_suit = 0;
     st->sim_mode = XSDK_SIM_AUTO;
     st->aim = XSDK_AIM_DUAL;   /* the user, 2026-11-02: "make dual stick on by default" */
     st->aim_speed = XSDK_AIM_SPEED_MEDIUM;
@@ -288,6 +289,7 @@ static int parse(FILE* f, xsdk_settings* st) {
             if (_stricmp(key, "hud_wide") == 0) set_flag(n, key, val, &st->hud_wide);
             else if (_stricmp(key, "fov") == 0) set_num(n, key, val, 45, 75, &st->fov);
             else if (_stricmp(key, "skip_cutscenes") == 0) set_flag(n, key, val, &st->skip_cutscenes);
+            else if (_stricmp(key, "fusion_suit") == 0) set_flag(n, key, val, &st->fusion_suit);
             /* "timing" and the older "game_timing" are ignored: Game Timing
              * is always Auto since 2026-10-30 (the user's call; Fixed and
              * Flex only through the test builds' PX_SIM_AUTO=0 and
@@ -390,7 +392,7 @@ int xsdk_settings_equal(const xsdk_settings* a, const xsdk_settings* b) {
     if (a->video_720p != b->video_720p || a->progressive != b->progressive || a->widescreen != b->widescreen ||
         a->fps != b->fps || a->shots != b->shots || a->led != b->led || a->log != b->log ||
         pct(a->rumble) != pct(b->rumble) || a->cstick_1p != b->cstick_1p || a->hud_wide != b->hud_wide ||
-        a->fov != b->fov || a->skip_cutscenes != b->skip_cutscenes || a->aim != b->aim ||
+        a->fov != b->fov || a->skip_cutscenes != b->skip_cutscenes || a->fusion_suit != b->fusion_suit || a->aim != b->aim ||
         a->aim_speed != b->aim_speed)
         return 0;
     for (p = 0; p < 4; p++) {
@@ -405,6 +407,7 @@ int xsdk_settings_equal(const xsdk_settings* a, const xsdk_settings* b) {
 }
 
 int xsdk_cstick_1p(void) { return g_xsdk_settings.cstick_1p; }
+int xsdk_fusion_suit(void) { return g_xsdk_settings.fusion_suit; }
 
 static void log_summary(const char* what) {
     const xsdk_settings* st = &g_xsdk_settings;
@@ -532,9 +535,10 @@ static void write_all(FILE* f, const xsdk_settings* st) {
     fprintf(f, "; log_file = 1: boot.log in this folder, for bug reports (0: nothing written while you play).\n");
     fprintf(f, "[system]\nscreenshots = %d\nlog_file = %d\n\n", st->shots, st->log);
     fprintf(f, "; hud_wide = 1: at 16:9 the HUD reaches the screen's edges. fov: 45 to 75 degrees, 55 is the\n");
-    fprintf(f, "; GameCube's. skip_cutscenes = 1: START skips any cutscene.\n");
-    fprintf(f, "[game]\nhud_wide = %d\nfov = %d\nskip_cutscenes = %d\n\n", st->hud_wide, st->fov,
-            st->skip_cutscenes);
+    fprintf(f, "; GameCube's. skip_cutscenes = 1: START skips any cutscene. fusion_suit = 1: Samus wears the\n");
+    fprintf(f, "; Fusion Suit (the GameCube's Game Boy Advance link bonus).\n");
+    fprintf(f, "[game]\nhud_wide = %d\nfov = %d\nskip_cutscenes = %d\nfusion_suit = %d\n\n", st->hud_wide,
+            st->fov, st->skip_cutscenes, st->fusion_suit);
     fprintf(f, "; rumble: 0 to 100 percent (rumble on or off is in the game's own Options).\n");
     fprintf(f, "; aim = gamecube: RT and the left stick aim, the right stick picks beams. aim = dual: the right\n");
     fprintf(f, "; stick aims and the left one moves and strafes; hold Beam Select (BEAM below) and tilt the\n");

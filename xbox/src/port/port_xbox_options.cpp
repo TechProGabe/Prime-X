@@ -328,7 +328,7 @@ int Get(int option) {
   case kXO_Screenshots:
     return st.shots ? 1 : 0;
   case kXO_FusionSuit:
-    return gpGameState != nullptr && gpGameState->SystemState().GetHasFusion() ? 1 : 0;
+    return st.fusion_suit ? 1 : 0;
   case kXO_SkipCutscenes:
     return st.skip_cutscenes ? 1 : 0;
   case kXO_LogFile:
@@ -461,9 +461,13 @@ void Set(int option, int value) {
     st.aim_speed = value < 0 ? 0 : value > 2 ? 2 : value;
     break;
   case kXO_FusionSuit:
-    // What the Fusion bonuses screen does once a GBA has linked: the
-    // system state (saved with the game's options) and the game about to
-    // start. Kept in the game's save, as on the GameCube, not settings.ini.
+    // Kept in settings.ini: the game's system state doesn't save this bit
+    // (on the GameCube it is chosen again on the Fusion bonuses screen), so
+    // the suit was gone after a restart (a forum report, 2026-11-02);
+    // CSystemState starts from it (CGameState.cpp). Then what the Fusion
+    // bonuses screen does once a GBA has linked: the system state and the
+    // game in play.
+    st.fusion_suit = value > 0 ? 1 : 0;
     if (gpGameState != nullptr) {
       gpGameState->SystemState().SetHasFusion(value > 0);
       if (gpGameState->PlayerState()) {
