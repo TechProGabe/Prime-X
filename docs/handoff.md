@@ -50,9 +50,19 @@ has each one's why.
   lighting (each press redrew the controller twice).
 - **"Restart now?"** after changing Video Mode (JayXbox): closing asks
   Restart later / Restart now, Later selected; Now saves and relaunches.
-- Not done: Xbox button glyphs in the game's own text (JayXbox offered to
-  draw them): the game's prompts are its STRG image tags and textures, so
-  it needs art first; the user's call.
+- Not done, saved for later (the user, 2026-11-02): **Xbox button glyphs**
+  in the game's own text (JayXbox offered to draw them). Sized up: of 2,323
+  strings, ~96 show buttons, all as `&image=` tags (34 tags, 48 texture
+  ids, some beam icons; the most used: A `05AF9CAA` x25, B `833BEE04` x14,
+  an animated L `46434ED3,34E79314` x14); 22 say START in plain text (fine).
+  Plan: decode the 48 TXTRs to PNG (size templates for the art), new
+  glyphs at the same sizes and frame counts, served through
+  MetroidPrimePort's custom resources (`CResLoader::PortCustomResource`),
+  and a `CTextParser` hook that picks the glyph of the Xbox button the
+  action is bound to now (the default layout is by position: the
+  GameCube's B, Jump, is on the Xbox's X). The pause and map screens' own
+  textures with buttons in them can only be swapped as fixed pictures.
+  ~2-3 days plus the art.
 
 xemu (slot 2): the popup at the title (`menu`, shots), the restart prompt
 (`menu_restart`), the pause screen's row in Tallon (`menu_pause`).
