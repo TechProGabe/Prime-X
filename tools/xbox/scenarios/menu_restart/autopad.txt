@@ -1,0 +1,12 @@
+# menu_restart: Video Mode changed, then B asks "Restart later / Restart
+# now" (2026-11-02); Later is selected, DOWN picks Now, B closes (later).
+# Presses last 2 frames: at xemu's ~6 fps a longer one auto-repeats.
+env PX_MENU_AT=1500
+1560 SHOT
+1600 RIGHT for 2
+1660 B for 2
+1720 SHOT
+1760 DOWN for 2
+1820 SHOT
+1860 B for 2
+1960 SHOT

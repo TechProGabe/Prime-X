@@ -232,10 +232,10 @@ void xhw_notice(const char* line1, const char* line2);
  * A card over the game's frame: a header, tabs, rows of named choices, a
  * box that explains the selected row and its value, and the button prompts;
  * on the Buttons tab an Xbox controller with a callout per input (from
- * N64Recomp-X's Controls page). The logic fills this view each frame and
- * hands it over; the card is drawn again only when the view changes, and
- * written into every presented frame by the CPU (as the notices are), so
- * it needs no GPU state. Plain fixed-size fields: it crosses the triples. */
+ * N64Recomp-X's Controls page). The logic fills this view and hands it
+ * over; the card is drawn again only where the view changed, by the CPU
+ * into the frame on screen while the game is held (the modal loop below),
+ * so it needs no GPU state. Plain fixed-size fields: it crosses the triples. */
 #define XHW_MENU_TABS 5
 #define XHW_MENU_ROWS 8
 #define XHW_MENU_TEXT 200
@@ -271,8 +271,15 @@ typedef struct xhw_menu_view {
     int16_t pad_lx, pad_ly, pad_rx, pad_ry;
     uint8_t pad_lt, pad_rt, pad_pad[2];
 } xhw_menu_view;
-/* the card shows `v` from the next present on (copied); NULL takes it down */
+/* the card shows `v` from the next draw on (copied); NULL takes it down */
 void xhw_menu_show(const xhw_menu_view* v);
+/* The popup's modal loop (port_menu.cpp): begin waits for the GPU and a
+ * retrace; each frame draws what changed straight onto the frame on screen
+ * (and takes a screenshot asked for); end gives the screen back to the game,
+ * whose next present replaces the card. Nothing is presented in between. */
+void xhw_menu_modal_begin(void);
+void xhw_menu_modal_frame(void);
+void xhw_menu_modal_end(void);
 /* Read-only file with positioned reads straight into the caller's buffer
  * (pdclib's fread goes 1 KB ReadFile at a time and copies byte by byte).
  * xhw_file_read returns 1 if all `len` bytes were read. */

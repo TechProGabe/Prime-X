@@ -10,12 +10,13 @@
  * Nothing here reads the framebuffer (write-combined: reads crawl). The card
  * is drawn in bands of BAND device rows into a small buffer in RAM, where
  * the shapes blend over each other, and each band is converted to the
- * framebuffer's format into a cache of the whole card (allocated while the
- * popup is up, freed when it closes). Each presented frame copies the cache
- * into the back buffer row by row (the opaque span of each row: the corners
- * are round). The card is drawn again only when the view changes. If the
- * cache can't be had (memory is tight in some rooms), the bands go straight
- * into every frame instead: the same picture, more CPU per frame.
+ * framebuffer's format straight into the frame on screen. While the popup is
+ * up the game is held (port_menu.cpp's modal loop, beta2: "the port options
+ * menu is heavy and laggy"): nothing is drawn or flipped, so the card stays
+ * on the screen and only what changed is drawn again, a band at a time.
+ * Before, the game ran on behind it, every frame waited for the GPU and
+ * copied a ~1 MB cache of the card in, and a change was drawn 3 ms a frame
+ * over several of the game's frames.
  *
  * The Buttons page is N64Recomp-X's Controls page (xhw_panel_pad.c there):
  * the same controller body (a smooth union of a rounded box and two grips,
@@ -39,7 +40,6 @@ static xhw_menu_view s_view;
 static int s_on;
 static int s_sx = 16, s_sy = 16;   /* device pixels per logical pixel, x16 */
 static int s_dw, s_dh, s_bpp;      /* the card in device pixels; the framebuffer's depth */
-static uint8_t* s_cache;           /* s_dw x s_dh in the framebuffer's format */
 static uint16_t s_span[MAXH][2];   /* each row's opaque columns [x0, x1) */
 static uint32_t s_band[BAND][MAXW];   /* ARGB, straight alpha */
 static int s_by0, s_by1;           /* the band's device rows */
@@ -51,16 +51,14 @@ static int s_logged;
  * redraw on red, a stall the music skipped through) */
 static int s_lx[MAXW], s_ly[MAXH];
 static int s_aa, s_aa_k;           /* half a device pixel in L16; 128/s_aa in 16.16 */
-/* What is still to be drawn into the cache: device rows [s_pend0, s_pend1),
- * a band at a time within XHW_MENU_BUDGET_US a frame, so a change never
- * stalls the game (its music skipped). s_ready: the cache holds a whole card. */
+/* What is still to be drawn: device rows [s_pend0, s_pend1). The game is
+ * held while the popup is up, so a change is drawn whole at the next frame
+ * of the modal loop (XHW_MENU_BUDGET_US is only a guard against a stall the
+ * music's disc reads would notice). */
 #ifndef XHW_MENU_BUDGET_US
-#define XHW_MENU_BUDGET_US 3000
+#define XHW_MENU_BUDGET_US 60000
 #endif
-#ifndef XHW_MENU_OPEN_BUDGET_US
-#define XHW_MENU_OPEN_BUDGET_US 10000   /* the first drawing: the card shows in a few frames */
-#endif
-static int s_pend0, s_pend1, s_ready, s_whole;   /* s_whole: the whole card again (a tab) */
+static int s_pend0, s_pend1;
 /* Each glyph's coverage at this scale (0..16 a device pixel), made the first
  * time it is drawn: 16 samples a pixel once, not on every redraw */
 #define GLYPHS 128
@@ -446,13 +444,17 @@ static void draw_frame(const xhw_menu_view* v) {
 
     /* the footer: what the buttons do */
     {
-        static const char* const k_b[] = { "A", "B", "Y" };
-        const char* k_t[3];
+        /* the Buttons page: A and X step the action on and back (left and
+         * right move between the columns there) */
+        static const char* const k_rows_b[] = { "A", "B", "Y" };
+        static const char* const k_rows_t[] = { "Change", "Close", "Defaults" };
+        static const char* const k_pad_b[] = { "A", "X", "B", "Y" };
+        static const char* const k_pad_t[] = { "Next action", "Previous", "Close", "Defaults" };
+        const char* const* k_b = v->page ? k_pad_b : k_rows_b;
+        const char* const* k_t = v->page ? k_pad_t : k_rows_t;
+        const int n = v->page ? 4 : 3;
         int x = 26;
-        k_t[0] = v->page ? "Change action" : "Change";
-        k_t[1] = "Close";
-        k_t[2] = "Defaults";
-        for (i = 0; i < 3; i++) {
+        for (i = 0; i < n; i++) {
             x += badge(k_b[i], x, CH - 30) + 6;
             text(k_t[i], x, CH - 29, 1, C_DIM);
             x += tw(k_t[i], 1) + 18;
@@ -816,8 +818,6 @@ static void geometry(void) {
 }
 
 static void drop(void) {
-    free(s_cache);
-    s_cache = NULL;
     free(s_body);
     s_body = NULL;
     s_body_ok = 0;
@@ -846,7 +846,6 @@ static void dirty_diff(const xhw_menu_view* o, const xhw_menu_view* v) {
     int r;
     if (o->tab != v->tab || o->tabs != v->tabs || o->page != v->page || DIFF(tab_name) || DIFF(status)) {
         dirty(0, CH);
-        s_whole = 1;
         return;
     }
     if (DIFF(help) || DIFF(value_help) || DIFF(note)) dirty(v->page ? 296 : ROW_Y + ROWS_FIT * ROW_H, CH - 34);
@@ -870,21 +869,15 @@ void xhw_menu_show(const xhw_menu_view* v) {
         return;
     }
     if (!s_on) {
-        uint32_t bytes;
         geometry();
-        bytes = (uint32_t)s_dw * (uint32_t)s_dh * (uint32_t)(s_bpp / 8);
-        s_cache = (uint8_t*)malloc(bytes);
-        if (!s_cache && xhw_mem_reclaim(bytes / 1024 + 256, 0)) s_cache = (uint8_t*)malloc(bytes);
         s_gl_cap = GLYPHS * (s_gw[0] * s_gh[0] + s_gw[1] * s_gh[1]);
         s_gl_mem = (uint8_t*)malloc((size_t)s_gl_cap);
-        if (!s_logged || !s_cache) {
+        if (!s_logged) {
             s_logged = 1;
-            xhw_logf("[MENU] card %dx%d at %d-bit: %s, glyph cache %s (%u KB free)", s_dw, s_dh, s_bpp,
-                     s_cache ? "cached" : "no memory for the cache, drawn each frame", s_gl_mem ? "on" : "off",
-                     xhw_mem_free_kb());
+            xhw_logf("[MENU] card %dx%d at %d-bit, glyph cache %s (%u KB free)", s_dw, s_dh, s_bpp,
+                     s_gl_mem ? "on" : "off", xhw_mem_free_kb());
         }
         s_on = 1;
-        s_ready = 0;
         s_view = *v;
         s_pend0 = 0, s_pend1 = s_dh;
     } else if (memcmp(v, &s_view, sizeof *v)) {
@@ -896,37 +889,32 @@ void xhw_menu_show(const xhw_menu_view* v) {
 
 int xhw_menu_active(void) { return s_on; }
 int xhw_menu_busy(void) { return s_on && s_pend0 < s_pend1; }
+void xhw_menu_redraw(void) { if (s_on) s_pend0 = 0, s_pend1 = s_dh; }
 
-/* nv2a.c: the GPU is idle and the frame finished; the card goes on it */
-void xhw_menu_draw(void* fb, int w, int h, int bpp, int pitch) {
-    int x0, y0, y;
-    uint8_t* f = (uint8_t*)fb;
-    if (!s_on || !fb || bpp != s_bpp) return;
+/* What changed, straight into `fb` at the card's place (the frame on screen,
+ * the game held: port_menu.cpp's modal loop). Returns the microseconds it took. */
+unsigned xhw_menu_draw_changes(void* fb, int w, int h, int bpp, int pitch) {
+    uint64_t t0 = xhw_time_ns();
+    uint8_t* d;
+    int x0, y0;
+    if (!s_on || !fb || bpp != s_bpp || s_pend0 >= s_pend1) return 0;
     x0 = (w - s_dw) / 2;
     y0 = (h - s_dh) / 2;
-    if (x0 < 0 || y0 < 0) return;
-    if (!s_cache) {   /* no cache: drawn straight into the frame, every frame */
-        uint8_t* d = f + (size_t)y0 * (size_t)pitch + (size_t)x0 * (size_t)(bpp / 8);
-        for (y = 0; y < s_dh; y += BAND) render_band(d, pitch, y);
-        s_pend0 = s_pend1 = 0;
-        return;
-    }
-    if (s_pend0 < s_pend1) {   /* what changed, a band at a time, within the frame's budget */
-        uint64_t t0 = xhw_time_ns();
-        do {
-            render_band(s_cache, s_dw * (s_bpp / 8), s_pend0);
-            s_pend0 += BAND;
-        } while (s_pend0 < s_pend1 &&
-                 xhw_time_ns() - t0 <
-                     (uint64_t)(s_ready && !s_whole ? XHW_MENU_BUDGET_US : XHW_MENU_OPEN_BUDGET_US) * 1000u);
-        if (s_pend0 >= s_pend1) s_pend0 = s_pend1 = 0, s_ready = 1, s_whole = 0;
-    }
-    if (!s_ready) return;   /* the first drawing isn't whole yet: a few frames */
-    for (y = 0; y < s_dh; y++) {
-        int a = s_span[y][0], b = s_span[y][1], bytes = bpp / 8;
-        if (b <= a) continue;
-        memcpy(f + (size_t)(y0 + y) * (size_t)pitch + (size_t)(x0 + a) * (size_t)bytes,
-               s_cache + ((size_t)y * (size_t)s_dw + (size_t)a) * (size_t)bytes, (size_t)(b - a) * (size_t)bytes);
-    }
+    if (x0 < 0 || y0 < 0) return 0;
+    d = (uint8_t*)fb + (size_t)y0 * (size_t)pitch + (size_t)x0 * (size_t)(bpp / 8);
+    do {
+        render_band(d, pitch, s_pend0);
+        s_pend0 += BAND;
+    } while (s_pend0 < s_pend1 && xhw_time_ns() - t0 < (uint64_t)XHW_MENU_BUDGET_US * 1000u);
+    if (s_pend0 >= s_pend1) s_pend0 = s_pend1 = 0;
     __asm__ volatile("sfence" ::: "memory");
+    return (unsigned)((xhw_time_ns() - t0) / 1000u);
+}
+
+/* nv2a.c: a presented frame while the card is up, which the modal loop
+ * leaves none of; should one come, the whole card goes on it */
+void xhw_menu_draw(void* fb, int w, int h, int bpp, int pitch) {
+    if (!s_on) return;
+    s_pend0 = 0, s_pend1 = s_dh;
+    xhw_menu_draw_changes(fb, w, h, bpp, pitch);
 }

@@ -3,6 +3,61 @@
 Update this at the end of every session: what was done, what's next,
 what's broken, anything the next agent would otherwise rediscover.
 
+## Session 2026-11-02: beta2 tester feedback (on `dev`, not released)
+
+Two testers' reports on v1.0-beta2 (logs and photos in the user's
+Downloads: `crash (1).log`, `shot26.webp`, a photo of a hang screen), all
+taken in one batch, for a hardware round at the end (the user: "work on
+this in one big batch then we hardware test at end"). docs/decisions.md
+has each one's why.
+
+- **Crash after backing out of the game and in again** (Hellraiser988,
+  720p, a 1.4 GHz CPU): `CGameAllocator::Alloc` read a free-list link of
+  `0x1ea44400` (symbolized with CI's beta2 map: the run's artifact,
+  `prime_x.map`; `FindFreeBlock`'s `test [esi+16]`). Cause:
+  `DVDClose`/`DVDCancel`/`DVDCancelAsync` were no-ops in dvd.c while the
+  game frees a request's buffer and `DVDFileInfo` right after them, so a
+  queued read landed in freed memory and its delivery wrote `cb->state`
+  there. Now they drain the block (queued: cancelled with
+  `DVD_RESULT_CANCELED`; in progress: waited for; done: delivered).
+  `FindFreeBlock` cuts a bin whose link leaves the heap (`[MEM]
+  CGameAllocator: bin ...`). The same session's **GPU hang** (photo:
+  `GPU fault x1: kind 1 00000020 00000097 00000b38 4436c86c`, LIMIT_ZETA
+  trapped on method 0xB38 with float data, the words at GET floats) and the
+  **missing world geometry** (shot26: black chunks of a Chozo room) are
+  most likely the same corruption; not reproduced. Also for the geometry:
+  a room's static memory is registered as its blocks, not their hull
+  (another allocation inside the hull had its cached lists marked static,
+  never checked again).
+- **Audio stuck mid-game** in that log (AC97 cold resets 28-32 a few s
+  apart; past 32 it restarted the engine every ~100 ms for good, each
+  restart polling the bus masters up to 1M times): 8 cold resets in a row
+  without a finished buffer now give up (silent, the "Sound hardware is
+  stuck" notice).
+- **Screen Brightness did nothing** (JayXbox): it, Screen Offset X/Y and
+  Stretch are gone from the Display options (copy filter and VI, ignored on
+  the Xbox; the user: "rip out the brightness settings").
+- **Free aim inverted** (JayXbox: "the opposite of whatever inversion
+  setting"): that is the GameCube's own default (the disc's PlayerControls
+  tweak: Look Up on the stick's down). The user: modern by default. On the
+  Xbox, Reverse Y-Axis Off pushes up to look up; On is flight style.
+- **Port Options "heavy and laggy"** (JayXbox; the user: "streamline the
+  whole thing for performance"): the popup holds the game (modal loop at
+  60 Hz, the CPU draws only what changed onto the frame on screen; no
+  per-frame GPU wait, no ~1 MB copy, no card cache). Buttons tab: D-pad
+  moves over the callouts as laid out (it stepped A, B, X, Y... up and
+  across), fixed inputs selectable with why, A/X step the action, no live
+  lighting (each press redrew the controller twice).
+- **"Restart now?"** after changing Video Mode (JayXbox): closing asks
+  Restart later / Restart now, Later selected; Now saves and relaunches.
+- Not done: Xbox button glyphs in the game's own text (JayXbox offered to
+  draw them): the game's prompts are its STRG image tags and textures, so
+  it needs art first; the user's call.
+
+xemu (slot 2): the popup at the title (`menu`, shots), the restart prompt
+(`menu_restart`), the pause screen's row in Tallon (`menu_pause`).
+Console round: see "Next session" 0.
+
 ## Where it stands (2026-11-01): v1.0-beta2
 
 **v1.0-beta2 is `main` at the merge of `dev` (2026-11-01)**, released by

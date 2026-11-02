@@ -69,13 +69,13 @@ at the end).
 |---|---|
 | the main menu | the row in place of "Metroid Fusion Connection Bonuses" (a GBA link an Xbox can't have) reads **Xbox Port Options**, in gold so it stands out (the game's own `&main-color` text tag on the front pane; the shadow pane keeps its colour) |
 | the New Game popup | its third choice (Hard's slot before Normal is beaten): Start / Options / Xbox Port Options |
-| the pause screen's Options | every category (Visor, Display, Sound, Controller) ends with an **Xbox Port Options** row above Restore Defaults; A opens the popup, the body pane says what it is |
+| the pause screen's Options | every category (Visor, Display, Sound, Controller) ends with an **Xbox Port Options** row above Restore Defaults; A opens the popup, the body pane says what it is. Display has only that row and Restore Defaults: Screen Brightness, Offset and Stretch did nothing on the Xbox (the GameCube's copy filter and VI) and were taken out (2026-11-02) |
+| the title screen's Options | the same Display category (A on its row opens the popup); the other categories are retail |
 | test builds | `env PX_MENU_AT=<frame>` in autopad.txt opens it at that frame (`tools/xbox/scenarios/menu`) |
 
-The game keeps running behind it (the title's animation, the pause
-screen) but reads a neutral pad until the popup closes and its closing
-press is let go (`xsdk_menu_block`, pad.c), so B doesn't also leave the
-game's menu.
+The game is held while it is up (2026-11-02, below), and reads a neutral
+pad until the popup's closing press is let go (`xsdk_menu_block`, pad.c),
+so B doesn't also leave the game's menu.
 
 ### The card (`xbox/src/hw/xhw_menu.c`)
 
@@ -94,23 +94,25 @@ is unscii-16 supersampled to the scale.
 | footer | A Change, B Close, Y Defaults, the D-pad Select |
 | Buttons tab | N64Recomp-X's Controls page: an Xbox controller (its body from a distance field, shaded once and cached when memory allows), every input with a leader line and a callout naming its action; the remappable ones (A B X Y White Black START BACK and the stick clicks) bright, the fixed ones (LT Lock On, RT Free Aim, D-pad Visors, left stick Move, right stick Beams; D-pad and right stick swap with Swap Beam Controls) dim; what port 1 holds lights up; the selected input has a ring |
 
-Drawn by the CPU into the finished frame (after the GPU is idle, before
-the flip and the screenshot dumps), as the notices are: no GPU state, the
-same in every mode. Nothing reads the framebuffer (write-combined). The card
-is drawn in 16-row bands in RAM, where the shapes blend, into a cache of the
-whole card in the framebuffer's format (~0.9 MB at 480, ~1.1 MB at 720p)
-that exists only while the popup is up; each frame copies each row's opaque
-span. If the cache can't be allocated (after asking the reclaimers), the
-bands go straight into every frame: more CPU, same picture; `[MENU] card
-...` in boot.log says which.
+**The game is held while the popup is up** (2026-11-02; beta2's testers:
+"quite laggy", the user: "heavy and laggy, streamline the whole thing for
+performance"). `OpenMenu` runs a modal loop at 60 Hz (port_menu.cpp
+`RunModal`): the pads, the view, and what changed drawn by the CPU straight
+onto the frame on screen (nothing is presented, so it stays); the alarms and
+the card's, disc's and ARAM's completions go on, so the music's stream
+keeps reading. The game's next present after the popup closes replaces the
+card. Before, the game ran on behind the card, every frame waited for the
+GPU and copied a ~1 MB cache of the card in, and a change was drawn 3 ms a
+frame over several of the game's frames (at 720p's 30 Hz a move showed
+~100-200 ms late). The cache is gone. The watchdog counts the loop's
+frames as presents.
 
-**Redraws never stall the game** (the first console build did: red's log
-had `MP stall ... 336 ms` to `581 ms` on every move, the music skipping and
-the picture hitching, worst at 720p). Only the rows that changed are drawn
-again (a move: the two rows and the help box; a tab: the whole card), a
-band at a time within 3 ms of each frame (10 ms for the first drawing and a
-whole-card change; nothing shows until the first drawing is whole). The
-drawing itself got ~20x cheaper: the device pixels' logical positions come
+Nothing reads the framebuffer (write-combined). The card is drawn in 16-row
+bands in RAM, where the shapes blend, then each band's opaque span goes to
+the screen. Only what changed is drawn again (a move: the two rows and the
+help box; a tab: the whole card), within 60 ms a frame (a guard; the first
+console build stalled 336-581 ms a move, the music skipping). The drawing
+itself got ~20x cheaper: the device pixels' logical positions come
 from tables (no divide per pixel), each glyph's supersampled coverage is
 made once per scale (~185 KB at 720p while the popup is up), lines use
 floats, and the glass's two rims skip the inside the gradient covers, with
@@ -123,7 +125,7 @@ were the user's first suspect).
 
 | tab | row | values | what the box says the values do |
 |---|---|---|---|
-| Video | Video Mode `*` | 480i / 480p / 720p | every TV / sharper, component + dashboard / HD 16:9, component + dashboard, ~30 fps |
+| Video | Video Mode `*` | 480i / 480p / 720p | every TV / sharper, component + dashboard / HD 16:9, component + dashboard, ~30 fps. Closing the popup with a new mode asks **Restart later / Restart now** (Later selected; a tester's idea): Now saves settings.ini and relaunches Prime-X |
 | Video | Widescreen | Auto / 4:3 / 16:9 | follows the dashboard / the GameCube's shape / more to the sides (720p is 16:9) |
 | Video | Widescreen HUD | Inner / Edges | where the visor's readouts sit at 16:9 |
 | Video | Field of View | 55 / 65 / 75 | the GameCube's / wider / widest |
@@ -133,6 +135,7 @@ were the user's first suspect).
 | Controller | C-Stick Dead Zone | Low / Medium / High | 15 / 25 / 35% |
 | Controller | Trigger Click | Light / Medium / Firm | how far LT/RT go in |
 | Buttons | each remappable input | None, Fire, Jump, Morph Ball, Missile, Map, Lock On, Free Aim, Pause, D-Up/Down/Left/Right | what the action does in Prime |
+| Buttons | LT, RT, D-pad, the sticks | fixed | what they do and why they stay (the GameCube's analog L/R, D-pad, sticks) |
 | Gameplay | Skip Cutscenes | Off / On | START skips any cutscene, from the next room |
 | Gameplay | Fusion Suit | Off / On | the GBA-link bonus, kept in the game's save |
 | System | Screen Capture | Off / On | BACK saves shotNN.bmp |
@@ -150,7 +153,13 @@ The Xbox controllers as they are, not the remapped GameCube pad, so no
 layout can lock a player out: up/down (D-pad or left stick; held, it repeats
 after 300 ms every 85 ms) pick, left/right change, A changes too (or acts on
 Restore All Defaults), LT/RT switch tabs, Y twice within 3 s restores the
-tab's defaults, B or START close. No sounds (the user, after the first
+tab's defaults, B or START close. On the Buttons tab the D-pad moves over
+the callouts as they stand (up/down in a column, left/right to the other
+column's nearest), A and X step the action on and back, and every input
+can be selected (the fixed ones say why); nothing lights up as it is held
+(each press redrew the controller). Before 2026-11-02 up/down stepped A, B,
+X, Y, White, Black, START, BACK, the clicks, jumping up and across the
+card (a tester: "navigating the control settings is a nightmare"). No sounds (the user, after the first
 console build: the music skipped; the cause was the redraw, above, but the
 sounds stay out).
 

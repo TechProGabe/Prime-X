@@ -65,6 +65,8 @@ void xhw_overlay_draw(void* fb, int w, int h, int bpp, int pitch, const struct x
 /* xhw_menu.c: the Port Options popup's card over a finished frame (CPU writes) */
 int xhw_menu_active(void);
 void xhw_menu_draw(void* fb, int w, int h, int bpp, int pitch);
+void xhw_menu_redraw(void);   /* the whole card at the next draw */
+unsigned xhw_menu_draw_changes(void* fb, int w, int h, int bpp, int pitch);   /* what changed; its us */
 
 /* xhw_watchdog.c: hang dumper (hang.log + screen) */
 void xhw_watchdog_start(void);

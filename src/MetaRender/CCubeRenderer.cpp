@@ -9,6 +9,7 @@
 #include "Kyoto/Graphics/CCubeSurface.hpp"
 #ifdef TARGET_XBOX
 #include "port_xbox_gx.h" // PORT_XBOX: GXPortStaticAdd/Remove
+#include <algorithm>        // PORT_XBOX: std::sort (PortRegisterStaticGeometry)
 #endif
 #include "Kyoto/Graphics/CDrawable.hpp"
 #include "Kyoto/Graphics/CDrawablePlaneObject.hpp"
@@ -515,6 +516,65 @@ CCubeRenderer::~CCubeRenderer() {
   }
 }
 
+#ifdef TARGET_XBOX
+namespace {
+struct SPortRange {
+  uintptr_t lo, hi;
+};
+bool PortRangeLess(const SPortRange& a, const SPortRange& b) { return a.lo < b.lo; }
+} // namespace
+
+// PORT_XBOX: AddStaticGeometry's registration (above)
+static void PortRegisterStaticGeometry(const rstl::vector< CMetroidModelInstance >* geometry) {
+  static SPortRange sRanges[8192];
+  int n = 0;
+  bool overflow = false;
+  const auto add = [&](const void* p, uint bytes) {
+    if (p == nullptr || bytes == 0) {
+      return;
+    }
+    if (n == sizeof sRanges / sizeof sRanges[0]) {
+      overflow = true;
+      return;
+    }
+    sRanges[n].lo = reinterpret_cast< uintptr_t >(p);
+    sRanges[n].hi = sRanges[n].lo + bytes;
+    ++n;
+  };
+  for (int i = 0; i < geometry->size(); ++i) {
+    const CMetroidModelInstance& inst = geometry->at(i);
+    add(inst.GetVertexPointer(), inst.GetVertexSize());
+    add(inst.GetNormalPointer(), inst.GetNormalSize());
+    add(inst.GetColorPointer(), inst.GetColorSize());
+    add(inst.GetTCPointer(), inst.GetTCSize());
+    add(inst.GetPackedTCPointer(), inst.GetPackedTCSize());
+    const rstl::vector< void* >& surfaces = inst.GetSurfaces();
+    for (int k = 0; k < surfaces.size(); ++k) {
+      const CCubeSurface surface(surfaces[k]);
+      add(surface.GetDisplayList(), surface.GetDisplayListSize());
+    }
+  }
+  GXPortStaticRemove(geometry);
+  if (overflow || n == 0) {
+    return; // not static then: the lists keep their content checks
+  }
+  std::sort(sRanges, sRanges + n, PortRangeLess);
+  SPortRange cur = sRanges[0];
+  for (int i = 1; i <= n; ++i) {
+    if (i < n && sRanges[i].lo <= cur.hi + 1024) {
+      if (sRanges[i].hi > cur.hi) {
+        cur.hi = sRanges[i].hi;
+      }
+      continue;
+    }
+    GXPortStaticAdd(geometry, reinterpret_cast< const void* >(cur.lo), static_cast< unsigned >(cur.hi - cur.lo));
+    if (i < n) {
+      cur = sRanges[i];
+    }
+  }
+}
+#endif
+
 void CCubeRenderer::AddStaticGeometry(const rstl::vector< CMetroidModelInstance >* geometry,
                                       const CAreaRenderOctTree* octTree, int areaIdx) {
   if (FindStaticGeometry(geometry) == x1c_areaListItems.end()) {
@@ -541,33 +601,12 @@ void CCubeRenderer::AddStaticGeometry(const rstl::vector< CMetroidModelInstance 
 #ifdef TARGET_XBOX
     // PORT_XBOX: the room's geometry (its arrays and surfaces' display lists)
     // is static while it is registered: the GX layer's cached lists of it
-    // skip their content checks (GXPortStaticAdd)
-    {
-      uintptr_t lo = ~uintptr_t(0), hi = 0;
-      for (int i = 0; i < geometry->size(); ++i) {
-        const CMetroidModelInstance& inst = geometry->at(i);
-        const void* ptrs[5] = {inst.GetVertexPointer(), inst.GetNormalPointer(), inst.GetColorPointer(),
-                               inst.GetTCPointer(), inst.GetPackedTCPointer()};
-        const uint sizes[5] = {inst.GetVertexSize(), inst.GetNormalSize(), inst.GetColorSize(), inst.GetTCSize(),
-                               inst.GetPackedTCSize()};
-        for (int k = 0; k < 5; ++k) {
-          if (ptrs[k] != nullptr && sizes[k] != 0) {
-            lo = rstl::min_val(lo, reinterpret_cast< uintptr_t >(ptrs[k]));
-            hi = rstl::max_val(hi, reinterpret_cast< uintptr_t >(ptrs[k]) + sizes[k]);
-          }
-        }
-        const rstl::vector< void* >& surfaces = inst.GetSurfaces();
-        for (int k = 0; k < surfaces.size(); ++k) {
-          const CCubeSurface surface(surfaces[k]);
-          const uintptr_t dl = reinterpret_cast< uintptr_t >(surface.GetDisplayList());
-          lo = rstl::min_val(lo, dl);
-          hi = rstl::max_val(hi, dl + surface.GetDisplayListSize());
-        }
-      }
-      if (hi > lo) {
-        GXPortStaticAdd(geometry, reinterpret_cast< const void* >(lo), static_cast< unsigned >(hi - lo));
-      }
-    }
+    // skip their content checks (GXPortStaticAdd). Registered as the blocks
+    // it lies in (the MREA's section buffers), not their hull: another
+    // allocation between two blocks would have been taken as static too.
+    // Pieces less than 1 KB apart join (another heap block between them
+    // would take more: smaller ones come from the small and medium pools).
+    PortRegisterStaticGeometry(geometry);
 #endif
   }
 }

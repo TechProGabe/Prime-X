@@ -16,10 +16,19 @@
 // Input: the Xbox controllers as they are (not the remapped GameCube pad), so
 // a layout can never lock the player out: up/down (D-pad or left stick,
 // held to repeat) pick, left/right change, A changes too, LT/RT switch tabs,
-// Y twice restores the tab's defaults, B or START close. It makes no
+// Y twice restores the tab's defaults, B or START close. On the Buttons tab
+// the D-pad moves over the callouts as they stand (up/down in a column,
+// left/right across) and A/X step the action on and back. It makes no
 // sound (the user, 2026-11-01, when the music skipped on the consoles; the
-// skips were the card's redraw, xhw_menu.c). The game reads a neutral pad while the popup is up and
+// skips were the card's redraw, xhw_menu.c). The game reads a neutral pad
 // until the buttons that closed it are let go (xsdk_menu_block, pad.c).
+//
+// The game is held while the popup is up (RunModal): beta2's testers found
+// it "heavy and laggy" (the game ran on behind it, every frame waited for
+// the GPU and copied the card in, and a change took several of the game's
+// frames to appear); the user: "streamline the whole thing for performance".
+// Closing with a new Video Mode asks whether to restart now (a tester's
+// idea), "Later" first.
 #include "port_xbox_options.h"
 #include "port_debug.h"
 
@@ -34,6 +43,7 @@
 #include "xhw.h"
 extern "C" {
 #include "xsdk_settings.h"
+void xsdk_modal_tick(void); // vi.c: a frame of the modal loop
 }
 
 namespace PortXboxOptions {
@@ -216,8 +226,76 @@ const SAction& ActionOf(int gc) {
   return kActionHelp[0];
 }
 
+// the Buttons page's callouts as the card lays them out (xhw_menu.c k_call):
+// two columns, top to bottom, with each one's top in card pixels
+struct SPadSpot {
+  int in;
+  int y;
+};
+const SPadSpot kPadLeft[] = {{XHW_MENU_IN_LT, 92},    {XHW_MENU_IN_LSTICK, 124}, {XHW_MENU_IN_LCLICK, 156},
+                             {XHW_MENU_IN_BACK, 188}, {XHW_MENU_IN_START, 220},  {XHW_MENU_IN_DPAD, 252}};
+const SPadSpot kPadRight[] = {{XHW_MENU_IN_RT, 92},     {XHW_MENU_IN_Y, 114},      {XHW_MENU_IN_X, 136},
+                              {XHW_MENU_IN_B, 158},     {XHW_MENU_IN_A, 180},      {XHW_MENU_IN_WHITE, 202},
+                              {XHW_MENU_IN_BLACK, 224}, {XHW_MENU_IN_RSTICK, 246}, {XHW_MENU_IN_RCLICK, 268}};
+const int kPadLeftN = sizeof kPadLeft / sizeof kPadLeft[0];
+const int kPadRightN = sizeof kPadRight / sizeof kPadRight[0];
+
+// the input the D-pad moves to from `in`: dir 1 up, 2 down, 4 left, 8 right
+int PadMove(int in, int dir) {
+  for (int c = 0; c < 2; ++c) {
+    const SPadSpot* col = c ? kPadRight : kPadLeft;
+    const int n = c ? kPadRightN : kPadLeftN;
+    for (int i = 0; i < n; ++i) {
+      if (col[i].in != in) {
+        continue;
+      }
+      if (dir & 1) {
+        return col[(i + n - 1) % n].in;
+      }
+      if (dir & 2) {
+        return col[(i + 1) % n].in;
+      }
+      // left from the right column, right from the left: the other column's nearest
+      if ((dir & 4) ? c == 0 : c == 1) {
+        return in;
+      }
+      const SPadSpot* other = c ? kPadLeft : kPadRight;
+      const int on = c ? kPadLeftN : kPadRightN;
+      int best = 0;
+      for (int k = 1; k < on; ++k) {
+        if (abs(other[k].y - col[i].y) < abs(other[best].y - col[i].y)) {
+          best = k;
+        }
+      }
+      return other[best].in;
+    }
+  }
+  return XHW_MENU_IN_A;
+}
+
+// the inputs that keep their GameCube part (pad.c): what they do and why
+struct SFixed {
+  int in;
+  const char* help;
+  const char* value;
+};
+const SFixed kFixed[] = {
+    {XHW_MENU_IN_LT, "LT: Lock On. Fixed: it is the GameCube's L, a trigger the game reads by how far it is in.",
+     "Held, Samus locks on to a target; with nothing to lock on to, she strafes."},
+    {XHW_MENU_IN_RT, "RT: Free Aim. Fixed: it is the GameCube's R trigger.",
+     "Held, the left stick aims and looks around (Reverse Y-Axis is in the game's Controller options)."},
+    {XHW_MENU_IN_DPAD, "D-pad: Visors. Fixed: the GameCube's D-pad.",
+     "Picks a visor; with Swap Beam Controls on, it picks a beam."},
+    {XHW_MENU_IN_LSTICK, "Left stick: Move. Fixed: the GameCube's control stick.",
+     "Moves and turns Samus; with RT held, aims."},
+    {XHW_MENU_IN_RSTICK, "Right stick: Beams. Fixed: the GameCube's C-stick.",
+     "Picks a beam; with Swap Beam Controls on, it picks a visor."},
+};
+
 // ---- state ----
 bool sOpen = false;
+bool sAsk = false; // closing with a new Video Mode: restart now?
+int sAskSel;       // 0 later, 1 now
 bool sRelease = false; // closed: the game waits for the buttons to be let go
 int sTab = kTabVideo;
 int sSel[kTabCount];
@@ -292,6 +370,24 @@ void Fill() {
     snprintf(v.tab_name[t], sizeof v.tab_name[t], "%s", kTabNames[t]);
   }
   Status(v.status, sizeof v.status);
+  if (sAsk) { // closing with a new Video Mode
+    static const char* const kModes[3] = {"480i", "480p", "720p"};
+    const int mode = Get(kXO_VideoOutput);
+    v.rows = 2;
+    v.sel = sAskSel;
+    snprintf(v.label[0], sizeof v.label[0], "Restart later");
+    snprintf(v.label[1], sizeof v.label[1], "Restart now");
+    v.flags[0] = v.flags[1] = XHW_MENU_ROW_ACTION;
+    snprintf(v.value[0], sizeof v.value[0], "Press A");
+    snprintf(v.value[1], sizeof v.value[1], "Press A");
+    snprintf(v.help, sizeof v.help, "Video Mode is now %s. It takes effect when Prime-X starts again.",
+             kModes[mode < 0 || mode > 2 ? 0 : mode]);
+    snprintf(v.value_help, sizeof v.value_help, "%s",
+             sAskSel ? "Saves the settings and starts Prime-X again now. Progress since your last save is lost."
+                     : "Back to the game. The new mode is used the next time Prime-X starts.");
+    snprintf(v.note, sizeof v.note, "B: later");
+    return;
+  }
   const int sel = sSel[sTab];
   v.pad_sel = -1;
   if (sTab == kTabButtons) {
@@ -309,25 +405,25 @@ void Fill() {
     snprintf(v.pad_map[XHW_MENU_IN_DPAD], sizeof v.pad_map[0], "%s", swap ? "Beams" : "Visors");
     snprintf(v.pad_map[XHW_MENU_IN_LSTICK], sizeof v.pad_map[0], "Move");
     snprintf(v.pad_map[XHW_MENU_IN_RSTICK], sizeof v.pad_map[0], "%s", swap ? "Visors" : "Beams");
-    if (sPad1Ok) { // port 1 as it is: what is held lights up
-      v.pad_ok = 1;
-      v.pad_buttons = sPad1.buttons;
-      // tilted or not, pulled or not: a stick's jitter mustn't redraw the
-      // card every frame (it is drawn again whenever the view changes)
-      const long long lx = sPad1.lx, ly = sPad1.ly, rx = sPad1.rx, ry = sPad1.ry;
-      const bool lTilt = lx * lx + ly * ly > 12000LL * 12000;
-      const bool rTilt = rx * rx + ry * ry > 12000LL * 12000;
-      v.pad_lx = lTilt ? 32767 : 0;
-      v.pad_rx = rTilt ? 32767 : 0;
-      v.pad_lt = sPad1.lt > 128 ? 255 : 0;
-      v.pad_rt = sPad1.rt > 128 ? 255 : 0;
-    }
-    const SAction& a = ActionOf(BindGc(sel));
-    snprintf(v.help, sizeof v.help, "%s: %s. Left/right pick its action (a taken one swaps).",
-             kButtonNames[sel], a.name);
-    snprintf(v.value_help, sizeof v.value_help, "%s", a.help);
-    if (BindGc(sel) == PAD_BUTTON_A || BindGc(sel) == PAD_BUTTON_START) {
-      snprintf(v.note, sizeof v.note, "Fire and Pause always stay on some button.");
+    // No live lighting of what is held: every press redrew the controller
+    // (twice: down and up), the lag a tester felt moving around this page
+    v.pad_ok = sPad1Ok ? 1 : 0;
+    if (sel >= XHW_MENU_IN_MAPPABLE) {
+      for (const SFixed& f : kFixed) {
+        if (f.in == sel) {
+          snprintf(v.help, sizeof v.help, "%s", f.help);
+          snprintf(v.value_help, sizeof v.value_help, "%s", f.value);
+        }
+      }
+      snprintf(v.note, sizeof v.note, "This input can't be remapped.");
+    } else {
+      const SAction& a = ActionOf(BindGc(sel));
+      snprintf(v.help, sizeof v.help, "%s: %s. A and X change its action (taking another button's action swaps the two).",
+               kButtonNames[sel], a.name);
+      snprintf(v.value_help, sizeof v.value_help, "%s", a.help);
+      if (BindGc(sel) == PAD_BUTTON_A || BindGc(sel) == PAD_BUTTON_START) {
+        snprintf(v.note, sizeof v.note, "Fire and Pause always stay on some button.");
+      }
     }
   } else {
     const STab& tab = kTabs[sTab];
@@ -383,18 +479,38 @@ void Fill() {
   }
 }
 
+// the Video Mode chosen isn't the one Prime-X started in
+bool VideoRestartPending() {
+  const xsdk_settings& b = g_xsdk_settings_boot;
+  const int atBoot = b.video_720p ? 2 : b.progressive ? 1 : 0;
+  return Get(kXO_VideoOutput) != atBoot;
+}
+
 void Close() {
   sOpen = false;
+  sAsk = false;
   sRelease = true;
   xhw_menu_show(nullptr);
   Save(); // settings.ini, once, if anything changed
   xhw_logf("[MENU] Port Options closed");
 }
 
+// "Restart now": settings.ini, then this XBE again (xhw_main.c launch: the
+// card's saves flushed, the audio, LEDs and pads shut down first)
+void RestartNow() {
+  Save();
+  xhw_logf("[MENU] restart for Video Mode %d", Get(kXO_VideoOutput));
+  xhw_exit_reason("Video Mode changed in Port Options");
+  xhw_reboot_self();
+}
+
 // left/right or A on the selected row
 void Change(int delta) {
   const int sel = sSel[sTab];
   if (sTab == kTabButtons) {
+    if (sel >= XHW_MENU_IN_MAPPABLE) {
+      return; // fixed (the box says so)
+    }
     Step(kXO_BindFirst + sel, delta);
     xhw_logf("[MENU] %s: %s", kButtonNames[sel], ActionOf(BindGc(sel)).name);
     return;
@@ -455,7 +571,33 @@ void Frame() {
     sConfirmUntil = 0;
   }
 
+  if (sAsk) { // restart now or later
+    if (press & (XHW_BTN_B | XHW_BTN_START)) {
+      Close();
+      return;
+    }
+    if (press & (XHW_BTN_UP | XHW_BTN_DOWN | XHW_BTN_LEFT | XHW_BTN_RIGHT)) {
+      sAskSel ^= 1;
+    }
+    if (press & XHW_BTN_A) {
+      if (sAskSel) {
+        RestartNow();
+      }
+      Close();
+      return;
+    }
+    Fill();
+    xhw_menu_show(&sView);
+    return;
+  }
   if (press & (XHW_BTN_B | XHW_BTN_START)) {
+    if (VideoRestartPending()) {
+      sAsk = true;
+      sAskSel = 0; // "later" first: a stray press mustn't restart
+      Fill();
+      xhw_menu_show(&sView);
+      return;
+    }
     Close();
     return;
   }
@@ -481,7 +623,16 @@ void Frame() {
     sDirFrames = -1;
   }
   const int rows = RowCount(sTab);
-  if (fire & 1) {
+  if (sTab == kTabButtons) { // over the callouts as they stand
+    const int d = fire & 1 ? 1 : fire & 2 ? 2 : fire & 4 ? 4 : fire & 8 ? 8 : 0;
+    if (d != 0) {
+      sSel[sTab] = PadMove(sSel[sTab], d);
+      sConfirmUntil = 0;
+    }
+    if (press & XHW_BTN_X) {
+      Change(-1);
+    }
+  } else if (fire & 1) {
     sSel[sTab] = (sSel[sTab] + rows - 1) % rows;
     sConfirmUntil = 0;
   } else if (fire & 2) {
@@ -517,6 +668,23 @@ void Frame() {
   xhw_menu_show(&sView);
 }
 
+// The game held until the popup closes: 60 times a second the pads are
+// read, the view filled and what changed drawn onto the frame on screen;
+// the disc's and ARAM's completions (the music's stream reads) and the
+// alarms go on as while the game waits for a disc read. The game's next
+// present, after this returns, replaces the card.
+void RunModal() {
+  xhw_menu_modal_begin();
+  while (sOpen) {
+    xsdk_modal_tick();
+    Frame();
+    if (sOpen) {
+      xhw_menu_modal_frame();
+    }
+  }
+  xhw_menu_modal_end();
+}
+
 } // namespace
 
 void OpenMenu() {
@@ -539,16 +707,19 @@ void OpenMenu() {
     }
   }
   sDir = 15; // a held direction waits to be let go
+  sAsk = false;
   Fill();
   xhw_menu_show(&sView);
   xhw_logf("[MENU] Port Options opened");
+  RunModal();
 }
 
 bool MenuOpen() { return sOpen; }
 
 } // namespace PortXboxOptions
 
-// vi.c, once a frame (the game thread)
+// vi.c, once a frame (the game thread): test builds' PX_MENU_AT. The popup
+// itself runs in OpenMenu's modal loop.
 extern "C" void px_menu_frame(void) {
 #if XHW_TEST_BUILD
   // test builds: "env PX_MENU_AT=<frame>" in autopad.txt opens the popup at
