@@ -191,7 +191,9 @@ def analyse(linked, rows, addrs, refs):
         out = {}
         for s in refs.sites(addr):
             a, sym = owner(rows, addrs, s)
-            if a != addr:
+            # a string literal holds no pointers: its text matched (the ship
+            # build's " : " in SDL's assert prompt read as 0x00203a20)
+            if a != addr and not sym.startswith("??_C@"):
                 out[a] = sym
         return out
 
