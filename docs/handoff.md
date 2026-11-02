@@ -115,9 +115,10 @@ every move, all of it in the frame's draw: the card's full redraw on a P3.
 Not the sounds, though the user asked for them gone and they are. Fixed
 after: only the changed rows redrawn, a band at a time within 3 ms a frame,
 and the drawing ~20x cheaper (docs/ui.md "The card";
-`tools/xbox/bench_menu.py`). That build is on `dev`, not on the consoles
-(the user: "hold until we finish the test"). **Next**: when the user says,
-the ship build to both, and on red a move should log no `MP stall`.
+`tools/xbox/bench_menu.py`). Its ship build (e9526cd, MD5
+7df2779ebab11c6095e76d963a1527d9) is on both consoles' `Prime-X` (ROUNDS.md
+"free play portmenu2", save folders backed up first). **Next**: the user's
+check; with Log File on, a move in the popup should log no `MP stall`.
 Still not seen: the notice from a bad settings.ini on screen.
 
 ## Session 2026-11-01: the beta's first three bug reports
