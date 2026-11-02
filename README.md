@@ -12,7 +12,7 @@
 
 Metroid Prime, running natively on an original Xbox. No emulator. The game's own decompiled code, rebuilt for the Xbox's Pentium III and drawn by its NV2A GPU.
 
-> **v1.0 beta.** This is the first public release, and it's a beta. The whole game should be playable from the Frigate to the credits, but it hasn't had wide testing yet, so you will run into bugs. If you do, turn on Port Options > System > Log File, play until it happens again, and send the `boot.log` with your report. Known problems are listed below.
+> **v1.0 beta 2.** This is still a beta. The whole game should be playable from the Frigate to the credits, but it hasn't had wide testing yet, so you will run into bugs. If you do, turn on Xbox Port Options > System > Log File, play until it happens again, and send the `boot.log` with your report. Known problems are listed below.
 
 This is the third port in the family, after [OpenCrossing-Xbox](https://github.com/TechProGabe/OpenCrossing-Xbox) (Animal Crossing) and [Melee-X](https://github.com/TechProGabe/Melee-X) (Super Smash Bros. Melee). Melee-X proved the Xbox can run a decompiled GameCube game at full speed; Prime-X takes the same GameCube-on-Xbox layer and puts Metroid Prime on it.
 
@@ -25,7 +25,7 @@ What you get:
 - The whole game, Frigate Orpheon to the credits
 - 480i, 480p or 720p, with **16:9 widescreen at both 480 and 720**, up to whatever your dashboard allows
 - The game always runs at its proper speed. When a room is too heavy, the frame rate drops but the game doesn't slow down
-- Settings right in the game's own screens, drawn in Prime's own visor style: **Port Options** on the main menu (no save file needed) and in the pause menu's Options
+- **Xbox Port Options**, on the main menu (no save file needed) and in the pause menu's Options: every setting says what it does, and buttons are remapped on a picture of the controller
 - A few extras on top of the GameCube game, all off or retail by default: skippable cutscenes, an edge-to-edge widescreen HUD, a field-of-view setting, an FPS counter, screenshots, button remapping, and the Fusion Suit (a GBA-link bonus on the GameCube)
 - Rumble, and saves in the GameCube `.gci` format. Moving saves to and from Dolphin should work, but it hasn't been tested yet
 - **L + R + Back + Black** on any controller quits to the dashboard
@@ -69,7 +69,7 @@ Nothing from Nintendo ships with this. You need your own copy of the game.
 
 ## Install
 
-The same as Melee-X: grab `Prime-X-v1.0-beta.zip` from Releases, put your disc image in the `Prime-X` folder next to `default.xbe`, and FTP the folder to wherever your dashboard looks for apps or games (`F:\Applications\`, `E:\Games\`). Or pack both into one Xbox image with `tools/make-xiso` and burn it to a DVD-R. Updating is copying the new `default.xbe` and `default.tbn` over the old ones; saves and settings stay put.
+The same as Melee-X: grab the latest `Prime-X-<version>.zip` from Releases, put your disc image in the `Prime-X` folder next to `default.xbe`, and FTP the folder to wherever your dashboard looks for apps or games (`F:\Applications\`, `E:\Games\`). Or pack both into one Xbox image with `tools/make-xiso` and burn it to a DVD-R. Updating is copying the new `default.xbe` and `default.tbn` over the old ones; saves and settings stay put.
 
 ## Controls
 
@@ -88,7 +88,7 @@ The same as Melee-X: grab `Prime-X-v1.0-beta.zip` from Releases, put your disc i
 | Start | Start | pause |
 | L + R + Back + Black | | quit to the dashboard |
 
-The buttons sit where they do on a GameCube pad, as on Melee-X. They can be remapped per controller in Port Options. In menus, B goes back.
+The buttons sit where they do on a GameCube pad, as on Melee-X. They can be remapped in Xbox Port Options > Buttons: give a button another's action and the two swap, and Fire and Pause always stay on some button. In menus, A confirms and B goes back, whatever the layout.
 
 ## Video
 
@@ -107,9 +107,9 @@ The first start checks every file of your disc image against the known-good copy
 
 ## Saves and logs
 
-Saves go to `E:\UDATA\50580001\card_a\` as normal GameCube `.gci` files, written to a new file first and only then swapped in. Settings live in `E:\UDATA\50580001\settings.ini`.
+Saves go to `E:\UDATA\50580001\card_a\` as normal GameCube `.gci` files, written to a new file first and only then swapped in. Settings live in `E:\UDATA\50580001\settings.ini`. You can edit it by hand with the game off; the file explains each line. If Prime-X can't read a line, it says so on screen, fixes the file, and keeps your version as `settings.bad.ini`.
 
-If the game crashes or freezes, it writes `crash.log` or `hang.log` to `E:\UDATA\50580001\`. The everyday log, `boot.log`, is off by default because writing it slows things down on stock drives. Turn it on in Port Options > System > Log File when you want to report a bug.
+If the game crashes or freezes, it writes `crash.log` or `hang.log` to `E:\UDATA\50580001\`. The everyday log, `boot.log`, is off by default because writing it slows things down on stock drives. Turn it on in Xbox Port Options > System > Log File when you want to report a bug.
 
 ## Building it
 
