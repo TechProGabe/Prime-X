@@ -227,6 +227,8 @@ if(PX_PGO STREQUAL "gen")
     target_link_options(prime_x PRIVATE -include:___llvm_profile_raw_version -nodefaultlib:clang_rt.profile.lib)
 endif()
 add_custom_command(TARGET prime_x POST_BUILD
+    # nxdk functions that are only assert(0) must not be reachable (exp2f, 2026-11-01)
+    COMMAND python3 ${ROOT}/tools/xbox/check_stubs.py ${CMAKE_BINARY_DIR}/prime_x.map ${NXDK_DIR}
     COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/xbe
     COMMAND ${NXDK_DIR}/tools/cxbe/cxbe "-OUT:${CMAKE_BINARY_DIR}/xbe/default.xbe" "-TITLE:Prime-X" $<TARGET_FILE:prime_x>
     COMMENT "cxbe -> xbe/default.xbe")

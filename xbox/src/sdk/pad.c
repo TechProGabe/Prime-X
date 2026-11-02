@@ -61,7 +61,10 @@ static void stick(int16_t x, int16_t y, float deadzone, s8* ox, s8* oy) {
 /* A menu is on screen: the game's menus call PortPointerMenu::Begin each
  * frame (port_overrides.cpp), which lands here. Then the Xbox B button is
  * the GameCube's B, back, whatever it does in play (the default layout puts
- * GameCube B on Xbox X, by position; the user, round hw4: "use B in menus"). */
+ * GameCube B on Xbox X, by position; the user, round hw4: "use B in menus"),
+ * and the Xbox A button the GameCube's A, confirm, whatever it does in play
+ * (GitHub #1: A on Jump left no way to select in Options). Their own
+ * bindings don't apply in a menu (A on Jump would back and confirm at once). */
 static unsigned s_menu_frame = 0x80000000u;
 void xsdk_pad_menu_seen(void) { s_menu_frame = xsdk_frame_count(); }
 static int menu_up(void) { return xsdk_frame_count() - s_menu_frame <= 2; }
@@ -147,8 +150,9 @@ u32 PADRead(PADStatus* status) {
             motors |= 0x80000000u >> i;
             continue;
         }
-        if (menu_up() && (p.buttons & XHW_BTN_B))
-            s->button = (u16)(map_buttons(p.buttons & ~XHW_BTN_B, ps) | PAD_BUTTON_B);
+        if (menu_up() && (p.buttons & (XHW_BTN_A | XHW_BTN_B)))
+            s->button = (u16)(map_buttons(p.buttons & ~(XHW_BTN_A | XHW_BTN_B), ps) |
+                              ((p.buttons & XHW_BTN_A) ? PAD_BUTTON_A : 0) | ((p.buttons & XHW_BTN_B) ? PAD_BUTTON_B : 0));
         else
             s->button = map_buttons(p.buttons, ps);
         stick(p.lx, p.ly, ps->stick_deadzone, &s->stickX, &s->stickY);

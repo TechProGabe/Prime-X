@@ -104,8 +104,12 @@ static int e_has_room(void) {
 unsigned xhw_log_fallback(void) { return s_log_fallback; }
 
 /* boot.log at all: 1 yes, 0 no, -1 not known yet (release builds until
- * settings.ini is read: the lines wait in the queue) */
-static int s_log_mode = XHW_TEST_BUILD ? 1 : -1;
+ * settings.ini is read: the lines wait in the queue). -DXHW_LOG_ALWAYS=1:
+ * a release build that logs from boot whatever the setting (a tester's
+ * diagnostic build; the overclock test of 2026-11-01 sent two logs that
+ * began mid-session, the setting not having survived the restart). */
+static int s_log_mode = (XHW_TEST_BUILD || XHW_LOG_ALWAYS) ? 1 : -1;
+static void clock_replay(void);   /* the [CLOCK] lines so far, again (below) */
 
 void xhw_log_open_file(void) {
     char path[MAX_PATH], prev[MAX_PATH];
@@ -332,7 +336,7 @@ static int log_write_locked(const char* s, size_t n) {
     s_tail_pos += (unsigned)n;
     if (!s_log_no_com1) com1_write(s, n);
     if (s_bootlog == INVALID_HANDLE_VALUE) {
-        if (s_log_mode < 0) logq_put_locked(s, n);   /* settings.ini will say */
+        if (s_log_mode != 0) logq_put_locked(s, n);   /* settings.ini will say (-1), or the file isn't open yet (1) */
         return 0;
     }
     logq_put_locked(s, n);
@@ -384,7 +388,7 @@ int xhw_log_try(const char* line) { return log_try(line, 1); }
 int xhw_log_try_file(const char* text) { return log_try(text, 0); }
 
 void xhw_log_set_file(int on) {
-    if (XHW_TEST_BUILD) return;   /* always on: the rounds read it */
+    if (XHW_TEST_BUILD || XHW_LOG_ALWAYS) return;   /* always on: the rounds read it */
     log_lock_init();
     EnterCriticalSection(&s_logf_cs);
     if (on) {
@@ -406,6 +410,7 @@ void xhw_log_set_file(int on) {
     }
     LeaveCriticalSection(&s_logf_cs);
     xhw_logf("[LOG] boot.log %s (Port Options > System > Log File)", on ? "on" : "off");
+    if (on) clock_replay();   /* turned on mid-session: the boot's clock lines were dropped with the queue */
     if (s_logq_thread) xhw_event_signal(s_logq_event);
 }
 
@@ -533,12 +538,73 @@ void xhw_page0_guard(const char* when) {
  * ====================================================================== */
 uint64_t xhw_ticks(void) { return KeQueryPerformanceCounter(); }
 uint64_t xhw_ticks_per_sec(void) { return KeQueryPerformanceFrequency(); }
+uint32_t xhw_tick_ms(void) { return (uint32_t)GetTickCount(); }
 
+/* The [CLOCK] lines are kept (the last 8) and logged again when Log File is
+ * turned on mid-session (xhw_log_set_file): a release build drops the
+ * boot's lines with the queue once settings.ini says the log is off, and
+ * these are the ones an overclock report needs. */
+#define CLOCK_LINES 8
+static char s_clock_lines[CLOCK_LINES][200];
+static unsigned s_clock_n;
+
+static void clock_logf(const char* fmt, ...) {
+    char* line = s_clock_lines[s_clock_n % CLOCK_LINES];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(line, sizeof s_clock_lines[0], fmt, ap);
+    va_end(ap);
+    s_clock_n++;
+    xhw_log(line);
+}
+
+static void clock_replay(void) {
+    unsigned i, from = s_clock_n > CLOCK_LINES ? s_clock_n - CLOCK_LINES : 0;
+    for (i = from; i < s_clock_n; i++) xhw_logf("%s (again: logged before the log was on)", s_clock_lines[i % CLOCK_LINES]);
+}
+
+/* the ACPI timer as the kernel reads it, in ns at the rate the kernel says */
 static uint64_t kernel_ns(void) {
     static uint64_t freq;
     uint64_t t = KeQueryPerformanceCounter();
     if (!freq) freq = KeQueryPerformanceFrequency();
     return (t / freq) * 1000000000ull + (t % freq) * 1000000000ull / freq;
+}
+
+/* dt * (whole + frac / 2^32), multiplies only */
+static inline uint64_t scale_ns(uint64_t dt, uint32_t whole, uint32_t frac) {
+    return dt * whole + (uint64_t)(uint32_t)(dt >> 32) * frac + (((uint64_t)(uint32_t)dt * frac) >> 32);
+}
+
+/* The clock's correction (xhw_clock_display_frame): the ACPI timer is the
+ * chipset's reference, and an FSB overclock can move it with the CPU, while
+ * VBlank comes from the GPU's own crystal. Once the display check has
+ * measured the timer off its rate, true ns = n0 + (acpi ns - k0) * scale,
+ * continuous at the switch. Written once, on the game thread; read on any
+ * thread (a seqlock, as the time base below). Identity until then. */
+typedef struct {
+    volatile LONG seq;
+    uint64_t k0, n0;
+    uint32_t whole, frac;
+} ClockCorr;
+static ClockCorr s_corr = { 0, 0, 0, 1, 0 };
+static uint32_t s_scale_ppm = 1000000;   /* the scale in force, parts per million */
+
+static uint64_t acpi_ns(void) {
+    uint64_t k = kernel_ns(), k0, n0;
+    uint32_t whole, frac;
+    LONG seq;
+    for (;;) {
+        seq = s_corr.seq;
+        __atomic_thread_fence(__ATOMIC_ACQUIRE);
+        k0 = s_corr.k0;
+        n0 = s_corr.n0;
+        whole = s_corr.whole;
+        frac = s_corr.frac;
+        __atomic_thread_fence(__ATOMIC_ACQUIRE);
+        if (!(seq & 1) && s_corr.seq == seq) break;
+    }
+    return n0 + scale_ns(k - k0, whole, frac);
 }
 
 /* The game reads the clock thousands of times a frame (OSGetTime, SDL's
@@ -564,27 +630,52 @@ static TimeBase s_tb[2];
 static volatile LONG s_tb_cur, s_tb_busy;
 static uint32_t s_ns_whole, s_ns_frac;
 static uint64_t s_tsc_resync;   /* TSC ticks between ACPI readings */
+static volatile int s_tsc_force;   /* the next call takes a fresh ACPI reading */
 static uint64_t s_ns_last;      /* the latest time handed out (atomic 64-bit) */
+static uint64_t s_tsc_hz;       /* the TSC's rate against the ACPI timer (raw: before any correction) */
 static volatile int s_tsc_ready;
+static int s_tsc_tried;         /* calibrated once (ready or not) */
+static int s_tsc_banned;        /* rdtsc traps (a BIOS patcher's int 2Eh): the ACPI timer on every call */
+static int s_clock_booted;      /* xhw_clock_boot ran: the code check is done, the TSC may be read */
+static unsigned s_early_calls;  /* clock reads before that (nxdk's CRT, the boot's own logging) */
 
-static uint64_t tsc_to_ns(uint64_t dt) {
-    return dt * s_ns_whole + (uint64_t)(uint32_t)(dt >> 32) * s_ns_frac + (((uint64_t)(uint32_t)dt * s_ns_frac) >> 32);
-}
+static uint64_t tsc_to_ns(uint64_t dt) { return scale_ns(dt, s_ns_whole, s_ns_frac); }
 
-static void tsc_calibrate(void) {
-    uint64_t k0 = kernel_ns(), t0 = rdtsc_now(), k1, t1, hz;
-    do {
-        k1 = kernel_ns();
-    } while (k1 - k0 < 50000000ull);
-    t1 = rdtsc_now();
-    hz = (t1 - t0) * 1000000000ull / (k1 - k0);
-    if (hz < 100000000ull) return;   /* no sane counter: the ACPI timer on every call */
+/* ns per TSC tick from the rate the TSC runs at in corrected time */
+static void set_tsc_rate(uint64_t hz) {
     s_ns_whole = (uint32_t)(1000000000ull / hz);
     s_ns_frac = (uint32_t)(((1000000000ull % hz) << 32) / hz);
     s_tsc_resync = hz / 10;
+}
+
+static uint64_t time_monotonic(uint64_t ns);
+
+static void tsc_calibrate(void) {
+    uint64_t k0 = acpi_ns(), t0 = rdtsc_now(), k1, t1, dt, hz;
+    do {
+        k1 = acpi_ns();
+    } while (k1 - k0 < 50000000ull);
+    t1 = rdtsc_now();
+    dt = t1 - t0;
+    hz = dt >> 33 ? ~0ull : dt * 1000000000ull / (k1 - k0);   /* 2^33 ticks in 50 ms: past any CPU (and the multiply) */
+    if (hz < 100000000ull || hz > 4000000000ull) {
+        /* no sane counter: the ACPI timer on every call. 2026-11-01, a
+         * Cerbios console (docs/boot-safety.md): 164950 MHz, the BIOS's
+         * patcher had detoured some rdtsc and not others, and two sites'
+         * readings didn't agree (xhw_code_repair.c puts them back now) */
+        s_tsc_banned = 1;
+        clock_logf("[CLOCK] tsc calibrates at %lu MHz against the acpi timer: no sane counter (a BIOS patcher's rdtsc?); "
+                   "the time-stamp counter isn't used, the ACPI timer is read on every call",
+                   (unsigned long)(hz > 9999999000000ull ? 9999999 : hz / 1000000ull));
+        return;
+    }
+    /* hz is ticks per corrected second (= raw second * 1e6 / scale), so the
+     * rate against the raw timer is hz * scale */
+    s_tsc_hz = hz * s_scale_ppm / 1000000ull;
+    set_tsc_rate(hz);
     s_tb[0].tsc0 = t1;
     s_tb[0].ns0 = k1;
-    __atomic_store_n(&s_ns_last, k1, __ATOMIC_SEQ_CST);
+    time_monotonic(k1);   /* never behind what the ACPI-only calls before handed out */
     s_tsc_ready = 1;
 }
 
@@ -600,11 +691,20 @@ uint64_t xhw_time_ns(void) {
     uint64_t now, tsc0, ns0;
     LONG cur, seq;
     if (!s_tsc_ready) {
-        static int tried;
-        if (tried) return kernel_ns();
-        tried = 1;
+        /* Until xhw_clock_boot (after the code check), the ACPI timer only:
+         * the TSC isn't read while a BIOS patcher's rewrites may still be
+         * in the code. nxdk's CRT reads the clock before main (its stack
+         * cookie is seeded from QueryPerformanceCounter, Prime-X's below),
+         * and on the Cerbios console that calibrated the TSC through the
+         * patcher's traps and banned it for the session (test build 3). */
+        if (!s_clock_booted) {
+            s_early_calls++;
+            return time_monotonic(acpi_ns());
+        }
+        if (s_tsc_tried || s_tsc_banned) return time_monotonic(acpi_ns());
+        s_tsc_tried = 1;
         tsc_calibrate();
-        if (!s_tsc_ready) return kernel_ns();
+        if (!s_tsc_ready) return time_monotonic(acpi_ns());
     }
     for (;;) {   /* the slot's fields as one consistent pair (a reader stalled through two resyncs retries) */
         cur = s_tb_cur & 1;
@@ -616,12 +716,13 @@ uint64_t xhw_time_ns(void) {
         if (!(seq & 1) && s_tb[cur].seq == seq) break;
     }
     now = rdtsc_now();
-    if (now - tsc0 >= s_tsc_resync && !InterlockedCompareExchange(&s_tb_busy, 1, 0)) {
+    if ((now - tsc0 >= s_tsc_resync || s_tsc_force) && !InterlockedCompareExchange(&s_tb_busy, 1, 0)) {
         /* one thread takes a new reading into the other slot, then flips */
         TimeBase* n = &s_tb[cur ^ 1];
         uint64_t k;
+        s_tsc_force = 0;
         InterlockedIncrement(&n->seq);
-        k = kernel_ns();
+        k = acpi_ns();
         n->tsc0 = rdtsc_now();
         n->ns0 = k > __atomic_load_n(&s_ns_last, __ATOMIC_RELAXED) ? k : __atomic_load_n(&s_ns_last, __ATOMIC_RELAXED);
         InterlockedIncrement(&n->seq);
@@ -630,6 +731,233 @@ uint64_t xhw_time_ns(void) {
         return time_monotonic(n->ns0);
     }
     return time_monotonic(ns0 + tsc_to_ns(now - tsc0));
+}
+
+int xhw_tsc_usable(void) { return !s_tsc_banned; }
+
+/* ns one rdtsc costs: ~40 on the console; a thousand and more once a BIOS
+ * patcher has rewritten it as an int 2Eh trap (xhw_code_repair.c) */
+static unsigned rdtsc_cost_ns(void) {
+    uint64_t k0 = kernel_ns(), k1;
+    int i;
+    for (i = 0; i < 2000; i++) rdtsc_now();
+    k1 = kernel_ns();
+    return (unsigned)((k1 - k0) / 2000);
+}
+
+static void tsc_ban(unsigned cost) {
+    if (s_tsc_banned || xhw_running_in_xemu()) return;   /* xemu's rdtsc is slow, not patched */
+    s_tsc_banned = 1;
+    s_tsc_ready = 0;
+    clock_logf("[CLOCK] rdtsc costs %u ns: trapped (a BIOS patcher's int 2Eh?); the time-stamp counter isn't used "
+             "from here on, the ACPI timer is read on every call",
+             cost);
+}
+
+/* The clock's scale on the raw ACPI timer set to ppm parts per million,
+ * continuous at the switch (the correction record above); the TSC's ns per
+ * tick follow (it was measured against the timer), and the next
+ * xhw_time_ns resyncs. On the game thread. */
+static void clock_set_scale(uint32_t ppm) {
+    uint64_t k = kernel_ns(), n = acpi_ns();
+    InterlockedIncrement(&s_corr.seq);
+    s_corr.k0 = k;
+    s_corr.n0 = n;
+    s_corr.whole = ppm / 1000000u;
+    s_corr.frac = (uint32_t)(((uint64_t)(ppm % 1000000u) << 32) / 1000000u);
+    InterlockedIncrement(&s_corr.seq);
+    s_scale_ppm = ppm;
+    if (s_tsc_ready) {
+        set_tsc_rate(s_tsc_hz * 1000000ull / ppm);   /* ticks per corrected second */
+        s_tsc_force = 1;
+    }
+}
+
+/* the clock's rates, in boot.log, after the code check and before anything
+ * paces itself (docs/boot-safety.md) */
+void xhw_clock_boot(void) {
+    uint64_t n0, n1;
+    uint32_t ms0, ms1;
+    unsigned cost, mhz;
+    s_clock_booted = 1;   /* the code check is done: the TSC may be read now */
+    xhw_time_ns();        /* calibrates the TSC */
+    cost = rdtsc_cost_ns();
+    /* the kernel's 1 ms tick (the 8254 timer) against the ACPI timer */
+    ms0 = xhw_tick_ms();
+    n0 = kernel_ns();
+    Sleep(250);
+    ms1 = xhw_tick_ms();
+    n1 = kernel_ns();
+    mhz = (unsigned)(s_tsc_hz / 10000);   /* hundredths of a MHz */
+    if (s_tsc_ready)
+        clock_logf("[CLOCK] acpi timer %lu Hz (the kernel's clock), tsc %u.%02u MHz against it, rdtsc %u ns, kernel tick "
+                   "%lu ms in %lu ms of acpi time; %u reads before the code check",
+                   (unsigned long)KeQueryPerformanceFrequency(), mhz / 100, mhz % 100, cost, (unsigned long)(ms1 - ms0),
+                   (unsigned long)((n1 - n0) / 1000000ull), s_early_calls);
+    else
+        clock_logf("[CLOCK] acpi timer %lu Hz (the kernel's clock), tsc not used, rdtsc %u ns, kernel tick "
+                   "%lu ms in %lu ms of acpi time; %u reads before the code check",
+                   (unsigned long)KeQueryPerformanceFrequency(), cost, (unsigned long)(ms1 - ms0),
+                   (unsigned long)((n1 - n0) / 1000000ull), s_early_calls);
+    {
+        /* the clocks as set (an overclock is these): the FSB from the NV2A's
+         * CPU PLL (PCI 0:0x60 register 0x6C: 16.667 MHz / divider x
+         * multiplier, as nxdk's tsc_freq_init reads it) and the GPU core
+         * from its NVPLL (PRAMDAC 0x680500: 16.667 MHz x N / M / 2^P) */
+        uint32_t pll = 0, nvpll, fsb_khz = 0, nv_khz = 0;
+        HalReadWritePCISpace(0, 0x60, 0x6C, &pll, sizeof pll, FALSE);
+        if (pll & 0xFF) fsb_khz = (uint32_t)(16666667ull * ((pll >> 8) & 0xFF) / (pll & 0xFF) / 1000);
+        nvpll = *(volatile uint32_t*)0xFD680500u;
+        if (nvpll & 0xFF) nv_khz = (uint32_t)(16666667ull * ((nvpll >> 8) & 0xFF) / (nvpll & 0xFF) / (1u << ((nvpll >> 16) & 7)) / 1000);
+        clock_logf("[CLOCK] fsb %u.%u MHz (cpu pll %08x), gpu %u MHz (nvpll %08x)", fsb_khz / 1000, (fsb_khz % 1000) / 100,
+                   (unsigned)pll, nv_khz / 1000, (unsigned)nvpll);
+    }
+    if (cost > 250) tsc_ban(cost);
+}
+
+/* nxdk's QueryPerformanceCounter is rdtsc, at the rate its tsc_freq_init
+ * works out from the PLL and the CPU's multiplier (733333333 for a CPU its
+ * table doesn't know), and libc++'s steady_clock runs on it: in the game,
+ * main.cpp's tick budget, the area-load and door timers, MP_LOG. On an
+ * upgraded CPU that's up to 1.9x fast (the scene's "frequency patch" of the
+ * XBE's 733333333 is for this), and a BIOS patcher's rdtsc returns whatever
+ * it returns. These definitions take precedence over libwinapi's at link
+ * time (an archive member is only pulled for a symbol nothing else
+ * defines): the clock above, in 10 us units. libc++ multiplies the count
+ * by 1e9 before dividing by the rate, so the count must stay under 9.2e9:
+ * 25 hours of 10 us. */
+BOOL QueryPerformanceCounter(LARGE_INTEGER* c) {
+    c->QuadPart = (LONGLONG)(xhw_time_ns() / 10000ull);
+    return TRUE;
+}
+
+BOOL QueryPerformanceFrequency(LARGE_INTEGER* f) {
+    f->QuadPart = 100000;
+    return TRUE;
+}
+
+/* The display against the clock, once a presented frame from the frame
+ * boundary (vi.c): over 3 s of frames the vblanks (pbkit's counter, the
+ * GPU's crystal) are counted against the clock and compared with the
+ * mode's refresh (50 or 60). Off by more than 1.5%, the clock is scaled to
+ * the display, once, and measured again; the console says so in boot.log.
+ * The window after the correction has to agree, else the correction is
+ * undone (2026-11-01: on a Cerbios console a clock jumping on a patcher's
+ * rdtsc read the display at 40 Hz, and the "correction" ran the game at
+ * two thirds speed). The windows are timed by the ACPI timer itself
+ * (acpi_ns, not xhw_time_ns): it is the timer that's being checked, and
+ * the TSC's interpolation can't get into the measurement.
+ * A window with the GPU interrupt masked (the count stalls) starts over.
+ * real_time 0 (lockstep runs): nothing. */
+void xhw_clock_display_frame(int real_time) {
+    static int state;   /* 0 idle, 1 counting, 2 done */
+    static int corrected, windows;
+    static uint32_t ppm_before;   /* the scale before the correction, to undo it */
+    static uint64_t ns0;
+    static uint32_t vbl0;
+    uint32_t vbl, dv;
+    uint64_t now, dn;
+    int irq_on, hz;
+    unsigned mhz, ppm;
+    if (state == 2) {
+        /* checked, done: every 30 s of frames, is rdtsc trapping now (a
+         * patcher that came back after the boot's repair)? 80 us a check */
+        static unsigned n;
+        if (++n % 1800 == 0 && real_time) {
+            unsigned cost = rdtsc_cost_ns();
+            if (cost > 250) tsc_ban(cost);
+        }
+        return;
+    }
+    if (!real_time) return;
+#if XHW_TEST_BUILD
+    {
+        /* env PX_CLOCK_SKEW=<percent> (autopad.txt, read after the boot's
+         * [CLOCK] line): the clock runs that much of the timer's rate (120:
+         * 20% fast) so xemu exercises the correction below */
+        static int skew_done;
+        if (!skew_done) {
+            const char* e = getenv("PX_CLOCK_SKEW");
+            int pct = e ? atoi(e) : 0;
+            skew_done = 1;
+            if (pct >= 40 && pct <= 250 && pct != 100) {
+                clock_set_scale((uint32_t)pct * 10000u);
+                clock_logf("[CLOCK] PX_CLOCK_SKEW=%d: the clock runs at %d%% of the ACPI timer from here on", pct, pct);
+            }
+        }
+    }
+#endif
+    vbl = xhw_vblank_count(&irq_on);
+    now = acpi_ns();   /* the timer under test, in corrected ns, no TSC in it */
+    if (!irq_on) {
+        state = 0;
+        return;
+    }
+    if (state == 0) {
+        ns0 = now;
+        vbl0 = vbl;
+        state = 1;
+        return;
+    }
+    dn = now - ns0;
+    if (dn < 3000000000ull) return;
+    dv = vbl - vbl0;
+    hz = xhw_video_refresh_hz();
+    state = 2;
+    windows++;
+    if (dv < 30 || windows > 3) {
+        clock_logf("[CLOCK] display: %u vblanks in %lu ms: no retrace count to check the clock by", dv,
+                 (unsigned long)(dn / 1000000ull));
+        return;
+    }
+    mhz = (unsigned)((uint64_t)dv * 1000000000000ull / dn);   /* the refresh by the clock, in mHz */
+    if (hz <= 0) {
+        clock_logf("[CLOCK] display %u.%03u Hz by the clock (mode's refresh unknown)", mhz / 1000, mhz % 1000);
+        return;
+    }
+    ppm = (unsigned)((uint64_t)mhz * 1000 / (unsigned)hz);   /* measured / expected, parts per million */
+    if (ppm >= 985000 && ppm <= 1015000) {
+        clock_logf("[CLOCK] display %u.%03u Hz by the clock, mode %d Hz: agree%s", mhz / 1000, mhz % 1000, hz,
+                 corrected ? " (after the correction)" : "");
+        {
+            unsigned cost = rdtsc_cost_ns();   /* patched again since the boot? */
+            if (cost > 250) tsc_ban(cost);
+        }
+        return;
+    }
+    if (corrected) {
+        /* the window after the correction doesn't agree: the first window
+         * was wrong, not the timer; back to the rate before it */
+        int dev = (int)(ppm / 1000) - 1000;   /* tenths of a percent */
+        clock_set_scale(ppm_before);
+        clock_logf("[CLOCK] display %u.%03u Hz by the clock, mode %d Hz: off by %c%d.%d%% after the correction, which "
+                   "is undone (scale back to %u.%06u)",
+                   mhz / 1000, mhz % 1000, hz, dev < 0 ? '-' : '+', abs(dev) / 10, abs(dev) % 10,
+                   ppm_before / 1000000u, ppm_before % 1000000u);
+        return;
+    }
+    if (ppm < 400000 || ppm > 2500000) {
+        int dev = (int)(ppm / 1000) - 1000;   /* tenths of a percent */
+        clock_logf("[CLOCK] display %u.%03u Hz by the clock, mode %d Hz: off by %c%d.%d%%, left alone", mhz / 1000,
+                   mhz % 1000, hz, dev < 0 ? '-' : '+', abs(dev) / 10, abs(dev) % 10);
+        return;
+    }
+    {
+        /* true ns = corrected ns * ppm / 1e6: the ACPI timer runs fast by
+         * 1e6 / ppm. The new scale is on the raw timer, so the old one
+         * folds in */
+        ppm_before = s_scale_ppm;
+        clock_set_scale((uint32_t)((uint64_t)s_scale_ppm * ppm / 1000000ull));
+        corrected = 1;
+        state = 0;
+        {
+            int dev = (int)(1000000000ull / ppm) - 1000;   /* the timer's own rate, tenths of a percent */
+            clock_logf("[CLOCK] display %u.%03u Hz by the clock, mode %d Hz: the acpi timer runs %c%d.%d%% off (an FSB "
+                     "overclock?); time follows the display from here on (scale %u.%06u)",
+                     mhz / 1000, mhz % 1000, hz, dev < 0 ? '-' : '+', abs(dev) / 10, abs(dev) % 10,
+                     s_scale_ppm / 1000000u, s_scale_ppm % 1000000u);
+        }
+    }
 }
 
 int64_t xhw_wallclock_2000(uint32_t* ns_out) {

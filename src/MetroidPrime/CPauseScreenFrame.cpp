@@ -37,7 +37,6 @@
 #endif
 #ifdef TARGET_XBOX
 #include "port_xbox_options.h" // PORT_XBOX: Prime-X's Options rows
-static void PortRestoreValueCells(); // PORT_XBOX: Port Options' value cells (below)
 #endif
 
 static const int skQuitTitles[] = {24, 25, 26, 27, 28};
@@ -185,17 +184,19 @@ static SOptionCategory skGameOptions[] = {
 };
 
 #if defined(TARGET_XBOX)
-// PORT_XBOX: Prime-X's rows (docs/ui.md "Settings, inside the game's
-// Options") in place of MetroidPrimePort's PC rows, after each category's
-// retail rows on the pause screen. What they do is in
-// xbox/src/port/port_xbox_options.cpp; the right table scrolls as on the PC.
+// PORT_XBOX: each category ends with a "Port Options" row, above Restore
+// Defaults, that opens Prime-X's popup (xbox/src/port/port_menu.cpp,
+// docs/ui.md). Prime-X's settings used to be rows here; the user found them
+// hard to follow ("the port options menu is just shitty", 2026-11-01). The
+// right table scrolls as on the PC.
 #define PORT_OPTION(opt) static_cast< EGameOption >(opt)
+#define PX_PORT_ROW {PORT_OPTION(PortXboxOptions::kXO_OpenMenu), -1, 0.f, 1.f, 1.f, kOT_RestoreDefaults}
 static const SGameOption skPortVisorOptions[] = {
     {kGO_VisorOpacity, 21, 0.f, 255.f, 1.f, kOT_Float},
     {kGO_HelmetOpacity, 22, 0.f, 255.f, 1.f, kOT_Float},
     {kGO_HUDLag, 23, 0.f, 1.f, 1.f, kOT_DoubleEnum},
     {kGO_HintSystem, 24, 0.f, 1.f, 1.f, kOT_DoubleEnum},
-    {PORT_OPTION(PortXboxOptions::kXO_SkipCutscenes), -1, 0.f, 1.f, 1.f, kOT_DoubleEnum},
+    PX_PORT_ROW,
     {kGO_RestoreDefaults, 35, 0.f, 1.f, 1.f, kOT_RestoreDefaults},
 };
 static const SGameOption skPortDisplayOptions[] = {
@@ -203,38 +204,26 @@ static const SGameOption skPortDisplayOptions[] = {
     {kGO_ScreenOffsetX, 26, -30.f, 30.f, 1.f, kOT_Float},
     {kGO_ScreenOffsetY, 27, -30.f, 30.f, 1.f, kOT_Float},
     {kGO_ScreenStretch, 28, -10.f, 10.f, 1.f, kOT_Float},
-    {PORT_OPTION(PortXboxOptions::kXO_Widescreen), -1, 0.f, 2.f, 1.f, kOT_TripleEnum},
-    {PORT_OPTION(PortXboxOptions::kXO_WidescreenHud), -1, 0.f, 1.f, 1.f, kOT_DoubleEnum},
-    {PORT_OPTION(PortXboxOptions::kXO_Fov), -1, 0.f, 2.f, 1.f, kOT_TripleEnum},
-    {PORT_OPTION(PortXboxOptions::kXO_FpsCounter), -1, 0.f, 1.f, 1.f, kOT_DoubleEnum},
-    {PORT_OPTION(PortXboxOptions::kXO_VideoOutput), -1, 0.f, 2.f, 1.f, kOT_TripleEnum},
+    PX_PORT_ROW,
+    {kGO_RestoreDefaults, 35, 0.f, 1.f, 1.f, kOT_RestoreDefaults},
+};
+static const SGameOption skPortSoundOptions[] = {
+    {kGO_SFXVolume, 29, 0.f, 127.f, 1.f, kOT_Float},
+    {kGO_MusicVolume, 30, 0.f, 127.f, 1.f, kOT_Float},
+    {kGO_SoundMode, 31, 0.f, 2.f, 1.f, kOT_TripleEnum},
+    PX_PORT_ROW,
     {kGO_RestoreDefaults, 35, 0.f, 1.f, 1.f, kOT_RestoreDefaults},
 };
 static const SGameOption skPortControllerOptions[] = {
     {kGO_ReverseYAxis, 32, 0.f, 1.f, 1.f, kOT_DoubleEnum},
     {kGO_Rumble, 33, 0.f, 1.f, 1.f, kOT_DoubleEnum},
     {kGO_SwapBeamControls, 34, 0.f, 1.f, 1.f, kOT_DoubleEnum},
-    {PORT_OPTION(PortXboxOptions::kXO_RumbleStrength), -1, 0.f, 2.f, 1.f, kOT_TripleEnum},
-    {PORT_OPTION(PortXboxOptions::kXO_StickDeadZone), -1, 0.f, 2.f, 1.f, kOT_TripleEnum},
-    {PORT_OPTION(PortXboxOptions::kXO_CStickDeadZone), -1, 0.f, 2.f, 1.f, kOT_TripleEnum},
-    {PORT_OPTION(PortXboxOptions::kXO_TriggerClick), -1, 0.f, 2.f, 1.f, kOT_TripleEnum},
-    {PORT_OPTION(PortXboxOptions::kXO_Screenshots), -1, 0.f, 1.f, 1.f, kOT_DoubleEnum},
-    // the button remap: each a carousel in the three-cell widget (IsList)
-    {PORT_OPTION(PortXboxOptions::kXO_BindFirst + 0), -1, 0.f, 2.f, 1.f, kOT_TripleEnum},
-    {PORT_OPTION(PortXboxOptions::kXO_BindFirst + 1), -1, 0.f, 2.f, 1.f, kOT_TripleEnum},
-    {PORT_OPTION(PortXboxOptions::kXO_BindFirst + 2), -1, 0.f, 2.f, 1.f, kOT_TripleEnum},
-    {PORT_OPTION(PortXboxOptions::kXO_BindFirst + 3), -1, 0.f, 2.f, 1.f, kOT_TripleEnum},
-    {PORT_OPTION(PortXboxOptions::kXO_BindFirst + 4), -1, 0.f, 2.f, 1.f, kOT_TripleEnum},
-    {PORT_OPTION(PortXboxOptions::kXO_BindFirst + 5), -1, 0.f, 2.f, 1.f, kOT_TripleEnum},
-    {PORT_OPTION(PortXboxOptions::kXO_BindFirst + 6), -1, 0.f, 2.f, 1.f, kOT_TripleEnum},
-    {PORT_OPTION(PortXboxOptions::kXO_BindFirst + 7), -1, 0.f, 2.f, 1.f, kOT_TripleEnum},
-    {PORT_OPTION(PortXboxOptions::kXO_BindFirst + 8), -1, 0.f, 2.f, 1.f, kOT_TripleEnum},
-    {PORT_OPTION(PortXboxOptions::kXO_BindFirst + 9), -1, 0.f, 2.f, 1.f, kOT_TripleEnum},
+    PX_PORT_ROW,
     {kGO_RestoreDefaults, 35, 0.f, 1.f, 1.f, kOT_RestoreDefaults},
 };
 static SOptionCategory skPauseOptions[] = {
-    {6, skPortVisorOptions},        {10, skPortDisplayOptions}, {4, skSoundOptions},
-    {19, skPortControllerOptions}, {0, nullptr},
+    {6, skPortVisorOptions},      {6, skPortDisplayOptions}, {5, skPortSoundOptions},
+    {5, skPortControllerOptions}, {0, nullptr},
 };
 
 static bool IsPortOption(EGameOption option) { return option > kGO_RestoreDefaults; }
@@ -247,37 +236,9 @@ static int GetPortOption(EGameOption option) {
 static void SetPortOption(EGameOption option, int value) {
   PortXboxOptions::Set(static_cast< int >(option), value);
 }
-// The title screen's "Port Options" (the New Game popup's third choice): the
-// same frame as Options, five rows a category at most (it doesn't scroll).
-static const SGameOption skFrontVideoOptions[] = {
-    {PORT_OPTION(PortXboxOptions::kXO_VideoOutput), -1, 0.f, 2.f, 1.f, kOT_TripleEnum},
-    {PORT_OPTION(PortXboxOptions::kXO_Widescreen), -1, 0.f, 2.f, 1.f, kOT_TripleEnum},
-    {PORT_OPTION(PortXboxOptions::kXO_WidescreenHud), -1, 0.f, 1.f, 1.f, kOT_DoubleEnum},
-    {PORT_OPTION(PortXboxOptions::kXO_Fov), -1, 0.f, 2.f, 1.f, kOT_TripleEnum},
-    {PORT_OPTION(PortXboxOptions::kXO_FpsCounter), -1, 0.f, 1.f, 1.f, kOT_DoubleEnum},
-};
-static const SGameOption skFrontControllerOptions[] = {
-    {PORT_OPTION(PortXboxOptions::kXO_RumbleStrength), -1, 0.f, 2.f, 1.f, kOT_TripleEnum},
-    {PORT_OPTION(PortXboxOptions::kXO_StickDeadZone), -1, 0.f, 2.f, 1.f, kOT_TripleEnum},
-    {PORT_OPTION(PortXboxOptions::kXO_CStickDeadZone), -1, 0.f, 2.f, 1.f, kOT_TripleEnum},
-    {PORT_OPTION(PortXboxOptions::kXO_TriggerClick), -1, 0.f, 2.f, 1.f, kOT_TripleEnum},
-};
-static const SGameOption skFrontGameplayOptions[] = {
-    {PORT_OPTION(PortXboxOptions::kXO_SkipCutscenes), -1, 0.f, 1.f, 1.f, kOT_DoubleEnum},
-};
-static const SGameOption skFrontSystemOptions[] = {
-    {PORT_OPTION(PortXboxOptions::kXO_Screenshots), -1, 0.f, 1.f, 1.f, kOT_DoubleEnum},
-    {PORT_OPTION(PortXboxOptions::kXO_FusionSuit), -1, 0.f, 1.f, 1.f, kOT_DoubleEnum},
-    {PORT_OPTION(PortXboxOptions::kXO_LogFile), -1, 0.f, 1.f, 1.f, kOT_DoubleEnum},
-};
-static SOptionCategory skFrontPortOptions[] = {
-    {5, skFrontVideoOptions},    {4, skFrontControllerOptions}, {1, skFrontGameplayOptions},
-    {3, skFrontSystemOptions}, {0, nullptr},
-};
-
 static const SOptionCategory& GetOptionCategory(int category, bool frontEnd) {
-  if (frontEnd) {
-    return PortXboxOptions::FrontEndPort() ? skFrontPortOptions[category] : skGameOptions[category];
+  if (frontEnd) { // the title screen's Options: the retail tables
+    return skGameOptions[category];
   }
   return skPauseOptions[category];
 }
@@ -755,10 +716,8 @@ void CGameOptions::TryRestoreDefaults(const CFinalInput& input, int category, in
       break;
     }
 #if defined(TARGET_XBOX)
-    // PORT_XBOX: the Prime-X rows of the category (pause screen only)
-    if (!frontEnd) {
-      PortXboxOptions::RestoreDefaults(category);
-    }
+    // PORT_XBOX: Prime-X's settings have their own defaults in the Port
+    // Options popup (Y on a tab); Restore Defaults here is retail
 #elif defined(TARGET_PC)
     // The port rows only show on the pause screen, so only it resets them.
     if (!frontEnd) {
@@ -894,6 +853,16 @@ void COptionsScreen::ProcessInput(const CFinalInput& input) {
     CPauseScreenBase::ProcessInput(input);
     CGameOptions::TryRestoreDefaults(input, x70_tablegroup_leftlog->GetUserSelection(),
                                      x1c_rightSel, false);
+#ifdef TARGET_XBOX
+    // PORT_XBOX: A on a "Port Options" row opens Prime-X's popup
+    if (x10_mode == kM_RightTable && input.PA()) {
+      const SOptionCategory& cat = GetOptionCategory(x70_tablegroup_leftlog->GetUserSelection(), false);
+      if (cat.count != 0 && x1c_rightSel < cat.count &&
+          cat.options[x1c_rightSel].option == PORT_OPTION(PortXboxOptions::kXO_OpenMenu)) {
+        PortXboxOptions::OpenMenu();
+      }
+    }
+#endif
     if (x70_tablegroup_leftlog->GetUserSelection() == 4 && input.PA()) {
       x19c_quitGame = rs_new CQuitGameScreen(kQT_QuitGame);
     }
@@ -1218,11 +1187,6 @@ SOptionsFrontEndFrame::SOptionsFrontEndFrame()
 
 SOptionsFrontEndFrame::~SOptionsFrontEndFrame() {
   CSfxManager::SfxStop(x3c_sliderSfx);
-#ifdef TARGET_XBOX
-  // PORT_XBOX: settings.ini once, if a row changed; the next Options is retail
-  PortXboxOptions::Save();
-  PortXboxOptions::SetFrontEndPort(false);
-#endif
 }
 
 bool SOptionsFrontEndFrame::PumpLoad() {
@@ -1308,24 +1272,6 @@ void SOptionsFrontEndFrame::FinishedLoading() {
     sprintf(name, "textpane_filename%d", i);
     SetTextPanePair(x1c_loadedFrame, name, x20_loadedPauseStrg->GetString(16 + i));
   }
-#ifdef TARGET_XBOX
-  if (PortXboxOptions::FrontEndPort()) { // PORT_XBOX: "Port Options"
-    SetTextPanePair(x1c_loadedFrame, "textpane_title", L"Port Options");
-    for (int i = 0; i < 4; ++i) {
-      char name[32];
-      sprintf(name, "textpane_filename%d", i);
-      const wchar_t* text = PortXboxOptions::FrontEndCategory(i);
-      SetTextPanePair(x1c_loadedFrame, name, text != nullptr ? text : L"");
-      x24_tablegroup_leftmenu->GetWorkerWidget(i)->SetIsSelectable(text != nullptr);
-    }
-  } else {
-    // the frame is cached: undo a Port Options visit's empty categories
-    for (int i = 0; i < 4; ++i) {
-      x24_tablegroup_leftmenu->GetWorkerWidget(i)->SetIsSelectable(true);
-    }
-    PortRestoreValueCells(); // and its value cells' layout
-  }
-#endif
   x2c_tablegroup_double->SetVertical(false);
   x30_tablegroup_triple->SetVertical(false);
   x24_tablegroup_leftmenu->SetIsActive(true);
@@ -1338,13 +1284,7 @@ void SOptionsFrontEndFrame::FinishedLoading() {
   DeactivateRightMenu();
 }
 
-#ifdef TARGET_XBOX
-// PORT_XBOX: the frame's tables are the retail ones or, opened as "Port
-// Options", Prime-X's (GetOptionCategory)
-#define PX_FRONT_CATEGORY(sel) GetOptionCategory(sel, true)
-#else
 #define PX_FRONT_CATEGORY(sel) skGameOptions[sel]
-#endif
 
 void SOptionsFrontEndFrame::SetRightUIText() {
   const SOptionCategory& options = PX_FRONT_CATEGORY(x24_tablegroup_leftmenu->GetUserSelection());
@@ -1392,169 +1332,13 @@ static float PortRightRowZ(CGuiTableGroup* right, float pitch) {
   const float rowPitch = third->GetIdlePosition().GetZ() - second->GetIdlePosition().GetZ();
   return row->GetIdlePosition().GetZ() - second->GetIdlePosition().GetZ() + rowPitch;
 }
-// Port Options' value cells on a fixed grid. The frame's cells differ in
-// box size, justification and height (the middle one sits 1.25 units up, the
-// three are 1.1 and 4.4 units apart) and two divider models stand between
-// them, so where a value lands depended on its width: hw6 and hw8 on the
-// console still had cells on the labels. Every cell gets worker 0's box,
-// centred both ways, at evenly spaced points around one fixed centre between
-// the columns; the dividers are hidden. Whatever the strings, nothing moves.
-// The frame is shared with the retail Options screen, which gets its cells
-// back as they were (PortRestoreValueCells).
-// World units, ~20.5 px each at 480 lines. The gap between the columns runs
-// from ~155 px ("Controller" ends) to ~415 px ("C-Stick Dead Zone" starts);
-// both tables' blocks are centred on ~285 px. A table's cells, once they all
-// have worker 0's box, put their centred text a fixed distance from the
-// table's origin, which differs between the two tables (their worker 0
-// panes do): measured in xemu with the tables at -2.3, the triple's block
-// centred on 247 px and the double's on 300 px, whatever the strings.
-static const float kPortTripleCentreX = -0.45f;
-static const float kPortDoubleCentreX = -3.0f;
-static const float kPortTripleSpacing = 3.7f; // ~76 px
-static const float kPortDoubleSpacing = 5.f;  // ~103 px
-
-struct SPortCellSave {
-  CGuiTextPane* pane;
-  CVector3f pos;
-  float dimX;
-  float dimY;
-  CVector3f pivot;
-  int extX;
-  int extY;
-  EJustification just;
-  EVerticalJustification vjust;
-};
-static SPortCellSave sPortCells[16];
-static int sPortCellCount = 0;
-
-static void PortSaveCell(CGuiTextPane* p) {
-  for (int i = 0; i < sPortCellCount; ++i) {
-    if (sPortCells[i].pane == p) {
-      return;
-    }
-  }
-  if (sPortCellCount >= static_cast< int >(sizeof sPortCells / sizeof sPortCells[0])) {
-    return;
-  }
-  SPortCellSave& s = sPortCells[sPortCellCount++];
-  s.pane = p;
-  s.pos = p->GetLocalPosition();
-  s.dimX = p->GetDimensions().GetX();
-  s.dimY = p->GetDimensions().GetY();
-  s.pivot = p->GetPivot();
-  s.extX = p->GetTextSupport().GetTextBoundingWidth();
-  s.extY = p->GetTextSupport().GetTextBoundingHeight();
-  s.just = p->GetTextSupport().PortGetProps().GetJustification();
-  s.vjust = p->GetTextSupport().PortGetProps().GetVerticalJustification();
-}
-
-static void PortRestoreValueCells() {
-  for (int i = 0; i < sPortCellCount; ++i) {
-    SPortCellSave& s = sPortCells[i];
-    s.pane->SetDimensions(CVector2f(s.dimX, s.dimY), true);
-    s.pane->ScaleCenter() = s.pivot;
-    s.pane->TextSupport().SetExtentX(s.extX);
-    s.pane->TextSupport().SetExtentY(s.extY);
-    s.pane->TextSupport().SetJustification(s.just);
-    s.pane->TextSupport().SetVerticalJustification(s.vjust);
-    s.pane->SetLocalPosition(s.pos);
-  }
-  sPortCellCount = 0;
-}
-
-static float PortValueX(CGuiTableGroup* table, int n) {
-  return PortXboxOptions::FrontEndPort()
-             ? (n == 3 ? kPortTripleCentreX : kPortDoubleCentreX) - table->GetIdlePosition().GetX()
-             : 0.f;
-}
-
-static void PortLayoutValues(CGuiTableGroup* table, int n) {
-  if (!PortXboxOptions::FrontEndPort()) {
-    return;
-  }
-  const float spacing = n == 3 ? kPortTripleSpacing : kPortDoubleSpacing;
-  // worker 0's pane and its shadow (the pair's second, drawn behind: larger y)
-  CGuiTextPane* ref = nullptr;
-  CGuiTextPane* refShadow = nullptr;
-  for (CGuiObject* c = table->ChildObject(); c != nullptr; c = c->NextSibling()) {
-    CGuiWidget* w = static_cast< CGuiWidget* >(c);
-    if (w->GetWidgetTypeID() != 'TXPN' || w->GetWorkerId() != 0) {
-      continue;
-    }
-    CGuiTextPane* p = static_cast< CGuiTextPane* >(w);
-    PortSaveCell(p);
-    if (ref == nullptr) {
-      ref = p;
-    } else if (p->GetLocalPosition().GetY() < ref->GetLocalPosition().GetY()) {
-      refShadow = ref;
-      ref = p;
-    } else {
-      refShadow = p;
-    }
-  }
-  if (ref == nullptr) {
-    return;
-  }
-  const SPortCellSave* r = nullptr;
-  for (int i = 0; i < sPortCellCount; ++i) {
-    if (sPortCells[i].pane == ref) {
-      r = &sPortCells[i];
-    }
-  }
-  const CVector3f refPos = ref->GetLocalPosition();
-  const CVector3f shadowOff =
-      refShadow != nullptr ? refShadow->GetLocalPosition() - refPos : CVector3f(0.f, 0.f, 0.f);
-  for (CGuiObject* c = table->ChildObject(); c != nullptr; c = c->NextSibling()) {
-    CGuiWidget* w = static_cast< CGuiWidget* >(c);
-    if (w->GetWidgetTypeID() == 'MODL') {
-      w->SetIsVisible(false); // the dividers
-      continue;
-    }
-    if (w->GetWidgetTypeID() != 'TXPN' || w->GetWorkerId() < 0 || w->GetWorkerId() >= n) {
-      continue;
-    }
-    CGuiTextPane* p = static_cast< CGuiTextPane* >(w);
-    PortSaveCell(p);
-    // the shadow of its pair: the one further back than its partner, as worker 0's
-    bool shadow = false;
-    for (CGuiObject* o = table->ChildObject(); o != nullptr; o = o->NextSibling()) {
-      CGuiWidget* ow = static_cast< CGuiWidget* >(o);
-      if (ow != w && ow->GetWidgetTypeID() == 'TXPN' && ow->GetWorkerId() == w->GetWorkerId() &&
-          ow->GetLocalPosition().GetY() < w->GetLocalPosition().GetY()) {
-        shadow = true;
-      }
-    }
-    if (r != nullptr) {
-      p->SetDimensions(CVector2f(r->dimX, r->dimY), true);
-      p->ScaleCenter() = r->pivot;
-      p->TextSupport().SetExtentX(r->extX);
-      p->TextSupport().SetExtentY(r->extY);
-    }
-    p->TextSupport().SetJustification(kJustification_Center);
-    p->TextSupport().SetVerticalJustification(kVerticalJustification_Center);
-    const float x = (static_cast< float >(w->GetWorkerId()) - 0.5f * static_cast< float >(n - 1)) * spacing;
-    CVector3f pos(x, refPos.GetY(), refPos.GetZ());
-    if (shadow) {
-      pos = pos + shadowOff;
-    }
-    p->SetLocalPosition(pos);
-  }
-}
 #else
 static float PortRightRowZ(CGuiTableGroup* right, float pitch) { return right->GetUserSelection() * pitch; }
-static float PortValueX(CGuiTableGroup*, int) { return 0.f; }
-static void PortLayoutValues(CGuiTableGroup*, int) {}
-static void PortRestoreValueCells() {}
 #endif
 
 
 void SOptionsFrontEndFrame::HandleRightSelectionChange() {
   DeactivateRightMenu();
-#ifdef TARGET_XBOX
-  if (!PortXboxOptions::FrontEndPort()) {
-    PortRestoreValueCells(); // PORT_XBOX: the retail rows' cells as the frame has them
-  }
-#endif
   const SOptionCategory& category = PX_FRONT_CATEGORY(x24_tablegroup_leftmenu->GetUserSelection());
   const SGameOption& option = category.options[x28_tablegroup_rightmenu->GetUserSelection()];
   switch (option.type) {
@@ -1583,10 +1367,9 @@ void SOptionsFrontEndFrame::HandleRightSelectionChange() {
     x2c_tablegroup_double->SetIsVisible(true);
     x2c_tablegroup_double->SetIsActive(true);
     x2c_tablegroup_double->SetO2PTransform(
-        CTransform4f::Translate(PortValueX(x2c_tablegroup_double, 2), 0.f,
+        CTransform4f::Translate(0.f, 0.f,
                                 PortRightRowZ(x28_tablegroup_rightmenu, x38_rowPitch)) *
         x2c_tablegroup_double->GetTransform());
-    PortLayoutValues(x2c_tablegroup_double, 2);
     SetTableColors(x2c_tablegroup_double);
     break;
   case kOT_TripleEnum:
@@ -1603,10 +1386,9 @@ void SOptionsFrontEndFrame::HandleRightSelectionChange() {
     x30_tablegroup_triple->SetIsVisible(true);
     x30_tablegroup_triple->SetIsActive(true);
     x30_tablegroup_triple->SetO2PTransform(
-        CTransform4f::Translate(PortValueX(x30_tablegroup_triple, 3), 0.f,
+        CTransform4f::Translate(0.f, 0.f,
                                 PortRightRowZ(x28_tablegroup_rightmenu, x38_rowPitch)) *
         x30_tablegroup_triple->GetTransform());
-    PortLayoutValues(x30_tablegroup_triple, 3);
     SetTableColors(x30_tablegroup_triple);
     break;
   default:

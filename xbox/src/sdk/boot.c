@@ -214,10 +214,4 @@ void xsdk_boot(const char* disc) {
     xhw_quit_to_dashboard();
 }
 
-/* The settings menu (Melee-X's menu.c) is not ported: Prime's rows live in
- * its own Options screens (docs/ui.md, phase 5), so the pad is never held
- * back for it. */
-int xsdk_menu_block(uint32_t raw_buttons) {
-    (void)raw_buttons;
-    return 0;
-}
+/* xsdk_menu_block: the Port Options popup's, in xbox/src/port/port_menu.cpp */

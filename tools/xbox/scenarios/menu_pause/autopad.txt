@@ -1,0 +1,23 @@
+# menu_pause: the pause screen's Xbox Port Options row (2026-11-01): Tallon's
+# Landing Site, START (Log Book), R to Options, the Visor category, its fifth
+# row, A; then a tab and close. Presses 2 frames (xemu's ~6 fps repeats longer).
+env PX_DISC_CHECK=quick
+env MP_BOOT_WORLD=39F2DE28
+1500 START for 2
+1800 R for 2
+2100 R for 2
+2300 SHOT
+2450 A for 2
+2650 A for 2
+2750 DOWN for 2
+2850 DOWN for 2
+2950 DOWN for 2
+3050 DOWN for 2
+3150 SHOT
+3300 A for 2
+3500 SHOT
+3600 R for 2
+3700 R for 2
+3800 SHOT
+3900 B for 2
+4100 SHOT

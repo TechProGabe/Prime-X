@@ -374,8 +374,15 @@ BOOL OSDisableInterrupts(void) {
 
 static void deliver_pending(void) {
     static uint64_t last;
-    uint64_t now = xhw_perf_now();
-    if (now - last < DELIVERY_TSC) return;
+    uint64_t now;
+    if (xhw_tsc_usable()) {
+        now = xhw_perf_now();
+        if (now - last < DELIVERY_TSC) return;
+    } else {
+        /* rdtsc traps on this console (xhw_sys.c [CLOCK]): the kernel's 1 ms tick */
+        now = xhw_tick_ms();
+        if (now == last) return;
+    }
     if (xsdk_is_game_thread() && !s_in_delivery) {
         last = now;
         s_in_delivery = 1;
