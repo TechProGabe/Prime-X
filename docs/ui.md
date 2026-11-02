@@ -88,7 +88,7 @@ box, the title "[ Xbox Port Options ]" in the game's Deface Large and
 everything else in Deface 14B with its outline (lifted from the disc
 through the game's font loader; unscii-16 without it). Rows: the selected
 one filled brighter; a value not the default in pale yellow with a mark.
-The Buttons page draws the controller as a flat amber hologram. The table
+The Buttons page draws the controller black with an amber rim (the user: "make the controller black ... easier to see"). The table
 below is the 2026-11-01 layout; the parts are the same.
 
 576 x 416 in 480-line pixels, centred, drawn at the output's scale: 1x at
@@ -99,7 +99,7 @@ is unscii-16 supersampled to the scale.
 | part | what |
 |---|---|
 | glass | a cyan border, a navy gradient, scanlines, the scan visor's corner brackets |
-| header | "[ Xbox Port Options ]" in Deface Large, centred; the mode now top left ("720p 16:9") |
+| header | "[ Xbox Port Options ]" in Deface Large, centred; the mode now at the right under it ("720p 16:9") |
 | tabs | Video, Controller, Buttons, Gameplay, System between LT and RT badges; the current one lit |
 | rows | the label left; the value right between two arrows, with pips under it (how many choices, which one); a value that isn't the default is orange with a dot; a row that applies at the next start has a `*` |
 | help box | what the selected row does (white), what the shown value does (cyan), a note (orange: "* Video Mode changes the next time Prime-X starts", "The dashboard doesn't allow 720p: the next start uses 480p", "Press Y again ...") |

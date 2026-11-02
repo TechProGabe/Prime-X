@@ -592,8 +592,10 @@ static void draw_frame(const xhw_menu_view* v) {
     /* the header: "[ Xbox Port Options ]", as the pause screen's "[ Options ]" */
     {
         const char* title = "[ Xbox Port Options ]";
-        text(title, (CW - tw(title, 2)) / 2, 12, 2, C_AMBER);
-        text(v->status, 24, 18, 1, C_DIM);   /* the mode now, left of the title */
+        text(title, (CW - tw(title, 2)) / 2, 8, 2, C_AMBER);
+        /* the mode now: right, under the title's line (beside it, the
+         * Deface title left it no room) */
+        text(v->status, CW - 26 - tw(v->status, 1), 36, 1, C_DIM);
     }
 
     /* the tabs between LT and RT */
@@ -709,24 +711,25 @@ static const struct { int8_t col; int16_t y; } k_call[XHW_MENU_IN_COUNT] = {
     /* D-pad */ { 0, 252 }, /* left stick */ { 0, 124 }, /* right stick */ { 1, 246 },
 };
 
-/* The controller as a hologram: a flat silhouette with an amber rim
- * (N64Recomp-X's shape: a rounded box and two grips), drawn from a few
- * shapes each time, no shading and no cache */
+/* The controller: a flat black silhouette with an amber rim (N64Recomp-X's
+ * shape: a rounded box and two grips), solid so it stands out from the glass
+ * (the user, 2026-11-02: "make the controller black ... easier to see"),
+ * drawn from a few shapes each time, no shading and no cache */
 static void hologram(void) {
-    const uint32_t rim = C_AMBER, body = rgb(46, 22, 2);
+    const uint32_t rim = C_AMBER, body = rgb(14, 14, 16);
     int pass;
     for (pass = 0; pass < 2; pass++) {   /* the rims, then the bodies over them */
         int g = pass ? 0 : 2;
         uint32_t c = pass ? body : rim;
-        rbox(CX - 98 - g, CY - 72 - g, 56 + 2 * g, 24 + 2 * g, 9 + g, c, 230);   /* the triggers */
-        rbox(CX + 42 - g, CY - 72 - g, 56 + 2 * g, 24 + 2 * g, 9 + g, c, 230);
+        rbox(CX - 98 - g, CY - 72 - g, 56 + 2 * g, 24 + 2 * g, 9 + g, c, 255);   /* the triggers */
+        rbox(CX + 42 - g, CY - 72 - g, 56 + 2 * g, 24 + 2 * g, 9 + g, c, 255);
     }
     for (pass = 0; pass < 2; pass++) {
         int g = pass ? 0 : 2;
         uint32_t c = pass ? body : rim;
-        rbox(CX - 92 - g, CY - 60 - g, 184 + 2 * g, 88 + 2 * g, 36 + g, c, 230);
-        line((CX - 74) * 16, (CY - 6) * 16, (CX - 96) * 16, (CY + 68) * 16, (60 + 2 * g) * 16, c, 230);
-        line((CX + 74) * 16, (CY - 6) * 16, (CX + 96) * 16, (CY + 68) * 16, (60 + 2 * g) * 16, c, 230);
+        rbox(CX - 92 - g, CY - 60 - g, 184 + 2 * g, 88 + 2 * g, 36 + g, c, 255);
+        line((CX - 74) * 16, (CY - 6) * 16, (CX - 96) * 16, (CY + 68) * 16, (60 + 2 * g) * 16, c, 255);
+        line((CX + 74) * 16, (CY - 6) * 16, (CX + 96) * 16, (CY + 68) * 16, (60 + 2 * g) * 16, c, 255);
     }
 }
 
@@ -736,14 +739,14 @@ static void face(int x, int y, int r, uint32_t c) {
 }
 
 static void stick(int x, int y, int r) {
-    disc(x * 16, y * 16, r * 16, rgb(22, 10, 0), 255);
-    ring(x * 16, y * 16, r * 16 - 8, 16, C_AMBER, 200);
-    disc(x * 16, y * 16, (r - 8) * 16, rgb(110, 58, 10), 255);
+    disc(x * 16, y * 16, r * 16, rgb(4, 4, 6), 255);
+    ring(x * 16, y * 16, r * 16 - 8, 16, rgb(110, 110, 118), 230);
+    disc(x * 16, y * 16, (r - 8) * 16, rgb(64, 64, 70), 255);
 }
 
 static void dpad(int x, int y) {
-    fill(x - 5, y - 13, 10, 26, rgb(150, 82, 18), 255);
-    fill(x - 13, y - 5, 26, 10, rgb(150, 82, 18), 255);
+    fill(x - 5, y - 13, 10, 26, rgb(96, 96, 104), 255);
+    fill(x - 13, y - 5, 26, 10, rgb(96, 96, 104), 255);
 }
 
 static void callout(const xhw_menu_view* v, int in) {
@@ -776,8 +779,8 @@ static void draw_pad(const xhw_menu_view* v) {
     stick(CX + k_spot[XHW_MENU_IN_RSTICK].x, CY + k_spot[XHW_MENU_IN_RSTICK].y, k_spot[XHW_MENU_IN_RSTICK].r);
     for (in = XHW_MENU_IN_A; in <= XHW_MENU_IN_BLACK; in++)
         face(CX + k_spot[in].x, CY + k_spot[in].y, k_spot[in].r, badge_col(k_badge[in]));
-    fill(CX + k_spot[XHW_MENU_IN_BACK].x - 6, CY + k_spot[XHW_MENU_IN_BACK].y - 3, 12, 6, rgb(170, 96, 24), 255);
-    fill(CX + k_spot[XHW_MENU_IN_START].x - 6, CY + k_spot[XHW_MENU_IN_START].y - 3, 12, 6, rgb(170, 96, 24), 255);
+    fill(CX + k_spot[XHW_MENU_IN_BACK].x - 6, CY + k_spot[XHW_MENU_IN_BACK].y - 3, 12, 6, rgb(150, 150, 158), 255);
+    fill(CX + k_spot[XHW_MENU_IN_START].x - 6, CY + k_spot[XHW_MENU_IN_START].y - 3, 12, 6, rgb(150, 150, 158), 255);
     /* the selected input: a ring around it */
     if (v->pad_sel >= 0 && v->pad_sel < XHW_MENU_IN_COUNT) {
         const Spot* s = &k_spot[v->pad_sel];
