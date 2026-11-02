@@ -141,7 +141,7 @@ without input).
 | 2026-11-01 | free play | red + gold | the first Xbox Port Options build: every move in the popup stalled 336-581 ms (red's log), the music skipping; fixed (incremental, time-budgeted redraws) |
 | 2026-11-01 | free play | red + gold | the fix (e9526cd) approved by the user: released as v1.0-beta2 |
 | 2026-11-02 | beta2 feedback | red + gold | the batch of testers' fixes (heap crash on reload, modal Port Options, Dual Stick): free play on both |
-| 2026-11-02 | hw19 | red + gold | the popup's text noise on a second open, Dual Stick dead after the map, the map's zoom, Fusion Suit after a restart: fixed and confirmed; gold's slow settings save tripped the watchdog on Restart now (fixed); released as v1.0-beta3 |
+| 2026-11-02 | hw19 | red + gold | the popup's text noise on a second open, Dual Stick dead after the map, the map's zoom, Fusion Suit after a restart: fixed and confirmed; gold's slow settings save tripped the watchdog on Restart now (fixed); approved by the user, released as v1.0-beta3 |
 
 ## Performance per build
 

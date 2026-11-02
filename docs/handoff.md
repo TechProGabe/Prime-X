@@ -58,8 +58,14 @@ from slot 2's toml with its own paths, or keep using 2 and 3.
 ## Next session, in order
 
 0. **v1.0-beta3 is out** (2026-11-02):
-   https://github.com/TechProGabe/Prime-X/releases/tag/v1.0-beta3, from
-   the `v1.0-beta3` tag on `main`; notes in `.github/release-notes.md`.
+   https://github.com/TechProGabe/Prime-X/releases/tag/v1.0-beta3; notes
+   in `.github/release-notes.md`. The tag is on 3edef90 (the merge). Its
+   own run died restoring the toolchain cache ("No space left on device"
+   on the runner); the workflow now frees the runner's disk first, and the
+   release was published by a manual run on `main` (8a2efea, the same
+   source plus that CI step, `release=v1.0-beta3`). The zip tests clean;
+   its `default.xbe` (MD5 0edd8e5a21cf6ca6a69d0f12cb49cd71) passed the code
+   check and ran 120 s clean in xemu.
    As with beta2, the release's `default.xbe` is CI's build, not the
    consoles' MSYS2 image (nxdk's source paths are baked in and CI builds
    its own LLVM 21: a few dozen functions inline differently from the
