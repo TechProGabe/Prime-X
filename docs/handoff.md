@@ -65,8 +65,14 @@ has each one's why.
   ~2-3 days plus the art.
 
 xemu (slot 2): the popup at the title (`menu`, shots), the restart prompt
-(`menu_restart`), the pause screen's row in Tallon (`menu_pause`).
-Console round: see "Next session" 0.
+(`menu_restart`), the pause screen's row in Tallon at 720p (`menu_pause`);
+the ship image (LTO + PGO, `-DXHW_LOG_ALWAYS=1`, MD5
+0dd343356adfb0ecd1dbdd33f998fa63) booted clean for 120 s. Console round
+to check: backing out of the game and in again many times (the crash's
+path), the popup from the main menu and the pause screen (moves instant,
+music on), the Buttons tab's moves, Video Mode's prompt (Restart now once on
+red: relaunches have stuck its audio before), free aim (RT, push up looks
+up), the Display category (two rows).
 
 ## Where it stands (2026-11-01): v1.0-beta2
 
