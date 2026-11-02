@@ -24,7 +24,7 @@ def main():
                 os.path.join(ROOT, "tests/xbox/test_rc.c")))
         cmd = [cc, "-O1", "-Wall", "-o", exe, wrapper, os.path.join(ROOT, "tests/xbox/rc_ref.c"),
                "-I" + os.path.join(ROOT, "xbox/src/hw"), "-I" + os.path.join(ROOT, "tests/xbox"), "-lm"]
-        r = subprocess.run(cmd)
+        r = subprocess.run(cmd + ["-lm"])
         if r.returncode:
             return r.returncode
         return subprocess.run([exe] + sys.argv[1:]).returncode

@@ -18,7 +18,7 @@ def main():
                os.path.join(ROOT, "tests/xbox/test_aram.c"),
                "-I" + os.path.join(ROOT, "tests/xbox/aram_stub"), "-I" + os.path.join(ROOT, "extern/aurora/include"),
                "-I" + os.path.join(ROOT, "xbox/include"), "-I" + os.path.join(ROOT, "xbox/src/sdk")]
-        r = subprocess.run(cmd)
+        r = subprocess.run(cmd + ["-lm"])
         if r.returncode:
             return r.returncode
         return subprocess.run([exe] + sys.argv[1:]).returncode

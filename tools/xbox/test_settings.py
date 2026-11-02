@@ -16,7 +16,7 @@ def main():
     with tempfile.TemporaryDirectory() as tmp:
         exe = os.path.join(tmp, "test_settings")
         r = subprocess.run([cc, "-O1", "-w", "-DXHW_TEST_BUILD=0", "-DTARGET_PC", *inc, "-o", exe,
-                            os.path.join(ROOT, "tests/xbox/test_settings.c")])
+                            os.path.join(ROOT, "tests/xbox/test_settings.c"), "-lm"])
         if r.returncode:
             return r.returncode
         work = os.path.join(tmp, "save")

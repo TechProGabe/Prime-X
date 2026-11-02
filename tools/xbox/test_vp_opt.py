@@ -21,7 +21,7 @@ def main():
                os.path.join(ROOT, "tests/xbox/vp_ref.c"),
                os.path.join(ROOT, "xbox/src/hw/nv2a_vp.c"),
                "-I" + os.path.join(ROOT, "xbox/src/hw"), "-lm"]
-        r = subprocess.run(cmd)
+        r = subprocess.run(cmd + ["-lm"])
         if r.returncode:
             return r.returncode
         return subprocess.run([exe] + sys.argv[1:]).returncode

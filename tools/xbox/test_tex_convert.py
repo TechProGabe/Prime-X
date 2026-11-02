@@ -25,7 +25,7 @@ def main():
                "-I" + os.path.join(ROOT, "src"),
                "-I" + os.path.join(ROOT, "src/sdk_include"),
                "-I" + os.path.join(ROOT, "xbox/src/sdk")]
-        r = subprocess.run(cmd)
+        r = subprocess.run(cmd + ["-lm"])
         if r.returncode:
             return r.returncode
         return subprocess.run([exe]).returncode

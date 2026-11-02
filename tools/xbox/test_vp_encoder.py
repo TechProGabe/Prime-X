@@ -69,7 +69,7 @@ def main():
         harness = pathlib.Path(tmp) / 'harness.c'
         harness.write_text(HARNESS)
         subprocess.run(['cc', '-O1', '-DVP_HOST_TEST', f'-I{ROOT}/xbox/src/hw', str(harness),
-                        str(ROOT / 'xbox/src/hw/nv2a_vp.c'), '-o', str(exe)], check=True)
+                        str(ROOT / 'xbox/src/hw/nv2a_vp.c'), '-o', str(exe), "-lm"], check=True)
         actual = [int(line, 16) for line in subprocess.run([str(exe)], check=True, capture_output=True,
                                                             text=True).stdout.split()]
     if actual == expected:
