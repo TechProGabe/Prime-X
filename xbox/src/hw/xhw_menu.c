@@ -598,6 +598,7 @@ static void draw_frame(const xhw_menu_view* v) {
         text(v->status, CW - 26 - tw(v->status, 1), 36, 1, C_DIM);
     }
 
+    if (v->page == 2) goto footer;   /* the restart question: no tabs */
     /* the tabs between LT and RT */
     badge("LT", 20, 62);
     badge("RT", CW - 20 - (tw("RT", 1) + 10), 62);
@@ -615,17 +616,20 @@ static void draw_frame(const xhw_menu_view* v) {
         }
     }
 
+footer:
     /* the footer: what the buttons do */
-    {
+    if (v->page != 2 || v->rows > 0) {
         /* the Buttons page: A and X step the action on and back (left and
          * right move between the columns there) */
         static const char* const k_rows_b[] = { "A", "B", "Y" };
         static const char* const k_rows_t[] = { "Change", "Close", "Defaults" };
         static const char* const k_pad_b[] = { "A", "X", "B", "Y" };
         static const char* const k_pad_t[] = { "Next", "Previous", "Close", "Defaults" };
-        const char* const* k_b = v->page ? k_pad_b : k_rows_b;
-        const char* const* k_t = v->page ? k_pad_t : k_rows_t;
-        const int n = v->page ? 4 : 3, fy = CH - 30, ty = fy + (17 - line_h(1)) / 2;
+        static const char* const k_ask_b[] = { "A", "B" };
+        static const char* const k_ask_t[] = { "OK", "Later" };
+        const char* const* k_b = v->page == 2 ? k_ask_b : v->page ? k_pad_b : k_rows_b;
+        const char* const* k_t = v->page == 2 ? k_ask_t : v->page ? k_pad_t : k_rows_t;
+        const int n = v->page == 2 ? 2 : v->page ? 4 : 3, fy = CH - 30, ty = fy + (17 - line_h(1)) / 2;
         int x = 28;
         for (i = 0; i < n; i++) {
             x += badge(k_b[i], x, fy) + 6;
@@ -793,10 +797,43 @@ static void draw_pad(const xhw_menu_view* v) {
     for (in = 0; in < XHW_MENU_IN_COUNT; in++) callout(v, in);
 }
 
+/* ------------------------------------------------- the restart question */
+/* Page 2: the question in a box, the two choices side by side under it
+ * (label[0], label[1]; sel lit), what the lit one does below. No choices
+ * (rows 0): the question box alone ("Restarting ..."). */
+#define ASK_Y 96
+#define ASK_H 64
+#define ASK_BY 196
+#define ASK_BH 44
+#define ASK_BW 200
+#define ASK_HY 268
+
+static void draw_ask(const xhw_menu_view* v) {
+    int lh = line_h(1), w = tw(v->help, 1), i;
+    cbox(40, ASK_Y, CW - 80, ASK_H, 8, C_DEEP, 170, C_AMBER, 150, 20);
+    if (w <= CW - 120)
+        text(v->help, (CW - w) / 2, ASK_Y + (ASK_H - lh) / 2, 1, C_TEXT);
+    else
+        wrap(v->help, 60, ASK_Y + (ASK_H - 2 * lh) / 2, CW - 120, 2, C_TEXT);
+    if (v->rows < 2) return;
+    for (i = 0; i < 2; i++) {
+        int x = i ? CW / 2 + 10 : CW / 2 - 10 - ASK_BW, sel = i == v->sel;
+        cbox(x, ASK_BY, ASK_BW, ASK_BH, 8, sel ? C_SEL_FILL : C_BOX_FILL, sel ? 230 : 140, C_AMBER, sel ? 255 : 100, sel ? 32 : 20);
+        text(v->label[i], x + (ASK_BW - tw(v->label[i], 1)) / 2, ASK_BY + (ASK_BH - lh) / 2, 1, sel ? C_TEXT : C_LABEL);
+        if (sel) {   /* pointers either side, as the game's own lit choice */
+            arrow(x + 16, ASK_BY + ASK_BH / 2, 5, 1, C_TEXT, 255);
+            arrow(x + ASK_BW - 16, ASK_BY + ASK_BH / 2, 5, -1, C_TEXT, 255);
+        }
+    }
+    wrap(v->value_help, 60, ASK_HY, CW - 120, 3, C_HELP);
+}
+
 /* ------------------------------------------------------------ one band */
 static void draw_band(const xhw_menu_view* v) {
     draw_frame(v);
-    if (v->page == 1) {
+    if (v->page == 2) {
+        draw_ask(v);
+    } else if (v->page == 1) {
         draw_pad(v);
         draw_help(v, 296, CH - 38 - 296);
     } else {
@@ -887,6 +924,10 @@ static void dirty_diff(const xhw_menu_view* o, const xhw_menu_view* v) {
     int r;
     if (o->tab != v->tab || o->tabs != v->tabs || o->page != v->page || DIFF(tab_name) || DIFF(status)) {
         dirty(0, CH);
+        return;
+    }
+    if (v->page == 2) {   /* the restart question: everything under the title */
+        if (o->rows != v->rows || o->sel != v->sel || DIFF(label) || DIFF(help) || DIFF(value_help)) dirty(ASK_Y - 4, CH);
         return;
     }
     if (DIFF(help) || DIFF(value_help) || DIFF(note)) dirty(v->page ? 296 : ROW_Y + ROWS_FIT * ROW_H, CH - 34);

@@ -481,6 +481,18 @@ swaps it, as Melee-X's does.
   step the action. Closing with a new Video Mode asks "Restart later /
   Restart now", Later selected (a tester's idea); Restart now saves and
   relaunches the XBE (`xhw_reboot_self`).
+- **The restart question as a dialog** (2026-11-02, round hw19; the user:
+  the stick didn't work there, only the D-pad, and it looked like rows to
+  change, and Restart now "prompted a crash, then it restarted"): page 2 of
+  the card, no tabs, the question in a box and **Later | Restart now** side
+  by side, the D-pad or the left stick picks, footer A OK / B Later. Restart
+  now shows "Restarting Prime-X in 720p..." for 3 frames before the save and
+  the relaunch. The "crash" was the watchdog's hang card: gold's stock drive
+  took over 6 s to save settings.ini (the game thread in `WriteFile`). The
+  watchdog is told now: `xhw_watchdog_busy` is a count, held around every
+  settings save and the whole relaunch / quit path (`launch`,
+  `xhw_quit_to_dashboard`), and settings.ini goes out in one write (an 8 KB
+  stdio buffer; pdclib's was 1 KB).
 - **Dual Stick aiming** (2026-11-02, GitHub #2; the user: "make sure it's
   high performance and works well, easy to configure"): Port Options >
   Controller > **Aiming: GameCube / Dual Stick** and

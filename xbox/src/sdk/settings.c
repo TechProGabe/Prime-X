@@ -571,7 +571,25 @@ static void write_all(FILE* f, const xsdk_settings* st) {
     fprintf(f, END_MARK "\n");
 }
 
+void xhw_watchdog_busy(int on);   /* hw: a long, deliberate stall */
+
+static int save_body(void);
+
+/* The write, the flush, the read-back and the rename took over 6 s on gold's
+ * stock drive (round hw19): the watchdog took it for a hang and showed its
+ * card. The watchdog is told; the file goes out in one write. */
 int xsdk_settings_save(void) {
+    int ok;
+    xhw_watchdog_busy(1);
+    ok = save_body();
+    xhw_watchdog_busy(0);
+    return ok;
+}
+
+static int save_body(void) {
+    /* settings.ini is ~4 KB: pdclib's 1 KB buffer wrote it in pieces (and
+     * its setvbuf doesn't allocate one) */
+    static char wbuf[8192];
     char p[260], t[260];
     FILE* f;
     int ok, r = XHW_REPLACE_FAILED;
@@ -582,6 +600,7 @@ int xsdk_settings_save(void) {
         xhw_logf("[SETTINGS] save failed: can't create %s (errno %d)", t, errno);
         return 0;
     }
+    setvbuf(f, wbuf, _IOFBF, sizeof wbuf);
     write_all(f, &g_xsdk_settings);
     xhw_flush(f);
     ok = !ferror(f);

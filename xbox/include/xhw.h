@@ -252,7 +252,7 @@ typedef struct xhw_menu_view {
     int32_t tab, tabs;
     char tab_name[XHW_MENU_TABS][16];
     char status[32];                       /* top right: "720p  16:9" */
-    int32_t page;                          /* 0: rows, 1: the controller */
+    int32_t page;                          /* 0: rows, 1: the controller, 2: the restart question */
     int32_t rows, sel;
     char label[XHW_MENU_ROWS][28];
     char value[XHW_MENU_ROWS][20];
@@ -273,6 +273,8 @@ typedef struct xhw_menu_view {
 } xhw_menu_view;
 /* the card shows `v` from the next draw on (copied); NULL takes it down */
 void xhw_menu_show(const xhw_menu_view* v);
+/* 1 while part of the card is still to be drawn (a few bands a frame) */
+int xhw_menu_busy(void);
 /* The game's own lettering for the card (port_menu.cpp lifts it from the
  * disc's Deface fonts through the game's font loader): ' '..'~', each
  * glyph's cell as texel values, bit 0 the ink and bit 1 the outline, as the

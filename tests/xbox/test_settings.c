@@ -51,6 +51,7 @@ void xhw_notice(const char* l1, const char* l2) {
     g_notices++;
 }
 void xhw_flush(void* f) { fflush((FILE*)f); }
+void xhw_watchdog_busy(int on) { (void)on; }
 void xgx_set_fps_overlay(int on) { (void)on; }
 void xhw_pad_set_shots(int on) { (void)on; }
 void xhw_led_enable(int on) { (void)on; }

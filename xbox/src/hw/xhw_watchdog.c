@@ -211,7 +211,13 @@ static void resumed(const char* what, unsigned secs) {
     s_screen = 0;
 }
 
-void xhw_watchdog_busy(int on) { s_busy = on; }
+/* counted: a settings save inside a restart (round hw19, gold's slow drive
+ * took over 6 s to write settings.ini and the hang card came up) mustn't
+ * end the outer one */
+void xhw_watchdog_busy(int on) {
+    if (on) s_busy++;
+    else if (s_busy > 0) s_busy--;
+}
 
 /* an error card owns the screen for good */
 void xhw_watchdog_disable(void) { s_disabled = 1; }

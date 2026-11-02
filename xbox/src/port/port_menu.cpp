@@ -28,7 +28,8 @@
 // the GPU and copied the card in, and a change took several of the game's
 // frames to appear); the user: "streamline the whole thing for performance".
 // Closing with a new Video Mode asks whether to restart now (a tester's
-// idea), "Later" first.
+// idea), "Later" first: a dialog of its own (page 2, the two choices side by
+// side), the D-pad or the left stick picks, as on the rest of the popup.
 #include "port_xbox_options.h"
 #include "port_debug.h"
 
@@ -321,6 +322,8 @@ const SFixed kFixed[] = {
 bool sOpen = false;
 bool sAsk = false; // closing with a new Video Mode: restart now?
 int sAskSel;       // 0 later, 1 now
+bool sAskStick;    // the left stick was pushed last frame (a push picks once)
+int sRestarting;   // "Restart now" taken: frames spent drawing "Restarting" (0: not)
 bool sRelease = false; // closed: the game waits for the buttons to be let go
 int sTab = kTabVideo;
 int sSel[kTabCount];
@@ -395,19 +398,24 @@ void Fill() {
   if (sAsk) { // closing with a new Video Mode
     static const char* const kModes[3] = {"480i", "480p", "720p"};
     const int mode = Get(kXO_VideoOutput);
+    // page 2: a dialog of its own, no tabs, the two choices side by side
+    // (the user, round hw19: the stick did nothing here and the rows looked
+    // like settings to change, not a question)
+    v.page = 2;
+    v.pad_sel = -1;
+    if (sRestarting != 0) {
+      v.rows = 0;
+      snprintf(v.help, sizeof v.help, "Restarting Prime-X in %s...", kModes[mode < 0 || mode > 2 ? 0 : mode]);
+      return;
+    }
     v.rows = 2;
     v.sel = sAskSel;
-    snprintf(v.label[0], sizeof v.label[0], "Restart later");
+    snprintf(v.label[0], sizeof v.label[0], "Later");
     snprintf(v.label[1], sizeof v.label[1], "Restart now");
-    v.flags[0] = v.flags[1] = XHW_MENU_ROW_ACTION;
-    snprintf(v.value[0], sizeof v.value[0], "Press A");
-    snprintf(v.value[1], sizeof v.value[1], "Press A");
-    snprintf(v.help, sizeof v.help, "Video Mode is now %s. It takes effect when Prime-X starts again.",
-             kModes[mode < 0 || mode > 2 ? 0 : mode]);
+    snprintf(v.help, sizeof v.help, "Restart Prime-X to use %s?", kModes[mode < 0 || mode > 2 ? 0 : mode]);
     snprintf(v.value_help, sizeof v.value_help, "%s",
              sAskSel ? "Saves the settings and starts Prime-X again now. Progress since your last save is lost."
                      : "Back to the game. The new mode is used the next time Prime-X starts.");
-    snprintf(v.note, sizeof v.note, "B: later");
     return;
   }
   const int sel = sSel[sTab];
@@ -616,17 +624,35 @@ void Frame() {
     sConfirmUntil = 0;
   }
 
+  if (sRestarting != 0) { // "Restarting" on screen first, then the restart
+    // the card draws a few bands a frame: wait until it is all there (at
+    // most ~2 s), then one frame more
+    if (xhw_menu_busy() && sRestarting < 120) {
+      ++sRestarting;
+      return;
+    }
+    RestartNow();
+    return;
+  }
   if (sAsk) { // restart now or later
     if (press & (XHW_BTN_B | XHW_BTN_START)) {
       Close();
       return;
     }
-    if (press & (XHW_BTN_UP | XHW_BTN_DOWN | XHW_BTN_LEFT | XHW_BTN_RIGHT)) {
+    // the D-pad or the left stick, any way: there are only two
+    const bool stick = lx != 0 || ly != 0;
+    if ((press & (XHW_BTN_UP | XHW_BTN_DOWN | XHW_BTN_LEFT | XHW_BTN_RIGHT)) || (stick && !sAskStick)) {
       sAskSel ^= 1;
     }
+    sAskStick = stick;
     if (press & XHW_BTN_A) {
       if (sAskSel) {
-        RestartNow();
+        // drawn before the save and the relaunch, which take seconds on a
+        // slow drive (the screen sat still, round hw19)
+        sRestarting = 1;
+        Fill();
+        xhw_menu_show(&sView);
+        return;
       }
       Close();
       return;
@@ -639,6 +665,7 @@ void Frame() {
     if (VideoRestartPending()) {
       sAsk = true;
       sAskSel = 0; // "later" first: a stray press mustn't restart
+      sAskStick = lx != 0 || ly != 0; // a stick already pushed doesn't pick
       Fill();
       xhw_menu_show(&sView);
       return;
@@ -847,6 +874,7 @@ void OpenMenu() {
   }
   sDir = 15; // a held direction waits to be let go
   sAsk = false;
+  sRestarting = 0;
   EnsureFonts();
   Fill();
   xhw_menu_show(&sView);

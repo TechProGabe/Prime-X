@@ -137,7 +137,7 @@ were the user's first suspect).
 
 | tab | row | values | what the box says the values do |
 |---|---|---|---|
-| Video | Video Mode `*` | 480i / 480p / 720p | every TV / sharper, component + dashboard / HD 16:9, component + dashboard, ~30 fps. Closing the popup with a new mode asks **Restart later / Restart now** (Later selected; a tester's idea): Now saves settings.ini and relaunches Prime-X |
+| Video | Video Mode `*` | 480i / 480p / 720p | every TV / sharper, component + dashboard / HD 16:9, component + dashboard, ~30 fps. Closing the popup with a new mode asks in a dialog of its own: **Later / Restart now** side by side (Later lit; a tester's idea), D-pad or left stick to pick, A OK, B Later. Now shows "Restarting Prime-X in ...", saves settings.ini and relaunches Prime-X |
 | Video | Widescreen | Auto / 4:3 / 16:9 | follows the dashboard / the GameCube's shape / more to the sides (720p is 16:9) |
 | Video | Widescreen HUD | Inner / Edges | where the visor's readouts sit at 16:9 |
 | Video | Field of View | 55 / 65 / 75 | the GameCube's / wider / widest |

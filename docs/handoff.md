@@ -118,6 +118,21 @@ report on older builds:
   for its last 200 s; frames kept presenting and nothing logged a fault, so
   it was probably switched off there (asked). Fusion Suit after a restart:
   the next boot shows it.
+- The user then: the restart question takes only the D-pad (the stick did
+  nothing), looks like rows to change, and Restart now "prompted a crash,
+  then it restarted". Gold's `hang.log`: frames stopped at the restart's
+  retrace with the game thread in `xsdk_settings_save` -> `WriteFile`; its
+  stock drive took over 6 s, the watchdog showed its hang card. Fixed
+  (docs/decisions.md "The restart question as a dialog"): a dialog page of
+  its own (Later | Restart now side by side, D-pad or left stick, A OK /
+  B Later), "Restarting Prime-X in ..." drawn in full before the save,
+  the watchdog held off (a count now) around settings saves and the
+  relaunch / quit path, settings.ini in one write. `check_stubs.py` reads
+  data sections at aligned words only (450.0f twice in `kGlowBoosted`
+  spelled `mbrtowc`'s address and stopped an autopad build). xemu:
+  `menu_restart` (stick picks both ways, Restarting shown, relaunch to
+  720p). Ship image MD5 66872d4978c206cd6dd19cd256539853, 120 s clean in
+  xemu. The user: release once this is fixed.
 
 xemu (slot 2): the popup at the title (`menu`, shots), the restart prompt
 (`menu_restart`), the pause screen's row in Tallon at 720p (`menu_pause`);
