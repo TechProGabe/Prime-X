@@ -75,7 +75,7 @@ has each one's why.
 xemu (slot 2): the popup at the title (`menu`, shots), the restart prompt
 (`menu_restart`), the pause screen's row in Tallon at 720p (`menu_pause`);
 the ship image (LTO + PGO, `-DXHW_LOG_ALWAYS=1`, MD5
-0dd343356adfb0ecd1dbdd33f998fa63) booted clean for 120 s. Console round
+8df6a91ac8d77d71a2bc505d09e197f3, with Dual Stick) booted clean for 120 s. Console round
 to check: backing out of the game and in again many times (the crash's
 path), the popup from the main menu and the pause screen (moves instant,
 music on), the Buttons tab's moves, Video Mode's prompt (Restart now once on
