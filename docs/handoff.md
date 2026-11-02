@@ -95,10 +95,20 @@ Also: `C:\xemu\xemu.toml` (slot 1's config) has been cut down to one EEPROM
 line, so slot 1 boots with no BIOS ("Failed to load BIOS"). Slots 2 and 3
 are fine. Restore it from slot 2's toml with slot 1's paths, or run in slot 2.
 
-**Not checked yet**: the popup at 720p and on a console (the 1.5x scale, the
-16-bit cache, the time a redraw takes on a P3, ~1 MB allocated while it is
-up), the pause-screen entry in xemu, the notice from a bad settings.ini on
-screen. All are for the next round, if the user wants one.
+**On the consoles** (the user: "Push to red and gold"): the ship build
+(ThinLTO + PGO) of f4e2f93 is in `Prime-X` on red (`F:\Applications`) and
+gold (`E:\Applications`), MD5 8db6406346e7b9f51925c91d002820da, read back
+after the upload; both save folders backed up first (`C:\xemu\hw\prime\ROUNDS.md`,
+"free play portmenu"). It booted clean in xemu first. The first ship link
+failed the new stub check on a false match (the text " : " in SDL's assert
+prompt equals `to_wstring`'s address); string literals are now skipped
+(bbf0b6a).
+
+xemu showed the popup right at 480i and 720p, from the main menu and from
+the pause screen (`menu`, `menu_pause` scenarios). **Not checked yet**: how
+long a redraw takes on a P3 and the ~1 MB it allocates while up (on the
+consoles now), and the notice from a bad settings.ini on screen (the host
+test covers the parsing).
 
 ## Session 2026-11-01: the beta's first three bug reports
 
