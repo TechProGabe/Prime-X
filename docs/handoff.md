@@ -134,8 +134,9 @@ report on older builds:
   720p). Ship image MD5 66872d4978c206cd6dd19cd256539853, 120 s clean in
   xemu. The user: release once this is fixed. On both consoles
   (2026-11-02 16:40, UDATA backed up). Confirmed there: Fusion Suit stays
-  on after a restart. Still to confirm: Restart now on gold (no hang card),
-  the stick in the dialog, Dual Stick after the map, the map's LT/RT zoom.
+  on after a restart; Dual Stick after the map and the map's LT/RT zoom
+  (the user tested them on the hw19 image). Still to confirm: Restart now
+  on gold (no hang card), the stick in the dialog.
   Then the user approves the release (v1.0-beta3: `dev` into `main`, tag,
   the release workflow).
 
