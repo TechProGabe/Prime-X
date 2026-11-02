@@ -727,7 +727,10 @@ static void hologram(void) {
     for (pass = 0; pass < 2; pass++) {
         int g = pass ? 0 : 2;
         uint32_t c = pass ? body : rim;
-        rbox(CX - 92 - g, CY - 60 - g, 184 + 2 * g, 88 + 2 * g, 36 + g, c, 255);
+        /* down to 60 below the centre: the D-pad and the right stick (32
+         * below) sit on the body, as on the controller (the user: "the
+         * joystick and d pad are not on the pad") */
+        rbox(CX - 92 - g, CY - 60 - g, 184 + 2 * g, 120 + 2 * g, 40 + g, c, 255);
         line((CX - 74) * 16, (CY - 6) * 16, (CX - 96) * 16, (CY + 68) * 16, (60 + 2 * g) * 16, c, 255);
         line((CX + 74) * 16, (CY - 6) * 16, (CX + 96) * 16, (CY + 68) * 16, (60 + 2 * g) * 16, c, 255);
     }
