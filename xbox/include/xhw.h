@@ -273,6 +273,26 @@ typedef struct xhw_menu_view {
 } xhw_menu_view;
 /* the card shows `v` from the next draw on (copied); NULL takes it down */
 void xhw_menu_show(const xhw_menu_view* v);
+/* The game's own lettering for the card (port_menu.cpp lifts it from the
+ * disc's Deface fonts through the game's font loader): ' '..'~', each
+ * glyph's cell as texel values, bit 0 the ink and bit 1 the outline, as the
+ * GameCube's font renderer reads them. A glyph is placed as CRasterFont
+ * does: `a` on, the cell's top `top` above the baseline, then `b + c` on.
+ * Font 0 the text, 1 the header. NULL (or none set): unscii-16. The data
+ * must stay valid while set. */
+typedef struct {
+    int16_t a, b, c;   /* advance: a before the cell, b + c after it */
+    int16_t w, h;      /* the cell in texels; w 0: no glyph */
+    int16_t top;       /* the cell's top above the baseline */
+    uint32_t off;      /* its w * h values in `cells` */
+} xhw_menu_glyph;
+typedef struct {
+    int16_t ascent;    /* the baseline below the line's top */
+    int16_t height;    /* a line's height */
+    const uint8_t* cells;
+    xhw_menu_glyph glyph[95];   /* ' ' .. '~' */
+} xhw_menu_font;
+void xhw_menu_set_font(int which, const xhw_menu_font* f);
 /* The popup's modal loop (port_menu.cpp): begin waits for the GPU and a
  * retrace; each frame draws what changed straight onto the frame on screen
  * (and takes a screenshot asked for); end gives the screen back to the game,

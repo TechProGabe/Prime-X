@@ -1852,6 +1852,7 @@ void xhw_menu_modal_frame(void) {
     const int pitch = (int)pb_back_buffer_pitch();
     if (fb != s_modal_fb) {   /* the first frame, or the screen moved: the whole card */
         s_modal_fb = fb;
+        xhw_menu_capture(fb, s_fbw, s_fbh, s_bpp, pitch);   /* the game behind it, read once */
         xhw_menu_redraw();
     }
     xhw_menu_draw_changes(fb, s_fbw, s_fbh, s_bpp, pitch);

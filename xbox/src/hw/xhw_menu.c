@@ -18,10 +18,15 @@
  * copied a ~1 MB cache of the card in, and a change was drawn 3 ms a frame
  * over several of the game's frames.
  *
+ * The look is Prime's own pause Options (the user's pick of four mockups,
+ * 2026-11-02): an amber hologram over the game (the frame behind the card is
+ * read once when the popup opens, xhw_menu_capture, and shows through the
+ * glass at a fifth), angular frames, and the game's Deface lettering
+ * (xhw_menu_set_font) with its outline; unscii-16 if the font can't be had.
+ *
  * The Buttons page is N64Recomp-X's Controls page (xhw_panel_pad.c there):
- * the same controller body (a smooth union of a rounded box and two grips,
- * shaded from its distance field), the same spots and callouts, re-laid for
- * Prime's inputs; what the player holds lights up. */
+ * the controller's shape (a rounded box and two grips) as a flat amber
+ * hologram, the same spots and callouts, re-laid for Prime's inputs. */
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -43,8 +48,6 @@ static int s_dw, s_dh, s_bpp;      /* the card in device pixels; the framebuffer
 static uint16_t s_span[MAXH][2];   /* each row's opaque columns [x0, x1) */
 static uint32_t s_band[BAND][MAXW];   /* ARGB, straight alpha */
 static int s_by0, s_by1;           /* the band's device rows */
-static uint32_t* s_body;           /* the controller body at this scale (optional) */
-static int s_body_w, s_body_h, s_body_ok;
 static int s_logged;
 /* Device pixel centres in logical 1/16 px, by column and row (no divide per
  * pixel: the P3 pays ~40 cycles for one, and the first card took 336 ms a
@@ -124,40 +127,15 @@ static int cover(int d) {   /* d: signed distance in L16, negative inside -> 0..
 }
 
 /* ------------------------------------------------------------- the shapes */
-/* rbox leaves out the device columns [s_hole_x0, s_hole_x1) of the rows
- * [s_hole_y0, s_hole_y1) while s_hole is set: the glass's two rims, whose
- * insides the gradient covers anyway (three full-card passes were most of a
- * redraw) */
-static int s_hole, s_hole_x0, s_hole_x1, s_hole_y0, s_hole_y1;
-
-static void hole(int x0, int y0, int x1, int y1) {   /* logical px; 0 size: none */
-    int i;
-    s_hole = x1 > x0;
-    s_hole_x0 = s_hole_x1 = s_hole_y0 = s_hole_y1 = 0;
-    if (!s_hole) return;
-    for (i = 0; i < s_dw && s_lx[i] < x0 * 16; i++) {}
-    s_hole_x0 = i;
-    for (; i < s_dw && s_lx[i] < x1 * 16; i++) {}
-    s_hole_x1 = i;
-    for (i = 0; i < s_dh && s_ly[i] < y0 * 16; i++) {}
-    s_hole_y0 = i;
-    for (; i < s_dh && s_ly[i] < y1 * 16; i++) {}
-    s_hole_y1 = i;
-}
-
 /* a rounded box in logical pixels (r: corner radius) */
 static void rbox(int x, int y, int w, int h, int r, uint32_t col, int alpha) {
     Box b;
     int px, py, cx = (2 * x + w) * 8, cy = (2 * y + h) * 8, hx = w * 8 - r * 16, hy = h * 8 - r * 16;
     if (!clip(&b, x * 16, y * 16, (x + w) * 16, (y + h) * 16)) return;
     for (py = b.y0; py < b.y1; py++) {
-        int qy = ly16(py) - cy, skip = s_hole && py >= s_hole_y0 && py < s_hole_y1;
+        int qy = ly16(py) - cy;
         qy = (qy < 0 ? -qy : qy) - hy;
         for (px = b.x0; px < b.x1; px++) {
-            if (skip && px == s_hole_x0) {
-                px = s_hole_x1 - 1;
-                continue;
-            }
             int qx = lx16(px) - cx, d, c;
             qx = (qx < 0 ? -qx : qx) - hx;
             if (qx > 0 && qy > 0) d = isqrt(qx * qx + qy * qy) - r * 16;
@@ -165,25 +143,6 @@ static void rbox(int x, int y, int w, int h, int r, uint32_t col, int alpha) {
             c = cover(d);
             if (c) mix(PX(px, py), col, alpha * c >> 8);
         }
-    }
-}
-
-/* a box from top colour to bottom colour, square */
-static void vgrad(int x, int y, int w, int h, uint32_t top, uint32_t bot) {
-    Box b;
-    int px, py;
-    if (!clip(&b, x * 16, y * 16, (x + w) * 16, (y + h) * 16)) return;
-    for (py = b.y0; py < b.y1; py++) {
-        int t = (ly16(py) - y * 16) * 256 / (h * 16), k;
-        uint32_t c;
-        if (t < 0) t = 0;
-        if (t > 256) t = 256;
-        k = 256 - t;
-        c = rgb((R_(top) * k + R_(bot) * t) >> 8, (G_(top) * k + G_(bot) * t) >> 8, (B_(top) * k + B_(bot) * t) >> 8);
-        if (py & 1) c = shade(c, 236);   /* the scanlines */
-        if (ly16(py) < y * 16 || ly16(py) >= (y + h) * 16) continue;
-        for (px = b.x0; px < b.x1; px++)
-            if (lx16(px) >= x * 16 && lx16(px) < (x + w) * 16) *PX(px, py) = 0xFF000000u | c;
     }
 }
 
@@ -265,36 +224,77 @@ static void arrow(int cx, int cy, int hh, int dir, uint32_t col, int alpha) {
 }
 
 /* --------------------------------------------------------------- the text */
-static int tw(const char* s, int z) { return (int)strlen(s) * 8 * z; }
+/* The game's own lettering (xhw_menu_set_font: the disc's Deface fonts,
+ * fill and outline as the pause screen draws them), unscii-16 without it.
+ * A glyph's coverage at this scale is made the first time it is drawn (4 x
+ * 4 samples a device pixel, ink and outline apart) and kept while the popup
+ * is up; drawing is then a copy through mix. */
+static const xhw_menu_font* s_font[2];
+typedef struct {
+    uint8_t* cov;   /* dw * dh pairs: ink 0..16, outline 0..16; NULL: not made */
+    int16_t dw, dh;
+} GlyphCov;
+static GlyphCov s_gc[2][95];
 
-/* unscii-16, zoom z, top-left at logical (x, y), 4 x 4 samples a pixel */
-static void glyphs_sampled(const char* s, int x, int y, int z, uint32_t col, int alpha) {
-    Box b;
-    int px, py, n = (int)strlen(s);
-    if (!clip(&b, x * 16, y * 16, (x + n * 8 * z) * 16, (y + 16 * z) * 16)) return;
-    for (py = b.y0; py < b.y1; py++)
-        for (px = b.x0; px < b.x1; px++) {
-            int i, j, hit = 0;
-            for (j = 0; j < 4; j++) {
-                int ly = ((py * 16 + 2 + j * 4) * 16) / s_sy - y * 16, gy;
-                if (ly < 0) continue;
-                gy = ly / (16 * z);
-                if (gy >= 16) continue;
-                for (i = 0; i < 4; i++) {
-                    int lx = ((px * 16 + 2 + i * 4) * 16) / s_sx - x * 16, gx, ch;
-                    if (lx < 0) continue;
-                    gx = lx / (16 * z);
-                    ch = gx / 8;
-                    if (ch >= n) continue;
-                    if (xhw_font16[(unsigned char)s[ch] * 16 + gy] & (0x80 >> (gx & 7))) hit++;
-                }
-            }
-            if (hit) mix(PX(px, py), col, alpha * hit / 16);
-        }
+void xhw_menu_set_font(int which, const xhw_menu_font* f) {
+    if (which < 0 || which > 1) return;
+    s_font[which] = f;
+    memset(s_gc[which], 0, sizeof s_gc[which]);   /* the arena is the popup's: made again */
 }
 
-/* glyph c's coverage at zoom z (1 or 2), made on first use; NULL without memory */
-static const uint8_t* glyph(int zi, unsigned c) {
+/* glyph arena: allocated with the popup (xhw_menu_show), sized for both fonts */
+static uint32_t gc_bytes(void) {
+    uint32_t n = 0;
+    int f, i;
+    for (f = 0; f < 2; f++) {
+        if (!s_font[f]) {
+            n += GLYPHS * (uint32_t)(s_gw[f] * s_gh[f]);   /* unscii's */
+            continue;
+        }
+        for (i = 0; i < 95; i++) {
+            const xhw_menu_glyph* g = &s_font[f]->glyph[i];
+            n += (uint32_t)(((g->w * s_sx + 15) / 16 + 1) * ((g->h * s_sy + 15) / 16 + 1) * 2);
+        }
+    }
+    return n;
+}
+
+static const GlyphCov* game_glyph(int f, unsigned c) {
+    const xhw_menu_glyph* g;
+    GlyphCov* gc;
+    int dx, dy;
+    if (c < ' ' || c > '~') c = '?';
+    gc = &s_gc[f][c - ' '];
+    if (gc->cov) return gc;
+    g = &s_font[f]->glyph[c - ' '];
+    if (!g->w) return NULL;
+    gc->dw = (int16_t)((g->w * s_sx + 15) / 16);
+    gc->dh = (int16_t)((g->h * s_sy + 15) / 16);
+    if (!s_gl_mem || s_gl_used + gc->dw * gc->dh * 2 > s_gl_cap) return NULL;
+    gc->cov = s_gl_mem + s_gl_used;
+    s_gl_used += gc->dw * gc->dh * 2;
+    for (dy = 0; dy < gc->dh; dy++)
+        for (dx = 0; dx < gc->dw; dx++) {
+            int i, j, ink = 0, out = 0;
+            for (j = 0; j < 4; j++) {
+                int ty = ((dy * 16 + 2 + j * 4) * 16) / s_sy / 16;
+                if (ty >= g->h) continue;
+                for (i = 0; i < 4; i++) {
+                    int tx = ((dx * 16 + 2 + i * 4) * 16) / s_sx / 16, v;
+                    if (tx >= g->w) continue;
+                    v = s_font[f]->cells[g->off + (uint32_t)(ty * g->w + tx)];
+                    ink += v & 1;
+                    out += v >> 1;
+                }
+            }
+            gc->cov[(dy * gc->dw + dx) * 2] = (uint8_t)ink;
+            gc->cov[(dy * gc->dw + dx) * 2 + 1] = (uint8_t)out;
+        }
+    return gc;
+}
+
+/* unscii-16 glyph c's coverage at zoom z (1 or 2), made on first use */
+static const uint8_t* uglyph(int zi, unsigned c) {
     uint8_t* g;
     int gw = s_gw[zi], gh = s_gh[zi], dx, dy, z = zi + 1;
     if (c >= GLYPHS) c = '?';
@@ -319,51 +319,104 @@ static const uint8_t* glyph(int zi, unsigned c) {
     return g;
 }
 
-/* unscii-16 at zoom z, top-left at logical (x, y), snapped to a device pixel
- * (a glyph is a whole number of device pixels at every scale: 6, 8 or 12 wide) */
-static void glyphs(const char* s, int x, int y, int z, uint32_t col, int alpha) {
-    int zi = z - 1, gw = s_gw[zi], gh = s_gh[zi], ox = (x * s_sx + 8) >> 4, oy = (y * s_sy + 8) >> 4, cx = x;
-    int y0 = oy < s_by0 ? s_by0 : oy, y1 = oy + gh > s_by1 ? s_by1 : oy + gh;
-    if (y0 >= y1) return;
-    for (; *s; s++, ox += gw, cx += 8 * z) {
-        const uint8_t* g = glyph(zi, (unsigned char)*s);
-        int px, py, x0 = ox < 0 ? 0 : ox, x1 = ox + gw > s_dw ? s_dw : ox + gw;
-        if (!g) {   /* no memory for the cache: sampled as it is drawn */
-            char one[2];
-            one[0] = *s, one[1] = 0;
-            glyphs_sampled(one, cx, y, z, col, alpha);
-            continue;
+#define C_OUTLINE rgb(22, 9, 0)
+
+/* text width in logical px: font z - 1 (1 the text, 2 the header) */
+static int tw(const char* s, int z) {
+    const xhw_menu_font* f = s_font[z - 1];
+    int w = 0;
+    if (!f) return (int)strlen(s) * 8 * z;
+    for (; *s; s++) {
+        unsigned c = (unsigned char)*s;
+        const xhw_menu_glyph* g = &f->glyph[(c < ' ' || c > '~' ? '?' : c) - ' '];
+        w += g->a + g->b + g->c;
+    }
+    return w;
+}
+
+static int line_h(int z) { return s_font[z - 1] ? s_font[z - 1]->height : 16 * z; }
+
+/* s with its top-left at logical (x, y), font z - 1, ink col */
+static void text_a(const char* s, int x, int y, int z, uint32_t col, int alpha) {
+    const xhw_menu_font* f = s_font[z - 1];
+    if (!f) {   /* unscii: a shadow, then the ink */
+        int pass;
+        for (pass = 0; pass < 2; pass++) {
+            int zi = z - 1, gw = s_gw[zi], gh = s_gh[zi], o = pass ? 0 : z;
+            int ox = ((x + o) * s_sx + 8) >> 4, oy = ((y + o) * s_sy + 8) >> 4;
+            int y0 = oy < s_by0 ? s_by0 : oy, y1 = oy + gh > s_by1 ? s_by1 : oy + gh;
+            const char* p;
+            uint32_t c = pass ? col : C_OUTLINE;
+            int a = pass ? alpha : alpha * 200 / 255;
+            if (y0 >= y1) return;
+            for (p = s; *p; p++, ox += gw) {
+                const uint8_t* g = uglyph(zi, (unsigned char)*p);
+                int px, py, x0 = ox < 0 ? 0 : ox, x1 = ox + gw > s_dw ? s_dw : ox + gw;
+                if (!g) continue;
+                for (py = y0; py < y1; py++) {
+                    const uint8_t* gr = g + (py - oy) * gw - ox;
+                    uint32_t* d = PX(0, py);
+                    for (px = x0; px < x1; px++)
+                        if (gr[px]) mix(&d[px], c, (a * gr[px]) >> 4);
+                }
+            }
         }
-        for (py = y0; py < y1; py++) {
-            const uint8_t* gr = g + (py - oy) * gw - ox;
-            uint32_t* d = PX(0, py);
-            for (px = x0; px < x1; px++)
-                if (gr[px]) mix(&d[px], col, (alpha * gr[px]) >> 4);
+        return;
+    }
+    {
+        int cx = x, base = y + f->ascent;
+        for (; *s; s++) {
+            unsigned c = (unsigned char)*s;
+            const xhw_menu_glyph* g = &f->glyph[(c < ' ' || c > '~' ? '?' : c) - ' '];
+            const GlyphCov* gc;
+            cx += g->a;
+            if (g->w && (gc = game_glyph(z - 1, c)) != NULL) {
+                int ox = (cx * s_sx + 8) >> 4, oy = ((base - g->top) * s_sy + 8) >> 4;
+                int y0 = oy < s_by0 ? s_by0 : oy, y1 = oy + gc->dh > s_by1 ? s_by1 : oy + gc->dh;
+                int x0 = ox < 0 ? 0 : ox, x1 = ox + gc->dw > s_dw ? s_dw : ox + gc->dw, px, py;
+                for (py = y0; py < y1; py++) {
+                    const uint8_t* gr = gc->cov + ((py - oy) * gc->dw - ox) * 2;
+                    uint32_t* d = PX(0, py);
+                    for (px = x0; px < x1; px++) {
+                        int o = gr[px * 2 + 1], i = gr[px * 2];
+                        if (o) mix(&d[px], C_OUTLINE, (alpha * o) >> 4);
+                        if (i) mix(&d[px], col, (alpha * i) >> 4);
+                    }
+                }
+            }
+            cx += g->b + g->c;
         }
     }
 }
 
-static void text(const char* s, int x, int y, int z, uint32_t col) {
-    glyphs(s, x + z, y + z, z, rgb(2, 4, 10), 200);   /* the shadow */
-    glyphs(s, x, y, z, col, 255);
-}
+static void text(const char* s, int x, int y, int z, uint32_t col) { text_a(s, x, y, z, col, 255); }
 
-/* words of s wrapped to `cols` columns from line `y`, at most `max` lines;
- * returns the lines used */
-static int wrap(const char* s, int x, int y, int cols, int max, uint32_t col) {
-    char ln[96];
-    int lines = 0;
-    if (cols > (int)sizeof ln - 1) cols = (int)sizeof ln - 1;
+/* words of s wrapped to `maxw` logical px from line `y`, at most `max`
+ * lines; returns the lines used */
+static int wrap(const char* s, int x, int y, int maxw, int max, uint32_t col) {
+    char ln[160];
+    int lines = 0, lh = line_h(1);
     while (*s && lines < max) {
         int n = 0, cut = -1;
-        while (s[n] && n < cols) {
-            if (s[n] == ' ') cut = n;
+        while (s[n] && n < (int)sizeof ln - 1) {
+            if (s[n] == ' ') {
+                memcpy(ln, s, (size_t)n);
+                ln[n] = '\0';
+                if (tw(ln, 1) > maxw) break;
+                cut = n;
+            }
             n++;
         }
-        if (s[n] && s[n] != ' ' && cut > 0) n = cut;
+        if (!s[n] || n >= (int)sizeof ln - 1) {   /* the rest fits, or a last word */
+            memcpy(ln, s, (size_t)n);
+            ln[n] = '\0';
+            if (tw(ln, 1) > maxw && cut > 0) n = cut;
+        } else if (cut > 0) {
+            n = cut;
+        }
         memcpy(ln, s, (size_t)n);
         ln[n] = '\0';
-        text(ln, x, y + lines * 16, 1, col);
+        text(ln, x, y + lines * lh, 1, col);
         lines++;
         s += n;
         while (*s == ' ') s++;
@@ -372,14 +425,75 @@ static int wrap(const char* s, int x, int y, int cols, int max, uint32_t col) {
 }
 
 /* ------------------------------------------------------------- the colours */
-#define C_TEXT rgb(226, 234, 244)
-#define C_DIM rgb(128, 150, 172)
-#define C_CYAN rgb(120, 220, 250)
-#define C_EDGE rgb(70, 170, 210)
-#define C_WARM rgb(255, 184, 92)
-#define C_SEL rgb(20, 74, 104)
+/* Prime's own pause Options (the user picked mockup A, 2026-11-02): an amber
+ * hologram over the game, angular frames, warm lettering */
+#define C_AMBER rgb(255, 150, 40)
+#define C_TEXT rgb(255, 228, 176)      /* selected, and the help's first line */
+#define C_LABEL rgb(236, 148, 54)      /* a row's label */
+#define C_VALUE rgb(255, 182, 84)
+#define C_DIM rgb(176, 98, 32)
+#define C_HELP rgb(255, 164, 64)
+#define C_MARK rgb(255, 238, 150)      /* not the default: pale yellow */
+#define C_TINT rgb(62, 30, 4)          /* the glass over the game */
+#define C_SEL_FILL rgb(140, 70, 8)
+#define C_BOX_FILL rgb(40, 20, 2)
+#define C_DEEP rgb(28, 13, 0)
 
-/* an Xbox button's badge: a pill in its own colour with its name */
+/* an axis-aligned box in logical px, solid (no rounding: cheap) */
+static void fill(int x, int y, int w, int h, uint32_t col, int alpha) {
+    int x0 = (x * s_sx + 8) >> 4, x1 = ((x + w) * s_sx + 8) >> 4, y0 = (y * s_sy + 8) >> 4, y1 = ((y + h) * s_sy + 8) >> 4;
+    int px, py;
+    if (x1 <= x0) x1 = x0 + 1;
+    if (y1 <= y0) y1 = y0 + 1;
+    if (x0 < 0) x0 = 0;
+    if (x1 > s_dw) x1 = s_dw;
+    if (y0 < s_by0) y0 = s_by0;
+    if (y1 > s_by1) y1 = s_by1;
+    for (py = y0; py < y1; py++) {
+        uint32_t* d = PX(0, py);
+        if (alpha >= 255)
+            for (px = x0; px < x1; px++) d[px] = 0xFF000000u | col;
+        else
+            for (px = x0; px < x1; px++) mix(&d[px], col, alpha);
+    }
+}
+
+/* A box with its corners cut by `c` logical px: a fill (row spans, cheap)
+ * and the eight edges of its outline. fa or la 0: none. */
+static void cbox(int x, int y, int w, int h, int c, uint32_t fc, int fa, uint32_t lc, int la, int w16) {
+    if (fa > 0) {
+        int py, y0 = (y * s_sy + 8) >> 4, y1 = ((y + h) * s_sy + 8) >> 4;
+        if (y0 < s_by0) y0 = s_by0;
+        if (y1 > s_by1) y1 = s_by1;
+        for (py = y0; py < y1; py++) {
+            int ly = ly16(py) - y * 16, cut = 0, x0, x1, px;   /* L16 below the top */
+            uint32_t* d = PX(0, py);
+            if (ly < c * 16) cut = c * 16 - ly;
+            else if (ly > (h - c) * 16) cut = ly - (h - c) * 16;
+            x0 = ((x * 16 + cut) * s_sx + 128) >> 8;
+            x1 = (((x + w) * 16 - cut) * s_sx + 128) >> 8;
+            if (x0 < 0) x0 = 0;
+            if (x1 > s_dw) x1 = s_dw;
+            if (fa >= 255)
+                for (px = x0; px < x1; px++) d[px] = 0xFF000000u | fc;
+            else
+                for (px = x0; px < x1; px++) mix(&d[px], fc, fa);
+        }
+    }
+    if (la > 0) {
+        int l = x * 16, r = (x + w) * 16, t = y * 16, b = (y + h) * 16, k = c * 16;
+        line(l + k, t, r - k, t, w16, lc, la);
+        line(l + k, b, r - k, b, w16, lc, la);
+        line(l, t + k, l, b - k, w16, lc, la);
+        line(r, t + k, r, b - k, w16, lc, la);
+        line(l, t + k, l + k, t, w16, lc, la);
+        line(r - k, t, r, t + k, w16, lc, la);
+        line(l, b - k, l + k, b, w16, lc, la);
+        line(r - k, b, r, b - k, w16, lc, la);
+    }
+}
+
+/* an Xbox button's badge: its colour, its name */
 static uint32_t badge_col(const char* b) {
     if (!strcmp(b, "A")) return rgb(70, 190, 70);
     if (!strcmp(b, "B")) return rgb(220, 50, 50);
@@ -387,59 +501,116 @@ static uint32_t badge_col(const char* b) {
     if (!strcmp(b, "Y")) return rgb(235, 200, 40);
     if (!strcmp(b, "BK")) return rgb(20, 20, 24);
     if (!strcmp(b, "WH")) return rgb(232, 232, 236);
-    return rgb(96, 104, 118);
+    return rgb(120, 70, 20);
 }
 
 static int badge(const char* b, int x, int y) {   /* returns its width */
     uint32_t c = badge_col(b);
-    int w = tw(b, 1) + 8, light = R_(c) + G_(c) + B_(c) > 420;
-    rbox(x, y, w, 18, 6, c, 255);
-    if (R_(c) + G_(c) + B_(c) < 120) {   /* BLACK: an outline so it reads on the dark card */
-        rbox(x, y, w, 1, 0, rgb(130, 138, 150), 255);
-        rbox(x, y + 17, w, 1, 0, rgb(130, 138, 150), 255);
+    int w = tw(b, 1) + 10, light = R_(c) + G_(c) + B_(c) > 420;
+    rbox(x, y, w, 17, 8, c, 255);
+    if (R_(c) + G_(c) + B_(c) < 120) {   /* BLACK: a rim so it reads on the glass */
+        fill(x + 4, y, w - 8, 1, C_DIM, 255);
+        fill(x + 4, y + 16, w - 8, 1, C_DIM, 255);
     }
-    glyphs(b, x + 4, y + 1, 1, light ? rgb(20, 22, 30) : rgb(250, 250, 255), 255);
+    text(b, x + 5, y + (17 - line_h(1)) / 2, 1, light ? rgb(20, 22, 30) : rgb(255, 250, 240));
     return w;
 }
 
 /* ------------------------------------------------------- the card's frame */
+#define CUT 16   /* the card's cut corners, logical px */
+
+/* What was on the screen behind the card when the popup opened (one read of
+ * the frame, xhw_menu_capture): the glass is that, darkened and tinted, so
+ * the card is a hologram over the game as the pause screen is. NULL (no
+ * memory): an opaque amber glass. */
+static uint8_t* s_back;
+static int s_back_bpp;
+
+void xhw_menu_capture(const void* fb, int w, int h, int bpp, int pitch) {
+    int x0 = (w - s_dw) / 2, y0 = (h - s_dh) / 2, y, bytes = bpp / 8;
+    uint32_t size = (uint32_t)s_dw * (uint32_t)s_dh * (uint32_t)bytes;
+    if (!s_on || !fb || x0 < 0 || y0 < 0) return;
+    if (!s_back || s_back_bpp != bpp) {
+        free(s_back);
+        s_back = (uint8_t*)malloc(size);
+        if (!s_back && xhw_mem_reclaim(size / 1024 + 256, 0)) s_back = (uint8_t*)malloc(size);
+        s_back_bpp = bpp;
+        if (!s_back) {
+            xhw_logf("[MENU] no memory for the glass's backdrop (%u KB): opaque", size / 1024);
+            return;
+        }
+    }
+    for (y = 0; y < s_dh; y++)   /* write-combined memory: a row at a time, once */
+        memcpy(s_back + (size_t)y * (size_t)s_dw * (size_t)bytes,
+               (const uint8_t*)fb + (size_t)(y0 + y) * (size_t)pitch + (size_t)x0 * (size_t)bytes,
+               (size_t)s_dw * (size_t)bytes);
+}
+
+/* the glass: each row of the card, its ends cut at the corners; the game
+ * behind at 22%, the amber tint over it, Prime's scanlines every third row */
+static void glass(void) {
+    int py;
+    const int tr = R_(C_TINT) * 200, tg = G_(C_TINT) * 200, tb = B_(C_TINT) * 200;
+    for (py = s_by0; py < s_by1; py++) {
+        int ly = ly16(py), c = 0, x0, x1, px, k = (py % 3) == 0 ? 44 : 56;   /* the game's share, /256 */
+        uint32_t* d = PX(0, py);
+        if (ly < CUT * 16) c = CUT * 16 - ly;
+        else if (ly > (CH - CUT) * 16) c = ly - (CH - CUT) * 16;
+        x0 = (c * s_sx + 128) >> 8;
+        x1 = ((CW * 16 - c) * s_sx + 128) >> 8;
+        if (x1 > s_dw) x1 = s_dw;
+        if (!s_back) {
+            uint32_t col = rgb((tr + 10 * k) / 255, (tg + 6 * k) / 255, (tb + 2 * k) / 255);
+            for (px = x0; px < x1; px++) d[px] = 0xFF000000u | col;
+            continue;
+        }
+        if (s_back_bpp == 16) {
+            const uint16_t* s = (const uint16_t*)s_back + (size_t)py * (size_t)s_dw;
+            for (px = x0; px < x1; px++) {
+                uint32_t v = s[px];
+                int r = (int)((v >> 8) & 0xF8), g = (int)((v >> 3) & 0xFC), b = (int)((v << 3) & 0xF8);
+                d[px] = 0xFF000000u | (uint32_t)((tr + r * k) >> 8) << 16 | (uint32_t)((tg + g * k) >> 8) << 8 |
+                        (uint32_t)((tb + b * k) >> 8);
+            }
+        } else {
+            const uint32_t* s = (const uint32_t*)s_back + (size_t)py * (size_t)s_dw;
+            for (px = x0; px < x1; px++) {
+                uint32_t v = s[px];
+                d[px] = 0xFF000000u | (uint32_t)((tr + R_(v) * k) >> 8) << 16 | (uint32_t)((tg + G_(v) * k) >> 8) << 8 |
+                        (uint32_t)((tb + B_(v) * k) >> 8);
+            }
+        }
+    }
+}
+
 static void draw_frame(const xhw_menu_view* v) {
     int i;
-    /* the glass: the rim and its dark inner edge, then the gradient with its
-     * scanlines inside them */
-    hole(8, 8, CW - 8, CH - 8);
-    rbox(0, 0, CW, CH, 14, C_EDGE, 255);
-    rbox(2, 2, CW - 4, CH - 4, 12, rgb(10, 22, 40), 255);
-    hole(0, 0, 0, 0);
-    vgrad(8, 8, CW - 16, CH - 16, rgb(12, 26, 46), rgb(4, 9, 20));
-    /* the scan visor's corner brackets */
-    for (i = 0; i < 4; i++) {
-        int cx = i & 1 ? CW - 10 : 10, cy = i & 2 ? CH - 10 : 10, sx = i & 1 ? -1 : 1, sy = i & 2 ? -1 : 1;
-        line(cx * 16, cy * 16, (cx + sx * 22) * 16, cy * 16, 40, C_CYAN, 230);
-        line(cx * 16, cy * 16, cx * 16, (cy + sy * 22) * 16, 40, C_CYAN, 230);
+    glass();
+    cbox(0, 0, CW, CH, CUT, 0, 0, C_AMBER, 255, 32);
+    cbox(6, 6, CW - 12, CH - 12, CUT - 4, 0, 0, C_AMBER, 90, 20);
+
+    /* the header: "[ Xbox Port Options ]", as the pause screen's "[ Options ]" */
+    {
+        const char* title = "[ Xbox Port Options ]";
+        text(title, (CW - tw(title, 2)) / 2, 12, 2, C_AMBER);
+        text(v->status, 24, 18, 1, C_DIM);   /* the mode now, left of the title */
     }
 
-    /* the header */
-    text("XBOX PORT OPTIONS", 26, 14, 2, C_TEXT);
-    glyphs("PRIME-X", 26 + tw("XBOX PORT OPTIONS", 2) + 14, 30, 1, C_WARM, 255);
-    text(v->status, CW - 26 - tw(v->status, 1), 30, 1, C_DIM);
-    line(24 * 16, 54 * 16, (CW - 24) * 16, 54 * 16, 20, C_EDGE, 160);
-
-    /* the tabs, LT and RT at the ends */
-    badge("LT", 22, 63);
-    badge("RT", CW - 22 - tw("RT", 1) - 8, 63);
-    for (i = 0; i < v->tabs && i < XHW_MENU_TABS; i++) {
-        int x0 = 58 + i * 460 / v->tabs, x1 = 58 + (i + 1) * 460 / v->tabs - 4, w = x1 - x0;
-        int sel = i == v->tab;
-        if (sel) {
-            rbox(x0, 60, w, 24, 6, C_EDGE, 255);
-            rbox(x0 + 1, 61, w - 2, 22, 5, C_SEL, 255);
-            rbox(x0 + 4, 61, w - 8, 2, 1, C_CYAN, 255);
-        } else {
-            rbox(x0, 60, w, 24, 6, rgb(40, 64, 90), 180);
-            rbox(x0 + 1, 61, w - 2, 22, 5, rgb(8, 16, 30), 255);
+    /* the tabs between LT and RT */
+    badge("LT", 20, 62);
+    badge("RT", CW - 20 - (tw("RT", 1) + 10), 62);
+    {   /* each tab as wide as its name, the spare room shared out */
+        const int n = v->tabs < XHW_MENU_TABS ? v->tabs : XHW_MENU_TABS, left = 58, right = CW - 58, gap = 4;
+        int widths = 0, extra, x0 = left;
+        for (i = 0; i < n; i++) widths += tw(v->tab_name[i], 1);
+        extra = n ? (right - left - widths - gap * (n - 1)) / n : 0;
+        if (extra < 6) extra = 6;
+        for (i = 0; i < n; i++) {
+            int w = tw(v->tab_name[i], 1) + extra, sel = i == v->tab;
+            cbox(x0, 56, w, 28, 6, sel ? C_SEL_FILL : C_BOX_FILL, sel ? 220 : 150, C_AMBER, sel ? 255 : 110, 20);
+            text(v->tab_name[i], x0 + extra / 2, 56 + (28 - line_h(1)) / 2, 1, sel ? C_TEXT : C_LABEL);
+            x0 += w + gap;
         }
-        text(v->tab_name[i], x0 + (w - tw(v->tab_name[i], 1)) / 2, 64, 1, sel ? C_TEXT : C_DIM);
     }
 
     /* the footer: what the buttons do */
@@ -449,82 +620,71 @@ static void draw_frame(const xhw_menu_view* v) {
         static const char* const k_rows_b[] = { "A", "B", "Y" };
         static const char* const k_rows_t[] = { "Change", "Close", "Defaults" };
         static const char* const k_pad_b[] = { "A", "X", "B", "Y" };
-        static const char* const k_pad_t[] = { "Next action", "Previous", "Close", "Defaults" };
+        static const char* const k_pad_t[] = { "Next", "Previous", "Close", "Defaults" };
         const char* const* k_b = v->page ? k_pad_b : k_rows_b;
         const char* const* k_t = v->page ? k_pad_t : k_rows_t;
-        const int n = v->page ? 4 : 3;
-        int x = 26;
+        const int n = v->page ? 4 : 3, fy = CH - 30, ty = fy + (17 - line_h(1)) / 2;
+        int x = 28;
         for (i = 0; i < n; i++) {
-            x += badge(k_b[i], x, CH - 30) + 6;
-            text(k_t[i], x, CH - 29, 1, C_DIM);
+            x += badge(k_b[i], x, fy) + 6;
+            text(k_t[i], x, ty, 1, C_LABEL);
             x += tw(k_t[i], 1) + 18;
         }
         /* the D-pad: a little cross */
-        rbox(x + 6, CH - 30, 6, 18, 2, rgb(150, 160, 175), 255);
-        rbox(x, CH - 24, 18, 6, 2, rgb(150, 160, 175), 255);
+        fill(x + 6, fy, 5, 17, C_AMBER, 255);
+        fill(x, fy + 6, 17, 5, C_AMBER, 255);
         x += 24;
-        text("Select", x, CH - 29, 1, C_DIM);
+        text("Select", x, ty, 1, C_LABEL);
     }
 }
 
 /* the box under the rows: what the selection does, what its value does, a note */
 static void draw_help(const xhw_menu_view* v, int y, int h) {
-    int lines;
-    rbox(20, y, CW - 40, h, 8, rgb(40, 90, 120), 200);
-    rbox(21, y + 1, CW - 42, h - 2, 7, rgb(6, 14, 28), 255);
-    lines = wrap(v->help, 32, y + 6, 64, 3, C_TEXT);
-    lines += wrap(v->value_help, 32, y + 6 + lines * 16, 64, (h - 12) / 16 - lines - (v->note[0] ? 1 : 0), C_CYAN);
-    if (v->note[0]) text(v->note, 32, y + h - 22, 1, C_WARM);
+    int lines, lh = line_h(1), max = (h - 10) / lh;
+    cbox(26, y, CW - 52, h, 8, C_DEEP, 170, C_AMBER, 150, 20);
+    lines = wrap(v->help, 40, y + 6, CW - 80, max - (v->note[0] ? 1 : 0), C_TEXT);
+    lines += wrap(v->value_help, 40, y + 6 + lines * lh, CW - 80, max - lines - (v->note[0] ? 1 : 0), C_HELP);
+    if (v->note[0]) text(v->note, 40, y + 6 + lines * lh, 1, C_MARK);   /* right under: never over a line */
 }
 
 /* ----------------------------------------------------------- the rows page */
-#define ROW_Y 96
-#define ROW_H 28
-#define VAL_X0 336
-#define VAL_X1 548
-#define ROWS_FIT 6   /* rows that fit above the help box (a tab has at most 5) */
+#define ROW_Y 92
+#define ROW_H 30
+#define VAL_X0 330
+#define VAL_X1 524
+#define ROWS_FIT 6   /* rows that fit above the help box (a tab has at most 6) */
 
 static void draw_rows(const xhw_menu_view* v) {
-    int r;
+    int r, lh = line_h(1);
     for (r = 0; r < v->rows && r < ROWS_FIT; r++) {
         int y = ROW_Y + r * ROW_H, sel = r == v->sel, f = v->flags[r], mid = (VAL_X0 + VAL_X1) / 2;
-        uint32_t vc = f & XHW_MENU_ROW_CHANGED ? C_WARM : C_CYAN;
+        int ty = y + (ROW_H - 4 - lh) / 2;
+        uint32_t vc = f & XHW_MENU_ROW_CHANGED ? C_MARK : C_VALUE;
         char lab[40];
-        if (sel) {
-            rbox(20, y, CW - 40, ROW_H - 2, 6, C_EDGE, 255);
-            rbox(21, y + 1, CW - 42, ROW_H - 4, 5, C_SEL, 255);
-            rbox(22, y + 4, 4, ROW_H - 10, 2, C_CYAN, 255);
-        } else if (r & 1) {
-            rbox(20, y, CW - 40, ROW_H - 2, 6, rgb(14, 26, 44), 200);
-        }
+        cbox(26, y, CW - 52, ROW_H - 4, 6, sel ? C_SEL_FILL : C_BOX_FILL, sel ? 210 : 110, C_AMBER, sel ? 255 : 80, 20);
         strcpy(lab, v->label[r]);
         if (f & XHW_MENU_ROW_RESTART) strcat(lab, " *");
-        text(lab, 36, y + 5, 1, sel ? C_TEXT : rgb(186, 200, 216));
+        text(lab, 40, ty, 1, sel ? C_TEXT : C_LABEL);
         if (f & XHW_MENU_ROW_ACTION) {
-            text(v->value[r], VAL_X1 - 8 - tw(v->value[r], 1), y + 5, 1, sel ? C_TEXT : C_DIM);
+            text(v->value[r], VAL_X1 - tw(v->value[r], 1), ty, 1, sel ? C_TEXT : C_VALUE);
             continue;
         }
-        arrow(VAL_X0 + 8, y + 12, 5, -1, sel ? C_CYAN : rgb(60, 90, 120), 255);
-        arrow(VAL_X1 - 8, y + 12, 5, 1, sel ? C_CYAN : rgb(60, 90, 120), 255);
-        text(v->value[r], mid - tw(v->value[r], 1) / 2, y + 3, 1, sel ? (f & XHW_MENU_ROW_CHANGED ? C_WARM : C_TEXT) : vc);
+        arrow(VAL_X0 + 6, y + (ROW_H - 4) / 2, 5, -1, C_AMBER, 255);
+        arrow(VAL_X1 + 6, y + (ROW_H - 4) / 2, 5, 1, C_AMBER, 255);
+        text(v->value[r], mid + 6 - tw(v->value[r], 1) / 2, ty - 2, 1, sel ? (f & XHW_MENU_ROW_CHANGED ? C_MARK : rgb(255, 255, 255)) : vc);
         if (v->choices[r] > 1) {   /* the pips: how many values, which one */
-            int n = v->choices[r], i, x0 = mid * 16 - (n - 1) * 56;
+            int n = v->choices[r], i, x0 = mid + 6 - (n - 1) * 5 - 2;
             for (i = 0; i < n; i++)
-                disc(x0 + i * 112, (y + 22) * 16, i == v->choice[r] ? 30 : 20,
-                     i == v->choice[r] ? (sel ? C_CYAN : vc) : rgb(50, 74, 100), 255);
+                fill(x0 + i * 10, y + ROW_H - 9, 4, 2, i == v->choice[r] ? (sel ? rgb(255, 255, 255) : C_AMBER) : C_DIM, 255);
         }
-        if (f & XHW_MENU_ROW_CHANGED) disc((VAL_X0 - 10) * 16, (y + 13) * 16, 36, C_WARM, 255);
+        if (f & XHW_MENU_ROW_CHANGED) fill(VAL_X0 - 14, y + 10, 5, 5, C_MARK, 255);
     }
 }
 
 /* ------------------------------------------------------- the Buttons page */
 #define CX 288   /* the controller's centre on the card */
 #define CY 190
-#define LW 280   /* its body's box around the centre */
-#define LH 200
-#define LX0 (CX - LW / 2)
-#define LY0 (CY - 80)
-#define BOX_W 122   /* "Morph Ball" and the changed dot */
+#define BOX_W 140   /* "Morph Ball" in Deface and the changed mark */
 #define BOX_H 18
 #define COL_L 22
 #define COL_R (CW - 22 - BOX_W)
@@ -549,208 +709,80 @@ static const struct { int8_t col; int16_t y; } k_call[XHW_MENU_IN_COUNT] = {
     /* D-pad */ { 0, 252 }, /* left stick */ { 0, 124 }, /* right stick */ { 1, 246 },
 };
 
-static int held(const xhw_menu_view* v, int in) {
-    static const uint32_t k_btn[XHW_MENU_IN_MAPPABLE] = {
-        XHW_BTN_A, XHW_BTN_B, XHW_BTN_X, XHW_BTN_Y, XHW_BTN_WHITE, XHW_BTN_BLACK,
-        XHW_BTN_START, XHW_BTN_BACK, XHW_BTN_LSTICK, XHW_BTN_RSTICK,
-    };
-    if (!v->pad_ok) return 0;
-    switch (in) {
-    case XHW_MENU_IN_LT: return v->pad_lt > 128;
-    case XHW_MENU_IN_RT: return v->pad_rt > 128;
-    case XHW_MENU_IN_DPAD: return (v->pad_buttons & (XHW_BTN_UP | XHW_BTN_DOWN | XHW_BTN_LEFT | XHW_BTN_RIGHT)) != 0;
-    case XHW_MENU_IN_LSTICK: return v->pad_lx * v->pad_lx + v->pad_ly * v->pad_ly > 12000 * 12000;
-    case XHW_MENU_IN_RSTICK: return v->pad_rx * v->pad_rx + v->pad_ry * v->pad_ry > 12000 * 12000;
-    default: return (v->pad_buttons & k_btn[in]) != 0;
+/* The controller as a hologram: a flat silhouette with an amber rim
+ * (N64Recomp-X's shape: a rounded box and two grips), drawn from a few
+ * shapes each time, no shading and no cache */
+static void hologram(void) {
+    const uint32_t rim = C_AMBER, body = rgb(46, 22, 2);
+    int pass;
+    for (pass = 0; pass < 2; pass++) {   /* the rims, then the bodies over them */
+        int g = pass ? 0 : 2;
+        uint32_t c = pass ? body : rim;
+        rbox(CX - 98 - g, CY - 72 - g, 56 + 2 * g, 24 + 2 * g, 9 + g, c, 230);   /* the triggers */
+        rbox(CX + 42 - g, CY - 72 - g, 56 + 2 * g, 24 + 2 * g, 9 + g, c, 230);
+    }
+    for (pass = 0; pass < 2; pass++) {
+        int g = pass ? 0 : 2;
+        uint32_t c = pass ? body : rim;
+        rbox(CX - 92 - g, CY - 60 - g, 184 + 2 * g, 88 + 2 * g, 36 + g, c, 230);
+        line((CX - 74) * 16, (CY - 6) * 16, (CX - 96) * 16, (CY + 68) * 16, (60 + 2 * g) * 16, c, 230);
+        line((CX + 74) * 16, (CY - 6) * 16, (CX + 96) * 16, (CY + 68) * 16, (60 + 2 * g) * 16, c, 230);
     }
 }
 
-/* the body's shape (N64Recomp-X), in logical pixels around (CX, CY) */
-static float fabs_(float v) { return v < 0 ? -v : v; }
-static float fmax_(float a, float b) { return a > b ? a : b; }
-static float fmin_(float a, float b) { return a < b ? a : b; }
-static float sd_rbox(float px, float py, float hx, float hy, float r) {
-    float qx = fabs_(px) - hx + r, qy = fabs_(py) - hy + r, ox = fmax_(qx, 0), oy = fmax_(qy, 0);
-    return __builtin_sqrtf(ox * ox + oy * oy) + fmin_(fmax_(qx, qy), 0) - r;
-}
-static float sd_capsule(float px, float py, float ax, float ay, float bx, float by, float r) {
-    float pax = px - ax, pay = py - ay, bax = bx - ax, bay = by - ay;
-    float h = (pax * bax + pay * bay) / (bax * bax + bay * bay), dx, dy;
-    h = h < 0 ? 0 : h > 1 ? 1 : h;
-    dx = pax - bax * h, dy = pay - bay * h;
-    return __builtin_sqrtf(dx * dx + dy * dy) - r;
-}
-static float smin(float a, float b, float k) {
-    float h = 0.5f + 0.5f * (b - a) / k;
-    h = h < 0 ? 0 : h > 1 ? 1 : h;
-    return b + (a - b) * h - k * h * (1 - h);
-}
-static float sd_body(float x, float y) {
-    float c = sd_rbox(x, y + 16, 92, 44, 36);
-    float gl = sd_capsule(x, y, -74, -6, -96, 68, 30), gr = sd_capsule(x, y, 74, -6, 96, 68, 30);
-    return smin(smin(c, gl, 16), gr, 16);
-}
-static float sd_trigger(float x, float y) {
-    return fmin_(sd_rbox(x + 70, y + 60, 28, 12, 9), sd_rbox(x - 70, y + 60, 28, 12, 9));
+static void face(int x, int y, int r, uint32_t c) {
+    disc(x * 16, y * 16, r * 16, shade(c, 210), 255);
+    ring(x * 16, y * 16, r * 16 - 6, 12, shade(c, 330), 220);
 }
 
-/* one device pixel of the body (ARGB, alpha the coverage); px, py relative
- * to the body box's device origin */
-static uint32_t body_px(int dx, int dy) {
-    float s = (float)s_sx / 16.0f, t = (float)s_sy / 16.0f;
-    float px = ((float)dx + 0.5f) / s + (float)(LX0 - CX), py = ((float)dy + 0.5f) / t + (float)(LY0 - CY);
-    float d = sd_body(px, py), dt = sd_trigger(px, py), e = 0.5f;
-    float cov = d <= -0.5f ? 1.0f : d >= 0.5f ? 0.0f : 0.5f - d;
-    float tcov = dt <= -0.5f ? 1.0f : dt >= 0.5f ? 0.0f : 0.5f - dt;
-    float r, g, b, a;
-    if (cov > 0) {
-        float gx = sd_body(px + e, py) - sd_body(px - e, py), gy = sd_body(px, py + e) - sd_body(px, py - e);
-        float edge = 1.0f - fmin_(-d / 14.0f, 1.0f), lit = -(gx * -0.45f + gy * -0.89f);
-        float top = 1.0f - (py + 64) / 190.0f, k;
-        if (edge < 0) edge = 0;
-        k = 0.78f + 0.22f * top + lit * edge * 0.55f;
-        r = 44 * k, g = 49 * k, b = 56 * k;
-        if (d > -2.2f) r += 30, g += 34, b += 38;   /* the rim */
-        if (gy > 0.3f && edge > 0.5f) g += 26 * (edge - 0.5f) * gy, b += 8 * (edge - 0.5f) * gy;
-        a = cov;
-        if (tcov > 0 && cov < 1) {   /* the trigger behind the body's edge */
-            r = r * cov + 80 * (1 - cov), g = g * cov + 86 * (1 - cov), b = b * cov + 94 * (1 - cov);
-            a = 1.0f;
-        }
-    } else if (tcov > 0) {
-        float k = 0.9f - (py + 72) / 40.0f * 0.3f;
-        r = 70 * k, g = 76 * k, b = 84 * k;
-        if (dt > -2.0f) r += 26, g += 28, b += 30;
-        a = tcov;
-    } else {
-        float ds = sd_body(px - 4, py - 7);   /* the drop shadow */
-        a = ds < 10 ? (1.0f - ds / 10.0f) * 0.45f : 0;
-        if (a < 0) a = 0;
-        r = g = b = 0;
-    }
-    return ((uint32_t)(a * 255.0f) << 24) | rgb((int)r, (int)g, (int)b);
+static void stick(int x, int y, int r) {
+    disc(x * 16, y * 16, r * 16, rgb(22, 10, 0), 255);
+    ring(x * 16, y * 16, r * 16 - 8, 16, C_AMBER, 200);
+    disc(x * 16, y * 16, (r - 8) * 16, rgb(110, 58, 10), 255);
 }
 
-static void body_cache(void) {
-    int x, y;
-    s_body_w = LW * s_sx / 16 + 1;
-    s_body_h = LH * s_sy / 16 + 1;
-    if (s_body) return;
-    /* only with memory to spare: without it the body is shaded each time */
-    if (xhw_mem_free_kb() < 4096 + (uint32_t)(s_body_w * s_body_h * 4 / 1024)) return;
-    s_body = (uint32_t*)malloc((size_t)s_body_w * (size_t)s_body_h * 4);
-    if (!s_body) return;
-    for (y = 0; y < s_body_h; y++)
-        for (x = 0; x < s_body_w; x++) s_body[y * s_body_w + x] = body_px(x, y);
-    s_body_ok = 1;
-}
-
-static void draw_body(void) {
-    Box b;
-    int px, py, ox = LX0 * s_sx / 16, oy = LY0 * s_sy / 16;
-    if (!clip(&b, LX0 * 16, LY0 * 16, (LX0 + LW) * 16, (LY0 + LH) * 16)) return;
-    for (py = b.y0; py < b.y1; py++)
-        for (px = b.x0; px < b.x1; px++) {
-            int dx = px - ox, dy = py - oy;
-            uint32_t c;
-            if (dx < 0 || dy < 0 || dx >= s_body_w || dy >= s_body_h) continue;
-            c = s_body_ok ? s_body[dy * s_body_w + dx] : body_px(dx, dy);
-            if (c >> 24) mix(PX(px, py), c & 0xFFFFFFu, (int)(c >> 24));
-        }
-}
-
-static void face(int x, int y, int r, uint32_t c, int lit) {
-    int x16 = x * 16, y16 = y * 16;
-    disc(x16 + 16, y16 + 24, r * 16 + 8, 0, 120);
-    disc(x16, y16, r * 16, shade(c, lit ? 330 : 200), 255);
-    disc(x16 - r * 3, y16 - r * 4, r * 9, shade(c, lit ? 400 : 290), 190);
-    disc(x16 - r * 5, y16 - r * 6, r * 4, rgb(255, 255, 255), lit ? 150 : 90);
-    ring(x16, y16, r * 16 - 6, 12, shade(c, 110), 200);
-}
-
-static void stick(int x, int y, int r, int lit) {
-    int x16 = x * 16, y16 = y * 16;
-    disc(x16, y16, r * 16, rgb(14, 16, 20), 255);
-    ring(x16, y16, r * 16 - 8, 16, rgb(70, 76, 86), 200);
-    disc(x16 + 24, y16 + 32, (r - 6) * 16, 0, 140);
-    disc(x16, y16, (r - 6) * 16, lit ? rgb(120, 200, 130) : rgb(92, 98, 108), 255);
-    disc(x16, y16, (r - 10) * 16, lit ? rgb(150, 230, 160) : rgb(72, 78, 88), 255);
-    ring(x16, y16, (r - 6) * 16 - 8, 14, rgb(150, 156, 168), 120);
-}
-
-static void dpad(int x, int y, int r, uint32_t buttons, int ok) {
-    int a = 6, l = 14, i;
-    disc(x * 16, y * 16, r * 16, rgb(14, 16, 20), 255);
-    rbox(x - a, y - l, 2 * a, 2 * l, 3, rgb(96, 102, 112), 255);
-    rbox(x - l, y - a, 2 * l, 2 * a, 3, rgb(96, 102, 112), 255);
-    for (i = 0; i < 4 && ok; i++) {
-        static const uint32_t k_dir[4] = { XHW_BTN_UP, XHW_BTN_DOWN, XHW_BTN_LEFT, XHW_BTN_RIGHT };
-        static const int8_t k_dx[4] = { 0, 0, -1, 1 }, k_dy[4] = { -1, 1, 0, 0 };
-        if (buttons & k_dir[i]) rbox(x + k_dx[i] * 9 - 4, y + k_dy[i] * 9 - 4, 8, 8, 2, rgb(150, 230, 160), 255);
-    }
-    disc(x * 16, y * 16, 3 * 16, rgb(70, 76, 86), 255);
-}
-
-static void small(int x, int y, int lit) {   /* BACK, START */
-    rbox(x - 6, y - 3, 12, 7, 3, 0, 120);
-    rbox(x - 7, y - 4, 12, 7, 3, lit ? rgb(150, 230, 160) : rgb(150, 156, 168), 255);
+static void dpad(int x, int y) {
+    fill(x - 5, y - 13, 10, 26, rgb(150, 82, 18), 255);
+    fill(x - 13, y - 5, 26, 10, rgb(150, 82, 18), 255);
 }
 
 static void callout(const xhw_menu_view* v, int in) {
     int col = k_call[in].col, bx = col ? COL_R : COL_L, by = k_call[in].y, sel = in == v->pad_sel;
-    int fixed = in >= XHW_MENU_IN_MAPPABLE, lit = held(v, in);
-    int bw = tw(k_badge[in], 1) + 8;
-    uint32_t bc = badge_col(k_badge[in]), tc;
-    rbox(bx - 1, by - 1, BOX_W + 2, BOX_H + 2, 7, sel ? C_CYAN : rgb(60, 74, 100), sel ? 255 : 150);
-    rbox(bx, by, BOX_W, BOX_H, 6, sel ? C_SEL : rgb(10, 14, 26), 240);
-    if (lit) rbox(bx, by, BOX_W, BOX_H, 6, rgb(80, 200, 110), 90);
-    if (!strcmp(k_badge[in], "+") || !strcmp(k_badge[in], "LS") || !strcmp(k_badge[in], "RS") ||
-        !strcmp(k_badge[in], "LT") || !strcmp(k_badge[in], "RT") || !strcmp(k_badge[in], "ST") ||
-        !strcmp(k_badge[in], "BA") || !strcmp(k_badge[in], "L3") || !strcmp(k_badge[in], "R3"))
-        bc = rgb(96, 104, 118);
-    rbox(bx + 2, by + 2, bw, BOX_H - 4, 5, bc, 255);
-    glyphs(k_badge[in], bx + 6, by + 1, 1, R_(bc) + G_(bc) + B_(bc) > 420 ? rgb(20, 22, 30) : rgb(250, 250, 255), 255);
-    tc = sel ? rgb(255, 240, 160) : fixed ? C_DIM : v->pad_changed[in] ? C_WARM : C_TEXT;
-    text(v->pad_map[in], bx + bw + 8, by + 1, 1, tc);
-    if (v->pad_changed[in] && !fixed) disc((bx + BOX_W - 7) * 16, (by + BOX_H / 2) * 16, 40, C_WARM, 255);
+    int fixed = in >= XHW_MENU_IN_MAPPABLE, bw = tw(k_badge[in], 1) + 10;
+    uint32_t tc;
+    cbox(bx, by, BOX_W, BOX_H, 4, sel ? C_SEL_FILL : C_BOX_FILL, sel ? 230 : 190, C_AMBER, sel ? 255 : 100, 16);
+    badge(k_badge[in], bx + 3, by);
+    tc = sel ? C_TEXT : fixed ? C_DIM : v->pad_changed[in] ? C_MARK : C_VALUE;
+    text(v->pad_map[in], bx + bw + 8, by + (BOX_H - line_h(1)) / 2, 1, tc);
+    if (v->pad_changed[in] && !fixed) fill(bx + BOX_W - 10, by + 7, 4, 4, C_MARK, 255);
 }
 
 static void draw_pad(const xhw_menu_view* v) {
     int in;
-    draw_body();
-    /* the jewel */
-    disc(CX * 16, (CY - 36) * 16, 15 * 16, rgb(10, 12, 16), 255);
-    disc(CX * 16, (CY - 36) * 16, 12 * 16, rgb(60, 160, 60), 255);
-    disc((CX - 3) * 16, (CY - 40) * 16, 6 * 16, rgb(140, 220, 120), 160);
+    hologram();
     /* the leader lines */
     for (in = 0; in < XHW_MENU_IN_COUNT; in++) {
         int col = k_call[in].col, ax = CX + k_spot[in].x, ay = CY + k_spot[in].y + (in == XHW_MENU_IN_LT || in == XHW_MENU_IN_RT ? -4 : 0);
         int by = k_call[in].y + BOX_H / 2, bx = col ? COL_R : COL_L + BOX_W, ex = col ? bx - 12 : bx + 12;
         int sel = in == v->pad_sel;
-        uint32_t lc = sel ? rgb(140, 240, 220) : rgb(90, 120, 150);
-        int la = sel ? 230 : 100;
-        line(bx * 16, by * 16, ex * 16, by * 16, 22, lc, la);
-        line(ex * 16, by * 16, ax * 16, ay * 16, 22, lc, la);
-        disc(ax * 16, ay * 16, sel ? 40 : 28, lc, 255);
+        uint32_t lc = sel ? rgb(255, 230, 160) : C_AMBER;
+        int la = sel ? 255 : 110;
+        line(bx * 16, by * 16, ex * 16, by * 16, 20, lc, la);
+        line(ex * 16, by * 16, ax * 16, ay * 16, 20, lc, la);
+        disc(ax * 16, ay * 16, sel ? 40 : 26, lc, 255);
     }
-    dpad(CX + k_spot[XHW_MENU_IN_DPAD].x, CY + k_spot[XHW_MENU_IN_DPAD].y, k_spot[XHW_MENU_IN_DPAD].r, v->pad_buttons,
-         v->pad_ok);
-    stick(CX + k_spot[XHW_MENU_IN_LSTICK].x, CY + k_spot[XHW_MENU_IN_LSTICK].y, k_spot[XHW_MENU_IN_LSTICK].r,
-          held(v, XHW_MENU_IN_LSTICK) || held(v, XHW_MENU_IN_LCLICK));
-    stick(CX + k_spot[XHW_MENU_IN_RSTICK].x, CY + k_spot[XHW_MENU_IN_RSTICK].y, k_spot[XHW_MENU_IN_RSTICK].r,
-          held(v, XHW_MENU_IN_RSTICK) || held(v, XHW_MENU_IN_RCLICK));
+    dpad(CX + k_spot[XHW_MENU_IN_DPAD].x, CY + k_spot[XHW_MENU_IN_DPAD].y);
+    stick(CX + k_spot[XHW_MENU_IN_LSTICK].x, CY + k_spot[XHW_MENU_IN_LSTICK].y, k_spot[XHW_MENU_IN_LSTICK].r);
+    stick(CX + k_spot[XHW_MENU_IN_RSTICK].x, CY + k_spot[XHW_MENU_IN_RSTICK].y, k_spot[XHW_MENU_IN_RSTICK].r);
     for (in = XHW_MENU_IN_A; in <= XHW_MENU_IN_BLACK; in++)
-        face(CX + k_spot[in].x, CY + k_spot[in].y, k_spot[in].r, badge_col(k_badge[in]), held(v, in));
-    small(CX + k_spot[XHW_MENU_IN_BACK].x, CY + k_spot[XHW_MENU_IN_BACK].y, held(v, XHW_MENU_IN_BACK));
-    small(CX + k_spot[XHW_MENU_IN_START].x, CY + k_spot[XHW_MENU_IN_START].y, held(v, XHW_MENU_IN_START));
-    for (in = XHW_MENU_IN_LT; in <= XHW_MENU_IN_RT; in++)
-        if (held(v, in)) rbox(CX + k_spot[in].x - 22, CY - 68, 44, 8, 4, rgb(150, 230, 160), 200);
+        face(CX + k_spot[in].x, CY + k_spot[in].y, k_spot[in].r, badge_col(k_badge[in]));
+    fill(CX + k_spot[XHW_MENU_IN_BACK].x - 6, CY + k_spot[XHW_MENU_IN_BACK].y - 3, 12, 6, rgb(170, 96, 24), 255);
+    fill(CX + k_spot[XHW_MENU_IN_START].x - 6, CY + k_spot[XHW_MENU_IN_START].y - 3, 12, 6, rgb(170, 96, 24), 255);
     /* the selected input: a ring around it */
     if (v->pad_sel >= 0 && v->pad_sel < XHW_MENU_IN_COUNT) {
         const Spot* s = &k_spot[v->pad_sel];
         int r = s->r ? s->r + 5 : 10, sx = CX + s->x, sy = CY + s->y;
-        ring(sx * 16, sy * 16, r * 16, 40, rgb(120, 240, 220), 220);
-        ring(sx * 16, sy * 16, r * 16 + 56, 48, rgb(60, 180, 190), 90);
+        ring(sx * 16, sy * 16, r * 16, 36, rgb(255, 230, 160), 240);
     }
     for (in = 0; in < XHW_MENU_IN_COUNT; in++) callout(v, in);
 }
@@ -760,10 +792,10 @@ static void draw_band(const xhw_menu_view* v) {
     draw_frame(v);
     if (v->page == 1) {
         draw_pad(v);
-        draw_help(v, 296, 82);
+        draw_help(v, 296, CH - 38 - 296);
     } else {
         draw_rows(v);
-        draw_help(v, ROW_Y + ROWS_FIT * ROW_H + 2, CH - 36 - (ROW_Y + ROWS_FIT * ROW_H + 2));
+        draw_help(v, ROW_Y + ROWS_FIT * ROW_H + 2, CH - 38 - (ROW_Y + ROWS_FIT * ROW_H + 2));
     }
 }
 
@@ -818,9 +850,8 @@ static void geometry(void) {
 }
 
 static void drop(void) {
-    free(s_body);
-    s_body = NULL;
-    s_body_ok = 0;
+    free(s_back);
+    s_back = NULL;
     free(s_gl_mem);
     s_gl_mem = NULL;
     memset(s_gl, 0, sizeof s_gl);
@@ -850,10 +881,25 @@ static void dirty_diff(const xhw_menu_view* o, const xhw_menu_view* v) {
     }
     if (DIFF(help) || DIFF(value_help) || DIFF(note)) dirty(v->page ? 296 : ROW_Y + ROWS_FIT * ROW_H, CH - 34);
     if (v->page == 1) {
-        if (o->pad_sel != v->pad_sel || DIFF(pad_map) || DIFF(pad_changed) || o->pad_ok != v->pad_ok ||
-            o->pad_buttons != v->pad_buttons || o->pad_lx != v->pad_lx || o->pad_rx != v->pad_rx ||
-            o->pad_lt != v->pad_lt || o->pad_rt != v->pad_rt)
+        int in;
+        if (o->pad_ok != v->pad_ok) {
             dirty(84, 296);
+            return;
+        }
+        /* a move or a change: the two callouts' rows and the two spots on
+         * the controller, not the whole page (the body is drawn from shapes) */
+        for (in = 0; in < XHW_MENU_IN_COUNT; in++) {
+            if ((in == o->pad_sel) != (in == v->pad_sel) || DIFF(pad_map[in]) ||
+                o->pad_changed[in] != v->pad_changed[in]) {
+                const Spot* sp = &k_spot[in];
+                int r = (sp->r ? sp->r + 5 : 10) + 4;
+                dirty(k_call[in].y - 2, k_call[in].y + BOX_H + 2);
+                dirty(CY + sp->y - r, CY + sp->y + r);
+                /* its leader line runs between the two */
+                dirty(k_call[in].y < CY + sp->y ? k_call[in].y : CY + sp->y,
+                      (k_call[in].y > CY + sp->y ? k_call[in].y : CY + sp->y) + BOX_H);
+            }
+        }
         return;
     }
     for (r = 0; r < ROWS_FIT; r++)
@@ -870,7 +916,7 @@ void xhw_menu_show(const xhw_menu_view* v) {
     }
     if (!s_on) {
         geometry();
-        s_gl_cap = GLYPHS * (s_gw[0] * s_gh[0] + s_gw[1] * s_gh[1]);
+        s_gl_cap = (int)gc_bytes();
         s_gl_mem = (uint8_t*)malloc((size_t)s_gl_cap);
         if (!s_logged) {
             s_logged = 1;
@@ -884,7 +930,6 @@ void xhw_menu_show(const xhw_menu_view* v) {
         dirty_diff(&s_view, v);
         s_view = *v;
     }
-    if (v->page == 1 && !s_body) body_cache();
 }
 
 int xhw_menu_active(void) { return s_on; }

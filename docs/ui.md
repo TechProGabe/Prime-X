@@ -79,6 +79,18 @@ so B doesn't also leave the game's menu.
 
 ### The card (`xbox/src/hw/xhw_menu.c`)
 
+**Since 2026-11-02 it looks like Prime's own pause Options** (the user's
+pick of four mockups, "match the game vibe better ... as light as
+possible"): an amber hologram over the frame it opened on (read once at
+open; ~22% of it through an amber tint, Prime's scanlines every third
+row), chamfered amber frames on the card, the tabs, each row and the help
+box, the title "[ Xbox Port Options ]" in the game's Deface Large and
+everything else in Deface 14B with its outline (lifted from the disc
+through the game's font loader; unscii-16 without it). Rows: the selected
+one filled brighter; a value not the default in pale yellow with a mark.
+The Buttons page draws the controller as a flat amber hologram. The table
+below is the 2026-11-01 layout; the parts are the same.
+
 576 x 416 in 480-line pixels, centred, drawn at the output's scale: 1x at
 480, 3/4 as wide at 480 when the dashboard says 16:9 (the TV stretches it
 back), 1.5x at 720p. All shapes are antialiased from distances and the text
@@ -87,7 +99,7 @@ is unscii-16 supersampled to the scale.
 | part | what |
 |---|---|
 | glass | a cyan border, a navy gradient, scanlines, the scan visor's corner brackets |
-| header | **XBOX PORT OPTIONS** at 2x, a small orange PRIME-X, top right the mode now ("Now: 720p 16:9") |
+| header | "[ Xbox Port Options ]" in Deface Large, centred; the mode now top left ("720p 16:9") |
 | tabs | Video, Controller, Buttons, Gameplay, System between LT and RT badges; the current one lit |
 | rows | the label left; the value right between two arrows, with pips under it (how many choices, which one); a value that isn't the default is orange with a dot; a row that applies at the next start has a `*` |
 | help box | what the selected row does (white), what the shown value does (cyan), a note (orange: "* Video Mode changes the next time Prime-X starts", "The dashboard doesn't allow 720p: the next start uses 480p", "Press Y again ...") |
@@ -130,7 +142,7 @@ were the user's first suspect).
 | Video | Widescreen HUD | Inner / Edges | where the visor's readouts sit at 16:9 |
 | Video | Field of View | 55 / 65 / 75 | the GameCube's / wider / widest |
 | Video | Frame Rate | Hide / Show | the counter top left |
-| Controller | Aiming | GameCube / Dual Stick | hold RT and the left stick aims, the right stick picks beams / the right stick aims and looks, the left one moves and strafes, hold Beam Select and tilt the right stick for a beam (GitHub #2, 2026-11-02) |
+| Controller | Aiming | GameCube / Dual Stick (the default) | hold RT and the left stick aims, the right stick picks beams / the right stick aims and looks, the left one moves and strafes, hold Beam Select and tilt the right stick for a beam (GitHub #2, 2026-11-02) |
 | Controller | Aim Speed | Low / Medium / High | Dual Stick's turn at full tilt: 120 / 180 / 250 degrees a second |
 | Controller | Rumble Strength | Low / Medium / Full | 40 / 70 / 100% (On/Off is the game's own row) |
 | Controller | Stick Dead Zone | Low / Medium / High | 10 / 20 / 30% |

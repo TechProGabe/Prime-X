@@ -483,7 +483,7 @@ swaps it, as Melee-X's does.
   relaunches the XBE (`xhw_reboot_self`).
 - **Dual Stick aiming** (2026-11-02, GitHub #2; the user: "make sure it's
   high performance and works well, easy to configure"): Port Options >
-  Controller > **Aiming: GameCube / Dual Stick** (GameCube the default) and
+  Controller > **Aiming: GameCube / Dual Stick** and
   **Aim Speed: Low / Medium / High** (120 / 180 / 250 degrees a second at
   full tilt, up and down at 3/4; a fifth linear, the rest squared, so a
   light tilt aims finely). It is MetroidPrimePort's twin stick: the game
@@ -499,6 +499,33 @@ swaps it, as Melee-X's does.
   default) or is free, else to the first free stick click or BACK. Reverse
   Y-Axis On is flight style here too. settings.ini: `[input] aim = gamecube |
   dual`, `aim_speed = low | medium | high`.
+  **Dual Stick is the default** (the user, 2026-11-02: "make dual stick on by
+  default"; asked, the agent agreed: the Xbox pads have the stick, players
+  expect it, Remastered defaults to it), an exception to "retail by
+  default". The default layout's Black is Beam Select (White stays Map); a
+  settings.ini with Dual Stick and no Beam Select gets one at load, as the
+  row does.
+- **Port Options look like Prime's pause Options** (2026-11-02, the user:
+  "match the game vibe better and be as high performance as possible, as
+  light as possible"; picked mockup A of four): an amber hologram (the
+  frame behind the card read once at open, shown through the glass at
+  ~22% under an amber tint, every third row darker as the pause screen's
+  scanlines), chamfered frames and tabs, and the disc's Deface fonts
+  (14B, Large) lifted through the game's font loader and decoded once into
+  texel cells (`port_menu.cpp` `LiftFont`, a few KB), drawn with their
+  outline; unscii if a font can't be had. Lighter: no rounded-box distance
+  fields for the glass, no per-pixel scanline gradient, the controller a
+  flat hologram from a few shapes (the shaded, cached body is gone: up to
+  ~0.5 MB), and a move on the Buttons page redraws only the two callouts'
+  rows and spots. Cost while it's up: the backdrop (~1 MB at 720p, freed at
+  close; opaque glass without it).
+
+- **`_snwprintf` has a body** (2026-11-02, `xbox/src/sdk/libc_fill.c`): nxdk's
+  is `assert(0)`; libc++'s `std::to_wstring(float/double)` formats through
+  it. `check_stubs.py` flagged it after a relink (the chain ran through a
+  float constant's bytes, likely an accidental match, but it gets a real
+  body rather than an allowance): the wide format narrowed, `vsnprintf`,
+  the result widened, MSVC's -1 when the buffer is short.
 
 ## Edits to imported code
 

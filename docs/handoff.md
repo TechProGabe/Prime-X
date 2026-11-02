@@ -50,6 +50,11 @@ has each one's why.
   lighting (each press redrew the controller twice).
 - **"Restart now?"** after changing Video Mode (JayXbox): closing asks
   Restart later / Restart now, Later selected; Now saves and relaunches.
+- **Port Options restyled as Prime's pause Options** (the user picked
+  mockup A of four, "match the game vibe ... as light as possible"): amber
+  hologram over the game, the disc's Deface fonts, chamfered frames, the
+  controller as a flat hologram. **Dual Stick on by default** (the user),
+  Black is Beam Select by default.
 - **Dual Stick aiming** (GitHub #2, the user: "add in GitHub issue 2 ...
   high performance and works well, easy to configure"): Controller tab,
   Aiming GameCube / Dual Stick and Aim Speed; MetroidPrimePort's twin stick

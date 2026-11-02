@@ -143,3 +143,30 @@ void abort(void) {
     xhw_logf("[ABORT] abort() called from %p", __builtin_return_address(0));
     xhw_fatal("Game error", "abort() was called; boot.log has the lines before it.");
 }
+
+/* nxdk's _snwprintf is assert(0) (xboxrt wchar_ext_.c, the file's only
+ * function, so this one stands in for it). libc++'s std::to_wstring(float,
+ * double) formats through it, and tools/xbox/check_stubs.py found it
+ * reachable (2026-11-02). The format and its output are ASCII in practice
+ * ("%f"): narrowed, formatted by vsnprintf, widened. MSVC's semantics, which
+ * libc++ expects of it: -1 and no terminator when the buffer is too small. */
+#include <stdarg.h>
+#include <wchar.h>
+
+int _snwprintf(wchar_t* buffer, size_t count, const wchar_t* format, ...) {
+    char fmt[128], out[512];
+    size_t i;
+    int n;
+    va_list ap;
+    if (!format) return -1;
+    for (i = 0; i + 1 < sizeof fmt && format[i]; i++) fmt[i] = (char)(format[i] < 128 ? format[i] : '?');
+    fmt[i] = '\0';
+    va_start(ap, format);
+    n = vsnprintf(out, sizeof out, fmt, ap);
+    va_end(ap);
+    if (n < 0) return -1;
+    if ((size_t)n >= sizeof out) n = (int)sizeof out - 1;
+    if (!buffer) return n;
+    for (i = 0; i < count && i <= (size_t)n; i++) buffer[i] = (wchar_t)(unsigned char)out[i];
+    return (size_t)n < count ? n : -1;
+}

@@ -52,9 +52,10 @@ static const struct { const char* name; uint16_t bits; } k_gc[] = {
 };
 #define N_GC (int)(sizeof k_gc / sizeof k_gc[0])
 
-/* the default layout: GameCube-like by position */
+/* the default layout: GameCube-like by position; Black is Beam Select for
+ * Dual Stick aiming, the default since 2026-11-02 (White is the map) */
 static const char* const k_default[N_XBOX] = {
-    "A", "X", "B", "Y", "Z", "Z", "START", "NONE", "NONE", "NONE", "UP", "DOWN", "LEFT", "RIGHT",
+    "A", "X", "B", "Y", "Z", "BEAM", "START", "NONE", "NONE", "NONE", "UP", "DOWN", "LEFT", "RIGHT",
 };
 
 static uint16_t gc_bits(const char* name) {
@@ -86,7 +87,7 @@ static void defaults(xsdk_settings* st) {
     st->fov = 55;
     st->skip_cutscenes = 0;
     st->sim_mode = XSDK_SIM_AUTO;
-    st->aim = XSDK_AIM_GAMECUBE;
+    st->aim = XSDK_AIM_DUAL;   /* the user, 2026-11-02: "make dual stick on by default" */
     st->aim_speed = XSDK_AIM_SPEED_MEDIUM;
     for (p = 0; p < 4; p++) {
         xsdk_port_settings* ps = &st->port[p];
@@ -362,6 +363,22 @@ static int parse(FILE* f, xsdk_settings* st) {
             snprintf(which, sizeof which, "[port%d]", p + 1);
             problem(0, "%s: no button %s; its buttons reset", which, !fire ? "is Fire (A)" : "is Pause (START)");
             for (i = 0; i < N_XBOX; i++) ps->bind[i].gc = gc_bits(k_default[i]);
+        }
+    }
+    /* Dual Stick aiming with no Beam Select button (a settings.ini from
+     * before it, whose Black is the map): Black takes it if it only doubles
+     * White's map or does nothing, else the first free stick click or BACK */
+    if (st->aim == XSDK_AIM_DUAL) {
+        for (p = 0; p < 4; p++) {
+            xsdk_port_settings* ps = &st->port[p];
+            int i, have = 0, pick = -1;
+            for (i = 0; i < N_XBOX; i++) have |= ps->bind[i].gc == XSDK_PAD_BEAM;
+            if (have) continue;
+            if (ps->bind[5].gc == 0 || (ps->bind[5].gc == PAD_TRIGGER_Z && ps->bind[4].gc == PAD_TRIGGER_Z)) pick = 5;
+            else if (ps->bind[9].gc == 0) pick = 9;
+            else if (ps->bind[8].gc == 0) pick = 8;
+            else if (ps->bind[7].gc == 0) pick = 7;
+            if (pick >= 0) ps->bind[pick].gc = XSDK_PAD_BEAM;
         }
     }
     return saw;

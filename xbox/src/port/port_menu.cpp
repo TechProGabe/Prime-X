@@ -33,6 +33,12 @@
 #include "port_debug.h"
 
 #include "MetroidPrime/Player/CGameState.hpp"
+#include "Kyoto/CSimplePool.hpp"
+#include "Kyoto/Graphics/CTexture.hpp"
+#include "Kyoto/Text/CRasterFont.hpp"
+#include "port_font_accent.h"
+
+#include <vector>
 
 #include <dolphin/pad.h>
 
@@ -377,7 +383,7 @@ void RestoreAll() {
 void Status(char* out, size_t cap) {
   const xhw_video_mode* vm = xhw_video();
   const char* mode = vm->height >= 720 ? "720p" : vm->progressive ? "480p" : "480i";
-  snprintf(out, cap, "Now: %s %s", mode, PortDebug::AspectMode() == PortDebug::kAspect_16_9 ? "16:9" : "4:3");
+  snprintf(out, cap, "%s %s", mode, PortDebug::AspectMode() == PortDebug::kAspect_16_9 ? "16:9" : "4:3");
 }
 
 void Fill() {
@@ -448,13 +454,14 @@ void Fill() {
       snprintf(v.note, sizeof v.note, "This input can't be remapped.");
     } else {
       const SAction& a = ActionOf(BindGc(sel));
-      snprintf(v.help, sizeof v.help, "%s: %s. A and X change its action (taking another button's action swaps the two).",
-               kButtonNames[sel], a.name);
+      snprintf(v.help, sizeof v.help, "%s: %s.", kButtonNames[sel], a.name);
       snprintf(v.value_help, sizeof v.value_help, "%s", a.help);
       if (BindGc(sel) == PAD_BUTTON_A || BindGc(sel) == PAD_BUTTON_START) {
         snprintf(v.note, sizeof v.note, "Fire and Pause always stay on some button.");
       } else if (BindGc(sel) == XSDK_PAD_BEAM && !dual) {
         snprintf(v.note, sizeof v.note, "Beam Select is for Dual Stick aiming (Controller tab).");
+      } else {
+        snprintf(v.note, sizeof v.note, "Taking another button's action swaps the two.");
       }
     }
   } else {
@@ -709,6 +716,100 @@ void Frame() {
   xhw_menu_show(&sView);
 }
 
+// ---- the game's lettering for the card (xhw.h xhw_menu_font) ----
+// The disc's Deface fonts through the game's own loader (the pause screen's
+// text and its large titles), their cells decoded once from the font
+// texture (the GameCube's tiled formats, PortFontAccent::Decode) into plain
+// texel values the card draws with: a few KB, kept for the run. The tokens
+// are let go at once. A font that can't be had leaves the card's unscii.
+const uint32_t kFontIds[2] = {0xC29C51F1, 0xFE94BD23}; // FONT_Deface14B, FONT_DefaceLarge
+xhw_menu_font sFont[2];
+std::vector< uint8_t > sFontCells[2];
+int sFontState[2]; // 0 not tried, 1 set, -1 failed
+
+bool LiftFont(int which) {
+  if (gpSimplePool == nullptr) {
+    return false;
+  }
+  TLockedToken< CRasterFont > font(gpSimplePool->GetObj(SObjectTag('FONT', kFontIds[which])));
+  if (*font == nullptr) {
+    return false;
+  }
+  TLockedToken< CTexture > tex(font->GetTexture());
+  if (*tex == nullptr) {
+    return false;
+  }
+  const ETexelFormat tf = tex->GetTexelFormat();
+  if (tf != kTF_I4 && tf != kTF_I8 && tf != kTF_C4 && tf != kTF_C8) {
+    xhw_logf("[MENU] font %08x: texel format %d, not used", (unsigned)kFontIds[which], (int)tf);
+    return false;
+  }
+  const PortFontAccent::Format format = static_cast< PortFontAccent::Format >(tf);
+  const int texW = tex->GetWidth(), texH = tex->GetHeight();
+  const uint8_t* texels = static_cast< const uint8_t* >(tex->GetConstBitMapData(0));
+  const size_t texSize = tex->GetMemoryAllocated();
+  if (texels == nullptr) {
+    return false;
+  }
+  xhw_menu_font& f = sFont[which];
+  std::vector< uint8_t >& cells = sFontCells[which];
+  memset(&f, 0, sizeof f);
+  cells.clear();
+  int inked = 0;
+  for (int ch = ' '; ch <= '~'; ++ch) {
+    const CGlyph* g = font->GetGlyph(static_cast< wchar_t >(ch));
+    xhw_menu_glyph& out = f.glyph[ch - ' '];
+    if (g == nullptr) {
+      continue;
+    }
+    out.a = g->GetA();
+    out.b = g->GetB();
+    out.c = g->GetC();
+    out.top = g->GetBaseLine();
+    const int x0 = static_cast< int >(g->GetStartU() * texW + 0.5f);
+    const int y0 = static_cast< int >(g->GetStartV() * texH + 0.5f);
+    const int w = g->GetCellWidth(), h = g->GetCellHeight();
+    if (w <= 0 || h <= 0 || w > 64 || h > 64 || x0 < 0 || y0 < 0 || x0 + w > texW || y0 + h > texH) {
+      continue;
+    }
+    out.w = static_cast< int16_t >(w);
+    out.h = static_cast< int16_t >(h);
+    out.off = static_cast< uint32_t >(cells.size());
+    for (int y = 0; y < h; ++y) {
+      for (int x = 0; x < w; ++x) {
+        uint8_t v = 0;
+        PortFontAccent::Decode(texels, texSize, format, texW, texH, x0 + x, y0 + y, v);
+        v &= 3; // bit 0 the ink, bit 1 the outline (value 3: neither, as the renderer's palette)
+        if (v == 3) {
+          v = 0;
+        }
+        inked += v & 1;
+        cells.push_back(v);
+      }
+    }
+  }
+  if (inked == 0) {
+    xhw_logf("[MENU] font %08x: no ink decoded (format %d), not used", (unsigned)kFontIds[which], (int)tf);
+    return false;
+  }
+  f.ascent = static_cast< int16_t >(font->GetBaseLine());
+  f.height = static_cast< int16_t >(font->GetMonoHeight());
+  f.cells = cells.data();
+  xhw_logf("[MENU] font %08x: %dx%d texture (format %d), line %d, baseline %d, %u KB of cells",
+           (unsigned)kFontIds[which], texW, texH, (int)tf, f.height, f.ascent,
+           (unsigned)(cells.size() + 1023) / 1024);
+  return true;
+}
+
+void EnsureFonts() {
+  for (int i = 0; i < 2; ++i) {
+    if (sFontState[i] == 0) {
+      sFontState[i] = LiftFont(i) ? 1 : -1;
+      xhw_menu_set_font(i, sFontState[i] > 0 ? &sFont[i] : nullptr);
+    }
+  }
+}
+
 // The game held until the popup closes: 60 times a second the pads are
 // read, the view filled and what changed drawn onto the frame on screen;
 // the disc's and ARAM's completions (the music's stream reads) and the
@@ -749,6 +850,7 @@ void OpenMenu() {
   }
   sDir = 15; // a held direction waits to be let go
   sAsk = false;
+  EnsureFonts();
   Fill();
   xhw_menu_show(&sView);
   xhw_logf("[MENU] Port Options opened");
