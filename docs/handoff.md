@@ -52,13 +52,23 @@ from slot 2's toml with its own paths, or keep using 2 and 3.
 
 ## Next session, in order
 
-0. **v1.0-beta2 is out** (2026-11-01): check the Actions run for the tag
-   went through (build, host tests incl. `test_settings.py`, the stub
-   check) and the release zip is there. Player bug reports come with a
-   boot.log only if they turn Log File on (Xbox Port Options > System).
-   On the consoles, with Log File on, a move in the popup should log no
-   `MP stall`; the notice from a bad settings.ini hasn't been seen on a
-   screen yet.
+0. **v1.0-beta2 is out** (2026-11-01): https://github.com/TechProGabe/Prime-X/releases/tag/v1.0-beta2,
+   published by a manual run of the workflow on `main` (9a142a9) with
+   `release=v1.0-beta2`; the tag stays on f49c3d5 (main differs only in
+   host tests). It was the first CI run to pass: the Tests step had failed
+   since RC1 (`test_aram`'s stubs behind `ar.c`; the C tests needing `-lm`
+   on Linux; `test_settings` used `_stricmp`). GitHub #1 closed. **Byte
+   check**: the zip's CRCs pass and its `default.xbe` (MD5
+   1a69db87fe79c1b697eb7649ea025c67) is CI's artifact byte for byte; it is
+   not the consoles' MSYS2 image (7df2779e...): nxdk's source paths are
+   baked in (`C:Þv
+xdk` against `/home/runner/toolchain/nxdk`) and CI
+   builds its own LLVM 21, so 25 of 17,674 functions differ in inlining
+   (same source, `default.tbn` identical). The released XBE booted clean in
+   xemu (code check, 130 s, no stall). Player reports come with a boot.log
+   only if they turn Log File on (Xbox Port Options > System). On the
+   consoles, with Log File on, a move in the popup should log no `MP
+   stall`; the notice from a bad settings.ini hasn't been seen on a screen.
 1. **Watch in the next round** (none planned: hardware only when truly
    needed, the user):
    - the page-0 repair: a `[MEM] page 0 at 0x80000000 read-only ...
