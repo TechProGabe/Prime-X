@@ -377,6 +377,15 @@ void xsdk_settings_load(void) {
     xhw_logf("[SETTINGS] loaded %s", p);
     /* the line stays until the next save, which doesn't write it */
     if (saw & SAW_RAM128) xhw_logf("[SETTINGS] ram128 = 1 ignored: 128 MB consoles run in 64 MB");
+#if XHW_TEST_BUILD
+    {   /* test builds: "env PX_FUSION=0|1" (autopad.txt) over settings.ini */
+        const char* fu = getenv("PX_FUSION");
+        if (fu) {
+            g_xsdk_settings.fusion_suit = atoi(fu) != 0;
+            xhw_logf("[SETTINGS] PX_FUSION: fusion_suit = %d", g_xsdk_settings.fusion_suit);
+        }
+    }
+#endif
     log_summary("in use");
     if (s_problems) {
         /* a hand edit Prime-X couldn't follow: what it used instead goes

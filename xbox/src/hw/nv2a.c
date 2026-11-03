@@ -1254,7 +1254,15 @@ static void zeta_guard(int where) {
     }
 }
 
+/* color: CLEAR_RGB | CLEAR_A, the parts of the colour cleared (GX's copy
+ * clear leaves what GXSetColorUpdate / GXSetAlphaUpdate turned off) */
+#define CLEAR_RGB 1
+#define CLEAR_A 2
+#define CLEAR_COLOR (CLEAR_RGB | CLEAR_A)
 static void clear_fb(int x, int y, int w, int h, uint32_t argb, int color, int depth, uint32_t z24) {
+    /* a 16-bit surface has no alpha: its colour is the RGB */
+    const int full = s_bpp == 32 ? color == CLEAR_COLOR : (color & CLEAR_RGB) != 0;
+    const int part = s_bpp == 32 && color && !full;
     if (x < 0) { w += x; x = 0; }
     if (y < 0) { h += y; y = 0; }
     if (x + w > s_fbw) w = s_fbw - x;
@@ -1264,8 +1272,23 @@ static void clear_fb(int x, int y, int w, int h, uint32_t argb, int color, int d
     /* A8R8G8B8: pb_fill converts to the surface's format itself (converted
      * here as well, 16-bit clears came out near black) */
     if (depth) zeta_guard(0);
-    if (color && !(depth && (s_copy_fix & 2))) pb_fill(x, y, w, h, argb);
-    if (depth && color && !(s_copy_fix & 2)) zeta_guard(1);
+    if (full && !(depth && (s_copy_fix & 2))) pb_fill(x, y, w, h, argb);
+    if (part) {
+        /* RGB or alpha alone. Prime's Phazon Suit glow copies the alpha
+         * with colour updates off (CCubeRenderer::CopyTex): clearing the
+         * colour too took the whole scene but what was drawn after it,
+         * Samus and the room behind the save prompt and the pause menu
+         * (a tester on gold, 2026-11-03; every item, so the suit) */
+        uint32_t* p = pb_begin();
+        p = pb_push1(p, NV097_SET_CLEAR_RECT_HORIZONTAL, (uint32_t)((x + w - 1) << 16) | (uint32_t)x);
+        p = pb_push1(p, NV097_SET_CLEAR_RECT_VERTICAL, (uint32_t)((y + h - 1) << 16) | (uint32_t)y);
+        p = pb_push1(p, NV097_SET_COLOR_CLEAR_VALUE, argb);
+        p = pb_push1(p, NV097_CLEAR_SURFACE,
+                     color & CLEAR_RGB ? NV097_CLEAR_SURFACE_R | NV097_CLEAR_SURFACE_G | NV097_CLEAR_SURFACE_B
+                                       : NV097_CLEAR_SURFACE_A);
+        pb_end(p);
+    }
+    if (depth && full && !(s_copy_fix & 2)) zeta_guard(1);
     if (depth) {
         uint32_t* p = pb_begin();
         uint32_t zv = pb_DepthFmt != NV097_SET_SURFACE_FORMAT_ZETA_Z16 ? z24 << 8
@@ -1275,7 +1298,7 @@ static void clear_fb(int x, int y, int w, int h, uint32_t argb, int color, int d
         p = pb_push1(p, NV097_SET_CLEAR_RECT_HORIZONTAL, (uint32_t)((x + w - 1) << 16) | (uint32_t)x);
         p = pb_push1(p, NV097_SET_CLEAR_RECT_VERTICAL, (uint32_t)((y + h - 1) << 16) | (uint32_t)y);
         p = pb_push1(p, NV097_SET_ZSTENCIL_CLEAR_VALUE, zv);
-        if (color && (s_copy_fix & 2)) {   /* XGX_COPY_FIX 2: one clear for both, colour as pb_fill */
+        if (full && (s_copy_fix & 2)) {   /* XGX_COPY_FIX 2: one clear for both, colour as pb_fill */
             p = pb_push1(p, NV097_SET_COLOR_CLEAR_VALUE,
                          s_bpp == 16 ? (argb >> 8 & 0xF800) | (argb >> 5 & 0x07E0) | (argb >> 3 & 0x001F) : argb);
             what |= NV097_CLEAR_SURFACE_COLOR;
@@ -1306,7 +1329,7 @@ static int copy_argb8(void);
 void xgx_clear(const int32_t r[4], const uint8_t rgba[4], uint32_t z24, int color, int alpha, int depth) {
     int x0, y0, x1, y1;
     uint32_t argb = (uint32_t)rgba[3] << 24 | (uint32_t)rgba[0] << 16 | (uint32_t)rgba[1] << 8 | rgba[2];
-    (void)alpha;
+    color = (color ? CLEAR_RGB : 0) | (alpha ? CLEAR_A : 0);
 #ifdef XGX_DEBUG_TRACE
     if (s_fbdump_once) xhw_logf("[DRAW] clear %d,%d %dx%d z %06x depth %d", (int)r[0], (int)r[1], (int)r[2], (int)r[3], (unsigned)z24, depth);
 #endif
@@ -1557,10 +1580,11 @@ static void frame_open(void) {
      * first pending clear (GXCopyDisp's) writes colour and depth over the
      * whole framebuffer anyway, as it does without a pillarbox: there are
      * no bars, and the fill and the wait for it were spent for nothing. */
-    if (!s_npending_clear || !s_pending_clear[0].color || !s_pending_clear[0].depth || s_pending_clear[0].x > 0 ||
+    if (!s_npending_clear || s_pending_clear[0].color != CLEAR_COLOR || !s_pending_clear[0].depth ||
+        s_pending_clear[0].x > 0 ||
         s_pending_clear[0].y > 0 || s_pending_clear[0].x + s_pending_clear[0].w < s_fbw ||
         s_pending_clear[0].y + s_pending_clear[0].h < s_fbh)
-        clear_fb(0, 0, s_fbw, s_fbh, 0xFF000000u, 1, 1, 0xFFFFFF);
+        clear_fb(0, 0, s_fbw, s_fbh, 0xFF000000u, CLEAR_COLOR, 1, 0xFFFFFF);
     for (i = 0; i < s_npending_clear; i++)
         clear_fb(s_pending_clear[i].x, s_pending_clear[i].y, s_pending_clear[i].w, s_pending_clear[i].h,
                  s_pending_clear[i].argb, s_pending_clear[i].color, s_pending_clear[i].depth, s_pending_clear[i].z24);
@@ -1875,7 +1899,7 @@ void xgx_present(int black) {
     uint64_t t_flip;
     frame_open();
     gput_mark(1);
-    if (black) clear_fb(0, 0, s_fbw, s_fbh, 0xFF000000u, 1, 0, 0);
+    if (black) clear_fb(0, 0, s_fbw, s_fbh, 0xFF000000u, CLEAR_COLOR, 0, 0);
     pb_budget();   /* the frame's pushbuffer peak */
     if (s_fps_on && !black) fps_overlay();
     menu = !black && xhw_menu_active();   /* the Port Options popup: over everything else */
@@ -4469,6 +4493,38 @@ static uint32_t copy_dim(uint32_t v) {
     uint32_t p = (uint32_t)pot((int)v);
     return p > 1 && p - v > v - p / 2 ? p / 2 : p;
 }
+
+#ifdef XGX_DEBUG_HELD
+void xgx_tex_debug(const char* what, uint32_t tex) {
+    const Tex* t;
+    if (!tex || tex >= MAX_TEX || !s_tex[tex].used) {
+        xhw_logf("[HELD] %s: texture %u not in use", what, tex);
+        return;
+    }
+    t = &s_tex[tex];
+    xhw_logf("[HELD] %s: tex %u %ux%u levels %u rect %u nvfmt %02x, %u bytes at %p, gen %u, colour known %u "
+             "uniform %u avg %08x",
+             what, tex, t->w, t->h, t->levels, t->rect, t->nvfmt, t->bytes, t->mem, t->gen, t->color_known,
+             t->uniform, t->avg);
+}
+
+void xgx_tex_debug_dump(uint32_t tex) {
+    static uint32_t s_dump_frame = 0xFFFFFFFFu, s_dump_tex, s_dumps;
+    const Tex* t;
+    uint32_t bpp;
+    if (!s_shot_once || !tex || tex >= MAX_TEX || !s_tex[tex].used || s_dumps >= 8) return;
+    if (s_dump_frame == s_frame && s_dump_tex == tex) return;
+    s_dump_frame = s_frame;
+    s_dump_tex = tex;
+    t = &s_tex[tex];
+    bpp = t->levels == 1 && !t->rect && t->w && t->h ? t->bytes * 8 / ((uint32_t)t->w * t->h) : 0;
+    if ((bpp != 16 && bpp != 32) || t->w > 1024) return;
+    s_dumps++;
+    wait_idle();   /* the copy's draw has written it */
+    xgx_tex_debug("dump (next shot file, swizzled)", tex);
+    xhw_fbdump_file(t->mem, (int)t->w, (int)t->h, (int)bpp, (int)(t->w * bpp / 8));
+}
+#endif
 
 uint32_t xgx_tex_from_efb(const int32_t src[4], uint32_t dst_w, uint32_t dst_h, int mode, uint32_t reuse) {
     static uint32_t* buf;

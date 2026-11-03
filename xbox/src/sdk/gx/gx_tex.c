@@ -80,6 +80,51 @@ static uint32_t s_st_map_cleared;                      /* texmaps drop_at emptie
 #define XGX_TEX_STALE_FIX 1
 #endif
 
+#ifdef XGX_DEBUG_HELD
+/* The pause blur's held copy (CCameraBlurPass, 320x240 at 480p) reads as a
+ * flat colour on the gold console, not in xemu (2026-11-03): [HELD] lines
+ * on big EFB copies, their binds and their drops (xgx.h xgx_tex_debug). */
+#define HELD_MIN 20000u   /* w*h of a copy or bind worth following */
+static uint32_t s_held_logs;
+#define HELD_LOG(...)                                       \
+    do {                                                    \
+        if (s_held_logs < 600) {                            \
+            s_held_logs++;                                  \
+            xhw_logf(__VA_ARGS__);                          \
+        }                                                   \
+    } while (0)
+/* one line per address when what it holds changes, or every 300 frames */
+typedef struct {
+    const void* addr;
+    uint32_t tex, state, when;
+} HeldSeen;
+static int held_new(HeldSeen* t, const void* addr, uint32_t tex, uint32_t state, uint32_t now) {
+    int i, old = 0;
+    for (i = 0; i < 4; i++)
+        if (t[i].addr == addr) {
+            if (t[i].tex == tex && t[i].state == state && now - t[i].when < 300) return 0;
+            break;
+        }
+    if (i == 4)
+        for (i = 1; i < 4; i++)
+            if (t[i].when < t[old].when) old = i;
+    if (i == 4) i = old;
+    t[i].addr = addr;
+    t[i].tex = tex;
+    t[i].state = state;
+    t[i].when = now;
+    return 1;
+}
+/* the destinations big copies went to: only binds there are followed */
+static const void* s_held_dest[8];
+static int held_dest(const void* p) {
+    int i;
+    for (i = 0; i < 8; i++)
+        if (s_held_dest[i] == p) return 1;
+    return 0;
+}
+#endif
+
 /* port (game code): the game's CTexture believes a texmap still holds what
  * it loaded there and skips loading it again (as on the GameCube); a map
  * this cache empties must be loaded again (CTexture::InvalidateTexmap) */
@@ -432,6 +477,12 @@ static int is_bound(uint32_t tex) {
 static void drop_at(int i) {
     Entry* e = &s_cache[i];
     int m, last = s_count - 1;
+#ifdef XGX_DEBUG_HELD
+    if (e->efb && (uint32_t)e->w * e->h >= HELD_MIN)
+        HELD_LOG("[HELD] drop copy at %p %ux%u tex %u (efb %u), idle %u frames, frame %u, from %p",
+                 (const void*)e->data, e->w, e->h, e->tex, e->efb, s_frame - e->last_used, s_frame,
+                 __builtin_return_address(0));
+#endif
     if (e->tex) {
         for (m = 0; m < XGX_MAX_MAPS; m++)
             if (g_xgx.map[m].tex == e->tex) {
@@ -1073,6 +1124,21 @@ found:
         drop(e);   /* an idle copy's memory, now a texture of another size */
         e = NULL;
     }
+#ifdef XGX_DEBUG_HELD
+    if ((uint32_t)o->w * o->h >= HELD_MIN && ((e && e->efb) || held_dest(o->data))) {
+        static HeldSeen s_seen[4];
+        const uint32_t state = !e ? 0 : e->efb ? 1 : 2;
+        if (held_new(s_seen, o->data, e ? e->tex : 0, state, s_frame)) {
+            HELD_LOG("[HELD] bind %ux%u fmt %u at %p, frame %u: %s", o->w, o->h, o->fmt, (const void*)o->data,
+                     s_frame,
+                     state == 1   ? "the EFB copy"
+                     : state == 2 ? "a texture from memory"
+                                  : "nothing cached, uploads from memory");
+            if (e) xgx_tex_debug("  bound", e->tex);
+        }
+        if (e) xgx_tex_debug_dump(e->tex);
+    }
+#endif
     if (e && !e->efb && tex_due(e)) {
         EntryCold* c = cold_of(e);
         int quick = c->stable >= TEX_STABLE, texels;
@@ -1201,6 +1267,17 @@ uint32_t gx_tex_efb_texture(const void* dest) {
 /* EFB copy: remember which texture now holds the pixels at `dest` */
 void gx_tex_note_efb_copy(const void* dest, uint32_t tex, uint32_t w, uint32_t h, uint32_t fmt) {
     chain_init();
+#ifdef XGX_DEBUG_HELD
+    if (w * h >= HELD_MIN) {
+        static HeldSeen s_seen[4];
+        static int s_next;
+        if (!held_dest(dest)) s_held_dest[s_next++ & 7] = dest;
+        if (held_new(s_seen, dest, tex, 0, s_frame) || !tex) {
+            HELD_LOG("[HELD] copy %ux%u fmt %u to %p, frame %u: tex %u", w, h, fmt, dest, s_frame, tex);
+            if (tex) xgx_tex_debug("  made", tex);
+        }
+    }
+#endif
     for (;;) {
         int i, hit = -1;
         for (i = s_bucket[bucket_of((const uint8_t*)dest)]; i >= 0; i = s_cache[i].next)

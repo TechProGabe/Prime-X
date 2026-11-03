@@ -3,9 +3,35 @@
 Update this at the end of every session: what was done, what's next,
 what's broken, anything the next agent would otherwise rediscover.
 
-## Session 2026-11-03 (on `dev`, after beta3): black chunks; two fixed control layouts
+## Session 2026-11-03 (on `dev`, after beta3): black chunks; two fixed control layouts; Phazon Suit save screen
 
-Two requests from the user, both on `dev`, not on a console yet:
+**Results first.** Both fixes below were confirmed on gold's console
+or in xemu; `dev` has them, `main` doesn't. Gold's `Prime-X` folder has the
+ship build of 72e329f (layouts + texture fixes, not the clear fix);
+`Prime-X-{A,B}-{station,title}` and `Prime-X-held` are debug folders
+that can go.
+
+- **Black chunks: fixed, confirmed on gold.** The tester saw them in
+  image A (fixes off) only; A logged 872 and 1163 binds per 600 frames of
+  an overwritten copy, B dropped one once and drew none. Logs:
+  `C:\xemu\hw\prime\logs-blackgold` (`run1b\boot_prev.log` A,
+  `run1b\boot.log` B).
+- **Samus missing during the save sequence, black behind the pause
+  menu: fixed** (decisions.md "An EFB copy's clear writes only what the
+  updates let through"). The Phazon Suit's glow copies the alpha with
+  colour updates off; our copy clear wiped the colour too, so the scene
+  went but what came after (the station's light). It looked
+  console-only because the console folders give every item (Phazon
+  Suit) and xemu's settings.ini has the Fusion Suit; `env PX_FUSION=0`
+  + `PX_ALL_ITEMS=1` shows it in xemu, `env PX_COPY_CLEAR_ALL=1` brings
+  the old clear back for an A/B (xemu: before flat brown and black, after
+  the blurred room and Samus). Found with the gold round "held copy"
+  (`-DXGX_DEBUG_HELD`, kept: `[HELD]` lines on big EFB copies, binds and
+  drops; a BACK screenshot also writes the bound copy's texels,
+  swizzled, as the next shotNN.bmp). Not yet on a console: next ship
+  build for gold should carry it.
+
+The requests, in order:
 
 - **Black chunks of a Chozo room after saving or loading** (a tester:
   "only temporarily after saving or loading into a save"; `shot26.webp`,

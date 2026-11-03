@@ -193,7 +193,8 @@ void* xgx_vtx_alloc(uint32_t count, uint32_t stride);
  * vertices allocated under one value stay intact while it holds */
 uint32_t xgx_vtx_ring_gen(void);
 void xgx_draw(uint32_t prim, uint32_t count, const XgxLayout* layout, XgxState* st);
-/* Clear the current EFB region (logical rect) to the given colour / depth. */
+/* Clear the current EFB region (logical rect) to the given colour / depth:
+ * color the RGB, alpha the alpha, depth the depth (each 0: left as it is). */
 void xgx_clear(const int32_t rect[4], const uint8_t rgba[4], uint32_t z24, int color, int alpha, int depth);
 /* End the frame and flip; black: output black (VISetBlack). */
 void xgx_present(int black);
@@ -304,6 +305,12 @@ enum {
     XGX_COPY_ALPHA,        /* the back buffer's alpha in every channel: xgx_ztex_mask's mask */
 };
 uint32_t xgx_tex_from_efb(const int32_t src[4], uint32_t dst_w, uint32_t dst_h, int mode, uint32_t reuse);
+/* -DXGX_DEBUG_HELD (the pause blur's held copy, console round of
+ * 2026-11-03): a [HELD] line on texture `tex`; _dump, on a BACK
+ * screenshot's frame only, also writes its texels as a BMP (as stored:
+ * swizzled) */
+void xgx_tex_debug(const char* what, uint32_t tex);
+void xgx_tex_debug_dump(uint32_t tex);
 /* Before a depth-format copy of the logical rect: writes a mask there, 1
  * where the depth is in front of z24 and 0 elsewhere, for the copy to carry
  * (the Z-texture emulation, XgxState.ztex). Returns the XGX_COPY_* mode that

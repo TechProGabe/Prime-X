@@ -461,7 +461,32 @@ swaps it, as Melee-X's does.
   surfaces after it drew with nothing bound; `drop_at` now tells the game
   (`xsdk_tex_map_cleared`, px_port.cpp: `CTexture::InvalidateTexmap`).
   Host tests: `test_tex_cache.py` compares with the old cache under
-  `-DGX_TEX_NO_EFB_STALE` and checks the new case on its own.
+  `-DGX_TEX_NO_EFB_STALE` and checks the new case on its own. Confirmed
+  on gold (2026-11-03, `-DXGX_TEX_STALE_FIX=0` image A against B, booted
+  onto Save Station 1): the tester saw the chunks in A only; A logged up
+  to 1163 binds per 600 frames of an overwritten copy, B dropped it once
+  and drew none.
+- **An EFB copy's clear writes only what the updates let through**
+  (2026-11-03; the tester on gold: "Samus is not visible on the save
+  station", "missing during the save sequence"). `GXCopyTex(dest, GX_TRUE)`
+  cleared colour, alpha and depth whatever `GXSetColorUpdate`,
+  `GXSetAlphaUpdate` and `GXSetZMode`'s update said; the GameCube's pixel
+  engine (and Dolphin, and aurora, which MetroidPrimePort's own copies
+  rely on: they turn the depth update on before a clearing copy) clears
+  only those. Prime's Phazon Suit glow (`CCubeRenderer::CopyTex`, from
+  `CScriptPlayerActor`, `CSamusDoll`, `CPhazonBeam`) copies the alpha
+  with colour updates off to clear just the alpha: the whole scene went
+  but what was drawn after it, so behind the save prompt and the pause
+  menu (the pause blur's held copy) only the station's light was left,
+  or black. Not a console difference: the console round's folders give
+  every item (the Phazon Suit), xemu's settings.ini had the Fusion Suit
+  (another model, no glow); `env PX_FUSION=0` shows it in xemu. Found
+  with `-DXGX_DEBUG_HELD` (gold round "held copy": `[HELD]` lines on big
+  copies, their binds and drops, and the bound copy's texels written at
+  a BACK screenshot). `clear_fb` (nv2a.c) clears RGB or alpha alone with
+  `NV097_CLEAR_SURFACE`'s channel bits; a 16-bit surface (no alpha) only
+  ever the RGB. `GXCopyDisp`'s clear is unchanged (all of it). Test
+  builds: `env PX_COPY_CLEAR_ALL=1` brings back the old clear.
 - **Disc reads cancelled and closed for real** (2026-11-02): `DVDClose`,
   `DVDCancel` and `DVDCancelAsync` (`xbox/src/sdk/dvd.c`) were no-ops, but
   the game frees a request's buffer and its `DVDFileInfo` right after them
