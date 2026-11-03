@@ -6,7 +6,7 @@ what's broken, anything the next agent would otherwise rediscover.
 ## Session 2026-11-03 (on `dev`, after beta3): black chunks; two fixed control layouts; Phazon Suit save screen
 
 **Results first.** Both fixes below are confirmed on gold and merged to
-`main` (not tagged or released). Gold has two folders: `Prime-X`, the ship
+`main` and released as **v1.0-beta4** (2026-11-03, tag on the merge; notes in `.github/release-notes.md`). Gold has two folders: `Prime-X`, the ship
 build of 115f933 (ThinLTO + PGO + log always, MD5
 81a4a53cf33756b42319f5da040a93d8: copy-clear fix, layouts, texture fixes),
 and `Prime-X-savecheck` (a plain autopad build at 115f933, Save Station 1
