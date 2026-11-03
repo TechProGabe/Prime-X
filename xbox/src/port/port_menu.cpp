@@ -18,7 +18,9 @@
 // held to repeat) pick, left/right change, A changes too, LT/RT switch tabs,
 // Y twice restores the tab's defaults, B or START close. On the Buttons tab
 // the D-pad moves over the callouts as they stand (up/down in a column,
-// left/right across) and A/X step the action on and back. It makes no
+// left/right across), A steps the action on, and X binds: the next button
+// or trigger pressed takes the selected input's action (B, START, LT and RT
+// too; the D-pad cancels, so do 5 s without a press). It makes no
 // sound (the user, 2026-11-01, when the music skipped on the consoles; the
 // skips were the card's redraw, xhw_menu.c). The game reads a neutral pad
 // until the buttons that closed it are let go (xsdk_menu_block, pad.c).
@@ -219,8 +221,8 @@ const STab kTabs[kTabCount] = {
 // the remappable inputs in the card's order (xhw.h XHW_MENU_IN_*), which is
 // settings.ini's binding order (settings.c k_xbox)
 const char* const kButtonNames[XHW_MENU_IN_MAPPABLE] = {
-    "A button", "B button", "X button", "Y button", "White button", "Black button",
-    "START",    "BACK",     "Left stick click", "Right stick click"};
+    "A button", "B button",         "X button",          "Y button",     "White button", "Black button",
+    "START",    "BACK",             "Left stick click",  "Right stick click", "LT",      "RT"};
 struct SAction {
   uint16_t gc;
   const char* name; // fits a callout
@@ -306,10 +308,6 @@ struct SFixed {
   const char* value;
 };
 const SFixed kFixed[] = {
-    {XHW_MENU_IN_LT, "LT: Lock On. Fixed: it is the GameCube's L, a trigger the game reads by how far it is in.",
-     "Held, Samus locks on to a target; with nothing to lock on to, she strafes."},
-    {XHW_MENU_IN_RT, "RT: Free Aim. Fixed: it is the GameCube's R trigger.",
-     "Held, the left stick aims and looks around (Reverse Y-Axis is in the game's Controller options)."},
     {XHW_MENU_IN_DPAD, "D-pad: Visors. Fixed: the GameCube's D-pad.",
      "Picks a visor; with Swap Beam Controls on, it picks a beam."},
     {XHW_MENU_IN_LSTICK, "Left stick: Move. Fixed: the GameCube's control stick.",
@@ -334,6 +332,15 @@ int sDirFrames;        // frames until it may repeat (counts up to 1)
 uint32_t sConfirmUntil; // Y once: a second Y before this restores (ms); 0 none
 int sConfirmTab;
 xsdk_settings sDefaults;
+// Bind mode (the Buttons tab, X): the input whose action the next press of
+// a button or trigger takes, -1 none; it gives up after kListenMs and
+// kListenFrames both (by time alone, xemu's slow frames ran it out before
+// a scripted press)
+int sListen = -1;
+uint32_t sListenUntil;
+int sListenFrames;
+const uint32_t kListenMs = 5000;
+const int kListenFrames = 150;
 xhw_pad sPad1; // port 1 this frame (the Buttons tab's live controller)
 bool sPad1Ok;
 xhw_menu_view sView;
@@ -356,11 +363,15 @@ void SetValue(O option, int value) { Set(option, value); }
 
 void RestoreTab(int tab) {
   if (tab == kTabButtons) {
-    for (int b = 0; b < XHW_MENU_IN_MAPPABLE; ++b) {
-      // Step swaps; set each port's binding straight back instead
-      for (int p = 0; p < 4; ++p) {
+    // Step swaps; set each port's bindings straight back instead (the
+    // buttons, the D-pad and the triggers; RT's default follows Aiming)
+    for (int p = 0; p < 4; ++p) {
+      for (int b = 0; b < XSDK_BIND_COUNT; ++b) {
         g_xsdk_settings.port[p].bind[b].gc = sDefaults.port[p].bind[b].gc;
       }
+    }
+    for (int p = 0; p < 4; ++p) {
+      g_xsdk_settings.port[p].bind[15].gc = xsdk_rt_default(g_xsdk_settings.aim); // settings.c rt
     }
     MarkChanged();
     return;
@@ -426,13 +437,11 @@ void Fill() {
     for (int b = 0; b < XHW_MENU_IN_MAPPABLE; ++b) {
       const int gc = BindGc(b);
       snprintf(v.pad_map[b], sizeof v.pad_map[b], "%s", ActionOf(gc).name);
-      v.pad_changed[b] = gc != sDefaults.port[0].bind[b].gc;
+      v.pad_changed[b] = gc != DefaultBindGc(b);
     }
     // the inputs that keep their GameCube part (pad.c)
     const bool swap = gpGameState != nullptr && gpGameState->GameOptions().GetSwapBeamControls();
     const bool dual = g_xsdk_settings.aim == XSDK_AIM_DUAL;
-    snprintf(v.pad_map[XHW_MENU_IN_LT], sizeof v.pad_map[0], "Lock On");
-    snprintf(v.pad_map[XHW_MENU_IN_RT], sizeof v.pad_map[0], "%s", dual ? "-" : "Free Aim");
     snprintf(v.pad_map[XHW_MENU_IN_DPAD], sizeof v.pad_map[0], "%s", swap ? "Beams" : "Visors");
     snprintf(v.pad_map[XHW_MENU_IN_LSTICK], sizeof v.pad_map[0], "Move");
     snprintf(v.pad_map[XHW_MENU_IN_RSTICK], sizeof v.pad_map[0], "%s", dual ? "Aim" : swap ? "Visors" : "Beams");
@@ -450,23 +459,32 @@ void Fill() {
         snprintf(v.help, sizeof v.help, "Right stick: Aim (Dual Stick, Controller tab). Fixed.");
         snprintf(v.value_help, sizeof v.value_help,
                  "Aims and looks around. Held, Beam Select makes it pick beams, as the GameCube's C-stick.");
-      } else if (dual && sel == XHW_MENU_IN_RT) {
-        snprintf(v.help, sizeof v.help, "RT: nothing with Dual Stick aiming (the right stick aims). Fixed.");
-        snprintf(v.value_help, sizeof v.value_help, "With GameCube aiming, held, the left stick aims and looks.");
       } else if (dual && sel == XHW_MENU_IN_LSTICK) {
         snprintf(v.value_help, sizeof v.value_help, "Moves and strafes Samus (Dual Stick aiming).");
       }
       snprintf(v.note, sizeof v.note, "This input can't be remapped.");
+    } else if (sListen >= 0) { // bind mode: waiting for the press
+      const SAction& a = ActionOf(BindGc(sListen));
+      snprintf(v.help, sizeof v.help, "Press the button or trigger that should do %s (%s has it now).", a.name,
+               kButtonNames[sListen]);
+      snprintf(v.value_help, sizeof v.value_help, "%s", a.help);
+      snprintf(v.note, sizeof v.note, "Waiting for a press... The D-pad cancels.");
     } else {
       const SAction& a = ActionOf(BindGc(sel));
-      snprintf(v.help, sizeof v.help, "%s: %s.", kButtonNames[sel], a.name);
+      snprintf(v.help, sizeof v.help, "%s: %s. X, then press a button or trigger: it does %s too.",
+               kButtonNames[sel], a.name, a.name);
       snprintf(v.value_help, sizeof v.value_help, "%s", a.help);
+      if ((sel == XHW_MENU_IN_LT || sel == XHW_MENU_IN_RT) &&
+          (BindGc(sel) == PAD_TRIGGER_L || BindGc(sel) == PAD_TRIGGER_R)) {
+        snprintf(v.value_help + strlen(v.value_help), sizeof v.value_help - strlen(v.value_help),
+                 " The game also reads how far the trigger is in.");
+      }
       if (BindGc(sel) == PAD_BUTTON_A || BindGc(sel) == PAD_BUTTON_START) {
-        snprintf(v.note, sizeof v.note, "Fire and Pause always stay on some button.");
+        snprintf(v.note, sizeof v.note, "Fire and Pause always stay on some input.");
       } else if (BindGc(sel) == XSDK_PAD_BEAM && !dual) {
         snprintf(v.note, sizeof v.note, "Beam Select is for Dual Stick aiming (Controller tab).");
       } else {
-        snprintf(v.note, sizeof v.note, "Taking another button's action swaps the two.");
+        snprintf(v.note, sizeof v.note, "An action only it has is swapped, not lost.");
       }
     }
   } else {
@@ -542,6 +560,7 @@ bool VideoRestartPending() {
 void Close() {
   sOpen = false;
   sAsk = false;
+  sListen = -1;
   sRelease = true;
   xhw_menu_show(nullptr);
   Save(); // settings.ini, once, if anything changed
@@ -564,7 +583,7 @@ void Change(int delta) {
     if (sel >= XHW_MENU_IN_MAPPABLE) {
       return; // fixed (the box says so)
     }
-    Step(kXO_BindFirst + sel, delta);
+    Step(BindOption(sel), delta);
     xhw_logf("[MENU] %s: %s", kButtonNames[sel], ActionOf(BindGc(sel)).name);
     return;
   }
@@ -661,6 +680,49 @@ void Frame() {
     xhw_menu_show(&sView);
     return;
   }
+  if (sListen >= 0) {
+    // Bind mode: the next button or trigger pressed takes the action (B,
+    // START and the triggers too, so nothing here closes the popup or
+    // turns the tab); the D-pad or kListenMs without a press cancels
+    static const struct {
+      uint32_t bit;
+      int in;
+    } kPress[] = {{XHW_BTN_A, XHW_MENU_IN_A},           {XHW_BTN_B, XHW_MENU_IN_B},
+                  {XHW_BTN_X, XHW_MENU_IN_X},           {XHW_BTN_Y, XHW_MENU_IN_Y},
+                  {XHW_BTN_WHITE, XHW_MENU_IN_WHITE},   {XHW_BTN_BLACK, XHW_MENU_IN_BLACK},
+                  {XHW_BTN_START, XHW_MENU_IN_START},   {XHW_BTN_BACK, XHW_MENU_IN_BACK},
+                  {XHW_BTN_LSTICK, XHW_MENU_IN_LCLICK}, {XHW_BTN_RSTICK, XHW_MENU_IN_RCLICK},
+                  {XHW_BTN_LT, XHW_MENU_IN_LT},         {XHW_BTN_RT, XHW_MENU_IN_RT}};
+    ++sListenFrames;
+    const uint32_t got = press | (trigPress & 1 ? XHW_BTN_LT : 0u) | (trigPress & 2 ? XHW_BTN_RT : 0u);
+    int to = -1;
+    for (const auto& k : kPress) {
+      if (got & k.bit) {
+        to = k.in;
+        break;
+      }
+    }
+    if (to >= 0) {
+      const int from = sListen;
+      sListen = -1;
+      BindPress(from, to);
+      sSel[kTabButtons] = to; // the ring on the input just bound
+      xhw_logf("[MENU] bind: %s now %s, %s %s", kButtonNames[to], ActionOf(BindGc(to)).name, kButtonNames[from],
+               ActionOf(BindGc(from)).name);
+    } else if ((press & (XHW_BTN_UP | XHW_BTN_DOWN | XHW_BTN_LEFT | XHW_BTN_RIGHT)) ||
+               (now >= sListenUntil && sListenFrames > kListenFrames)) {
+      sListen = -1;
+    }
+    // the direction held now isn't a move once bind mode ends (the D-pad
+    // press that cancelled it moved the ring too)
+    sDir = ((held & XHW_BTN_UP) || ly > 0 ? 1 : 0) | ((held & XHW_BTN_DOWN) || ly < 0 ? 2 : 0) |
+           ((held & XHW_BTN_LEFT) || lx < 0 ? 4 : 0) | ((held & XHW_BTN_RIGHT) || lx > 0 ? 8 : 0);
+    sDirNext = static_cast< int >(now + 300);
+    sDirFrames = -8;
+    Fill();
+    xhw_menu_show(&sView);
+    return;
+  }
   if (press & (XHW_BTN_B | XHW_BTN_START)) {
     if (VideoRestartPending()) {
       sAsk = true;
@@ -701,8 +763,16 @@ void Frame() {
       sSel[sTab] = PadMove(sSel[sTab], d);
       sConfirmUntil = 0;
     }
-    if (press & XHW_BTN_X) {
-      Change(-1);
+    // X: bind mode for the selected input (the user, 2026-11-03: "press X to
+    // start key bind, then you can press right trigger"); A steps the action
+    if ((press & XHW_BTN_X) && sSel[sTab] < XHW_MENU_IN_MAPPABLE) {
+      sListen = sSel[sTab];
+      sListenUntil = now + kListenMs;
+      sListenFrames = 0;
+      sConfirmUntil = 0;
+      Fill();
+      xhw_menu_show(&sView);
+      return;
     }
   } else if (fire & 1) {
     sSel[sTab] = (sSel[sTab] + rows - 1) % rows;
@@ -861,6 +931,7 @@ void OpenMenu() {
   sOpen = true;
   sRelease = false;
   sConfirmUntil = 0;
+  sListen = -1;
   sDir = 0;
   // what is held now (the A that chose the row) isn't a press
   sPrev = 0;

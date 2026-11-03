@@ -104,7 +104,7 @@ is unscii-16 supersampled to the scale.
 | rows | the label left; the value right between two arrows, with pips under it (how many choices, which one); a value that isn't the default is orange with a dot; a row that applies at the next start has a `*` |
 | help box | what the selected row does (white), what the shown value does (cyan), a note (orange: "* Video Mode changes the next time Prime-X starts", "The dashboard doesn't allow 720p: the next start uses 480p", "Press Y again ...") |
 | footer | A Change, B Close, Y Defaults, the D-pad Select |
-| Buttons tab | N64Recomp-X's Controls page: an Xbox controller (its body from a distance field, shaded once and cached when memory allows), every input with a leader line and a callout naming its action; the remappable ones (A B X Y White Black START BACK and the stick clicks) bright, the fixed ones (LT Lock On, RT Free Aim, D-pad Visors, left stick Move, right stick Beams; D-pad and right stick swap with Swap Beam Controls) dim; what port 1 holds lights up; the selected input has a ring |
+| Buttons tab | N64Recomp-X's Controls page: an Xbox controller (its body from a distance field, shaded once and cached when memory allows), every input with a leader line and a callout naming its action; the remappable ones (A B X Y White Black START BACK, the stick clicks, LT and RT) bright, the fixed ones (D-pad Visors, left stick Move, right stick Beams or Aim; D-pad and right stick swap with Swap Beam Controls) dim; the selected input has a ring; footer A Next, X Bind, B Close, Y Defaults |
 
 **The game is held while the popup is up** (2026-11-02; beta2's testers:
 "quite laggy", the user: "heavy and laggy, streamline the whole thing for
@@ -148,8 +148,8 @@ were the user's first suspect).
 | Controller | Stick Dead Zone | Low / Medium / High | 10 / 20 / 30% |
 | Controller | C-Stick Dead Zone | Low / Medium / High | 15 / 25 / 35% |
 | Controller | Trigger Click | Light / Medium / Firm | how far LT/RT go in |
-| Buttons | each remappable input | None, Fire, Jump, Morph Ball, Missile, Map, Lock On, Free Aim, Pause, D-Up/Down/Left/Right, Beams (Beam Select) | what the action does in Prime; Beam Select only matters with Dual Stick, which gives it to Black (or a free stick click or BACK) when turned on |
-| Buttons | LT, RT, D-pad, the sticks | fixed | what they do and why they stay (the GameCube's analog L/R, D-pad, sticks) |
+| Buttons | each remappable input (A B X Y White Black START BACK, the stick clicks, LT, RT) | None, Fire, Jump, Morph Ball, Missile, Map, Lock On, Free Aim, Pause, D-Up/Down/Left/Right, Beams (Beam Select) | what the action does in Prime; Beam Select only matters with Dual Stick, which gives it to Black (or a free stick click or BACK) when turned on. LT is Lock On; RT is Fire under Dual Stick (A fires too) and Free Aim under GameCube aiming; a trigger on Lock On or Free Aim also gives how far it is in (2026-11-03) |
+| Buttons | D-pad, the sticks | fixed | what they do and why they stay (the GameCube's D-pad, sticks) |
 | Gameplay | Skip Cutscenes | Off / On | START skips any cutscene, from the next room |
 | Gameplay | Fusion Suit | Off / On | the GBA-link bonus, kept in settings.ini (`[game] fusion_suit`; the save doesn't hold it) |
 | System | Screen Capture | Off / On | BACK saves shotNN.bmp |
@@ -169,8 +169,14 @@ after 300 ms every 85 ms) pick, left/right change, A changes too (or acts on
 Restore All Defaults), LT/RT switch tabs, Y twice within 3 s restores the
 tab's defaults, B or START close. On the Buttons tab the D-pad moves over
 the callouts as they stand (up/down in a column, left/right to the other
-column's nearest), A and X step the action on and back, and every input
-can be selected (the fixed ones say why); nothing lights up as it is held
+column's nearest), A steps the action on, and **X binds**: the box says
+"Press the button or trigger that should do Fire", and the next button or
+trigger pressed (B, START, LT, RT too: nothing closes or turns the tab
+then) takes the selected input's action; the D-pad, or 5 s with no press,
+cancels (2026-11-03, the user: "press X to start key bind, then you can
+press right trigger"). An action that would be left on no input goes back
+to the other one (a swap), so two inputs can share Fire but nothing is
+lost. Every input can be selected (the fixed ones say why); nothing lights up as it is held
 (each press redrew the controller). Before 2026-11-02 up/down stepped A, B,
 X, Y, White, Black, START, BACK, the clicks, jumping up and across the
 card (a tester: "navigating the control settings is a nightmare"). No sounds (the user, after the first

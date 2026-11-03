@@ -76,7 +76,7 @@ The same as Melee-X: grab the latest `Prime-X-<version>.zip` from Releases, put 
 
 | Xbox | GameCube | Metroid Prime |
 |---|---|---|
-| A | A | fire |
+| A, Right trigger | A | fire |
 | X | B | jump |
 | B | X | Morph Ball |
 | Y | Y | missile |
@@ -89,9 +89,9 @@ The same as Melee-X: grab the latest `Prime-X-<version>.zip` from Releases, put 
 | Start | Start | pause |
 | L + R + Back + Black | | quit to the dashboard |
 
-That's **Dual Stick** aiming, the default. Aim Speed (Low, Medium, High) is in Xbox Port Options > Controller, and Reverse Y-Axis in the game's own Options flips up and down. Set Aiming to **GameCube** there for the original controls: the left stick turns, holding the right trigger makes it aim instead, and the right stick switches beams.
+That's **Dual Stick** aiming, the default. Aim Speed (Low, Medium, High) is in Xbox Port Options > Controller, and Reverse Y-Axis in the game's own Options flips up and down. Set Aiming to **GameCube** there for the original controls: the left stick turns, holding the right trigger makes it aim instead (the right trigger is Free Aim then, not fire), and the right stick switches beams.
 
-The face buttons sit where they do on a GameCube pad, as on Melee-X. They can be remapped in Xbox Port Options > Buttons: give a button another's action and the two swap, and Fire and Pause always stay on some button. In menus, A confirms and B goes back, whatever the layout.
+The face buttons sit where they do on a GameCube pad, as on Melee-X. Every button and both triggers can be remapped in Xbox Port Options > Buttons: pick one, press X, then press the button or trigger that should do the same (or press A to step through the actions). An action that would be left on no button swaps back instead, so Fire and Pause always stay on some button. In menus, A confirms and B goes back, whatever the layout.
 
 ## Video
 

@@ -120,6 +120,7 @@ uint32_t xgx_tex_from_efb(const int32_t src[4], uint32_t w, uint32_t h, int i, u
 void xgx_read_efb(const int32_t src[4], uint32_t w, uint32_t h, uint8_t* rgba) {}
 /* the format only: "[TEX] changed" and "[TEX] drop" print host pointers */
 void xhw_logf(const char* fmt, ...) { tr("logf %s", fmt); }
+void xsdk_tex_map_cleared(int map) { (void)map; }   /* px_port.cpp: CTexture::InvalidateTexmap */
 void xhw_log(const char* s) { tr("log %s", s); }   /* the frame stats: counts only */
 static uint64_t s_flushes;
 void gx_vtx_flush(void) {
@@ -328,6 +329,42 @@ static void change_texels(const Tex* t) {
     s_heap[t->data + at] ^= (uint8_t)(1 + below(255));
 }
 
+#ifdef EFB_STALE_CHECK
+/* A texture loaded where a freed EFB copy buffer was must draw its own
+ * texels, not the copy (gx_tex.c efb_stale: black chunks of a Chozo room
+ * after the save screen, 2026-11-03); the copy itself, bound as another
+ * format, still draws the copy while its memory is untouched. */
+int main(void) {
+    uint8_t* raw = (uint8_t*)malloc(HEAP_BYTES + 32768);
+    uint32_t dest, copy_tex, i;
+    Tex t;
+    s_heap = (uint8_t*)(((uintptr_t)raw + 32767) & ~(uintptr_t)32767);
+    gx_tex_init();
+    dest = heap_take(256 * 256 * 4, 32);
+    copy_tex = pool_alloc(128 * 128 * 4);
+    gx_tex_note_efb_copy(s_heap + dest, copy_tex, 128, 128, GX_TF_I8);
+    make_tex(&t, 0);
+    t.data = dest;
+    t.w = t.h = 128;
+    t.fmt = GX_TF_C8;   /* as thermal reads an I8 copy */
+    t.mipmap = 0;
+    bind(&t, 0);
+    if (g_xgx.map[0].tex != copy_tex) {
+        printf("efb stale: the copy, untouched, didn't bind (%u, copy %u)\n", g_xgx.map[0].tex, copy_tex);
+        return 0;
+    }
+    gx_tex_frame_end();
+    for (i = 0; i < 128 * 128 / 2; i++) s_heap[dest + i] = (uint8_t)rnd();   /* a lightmap read into the freed buffer */
+    t.fmt = GX_TF_CMPR;
+    bind(&t, 0);
+    if (g_xgx.map[0].tex == copy_tex || g_xgx.map[0].tex == 0) {
+        printf("efb stale: the texture drew the old copy (%u, copy %u)\n", g_xgx.map[0].tex, copy_tex);
+        return 0;
+    }
+    printf("efb stale: ok\n");
+    return 0;
+}
+#else
 int main(void) {
     static Tex* scene[600];
     static Tex idle_tex[2];
@@ -480,3 +517,4 @@ int main(void) {
     printf("digest %08x\n", s_digest);
     return 0;
 }
+#endif

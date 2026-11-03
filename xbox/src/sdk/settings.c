@@ -41,7 +41,11 @@ static const struct { const char* name; uint32_t bit; } k_xbox[] = {
     { "white", XHW_BTN_WHITE }, { "black", XHW_BTN_BLACK }, { "start", XHW_BTN_START },
     { "back", XHW_BTN_BACK }, { "lstick", XHW_BTN_LSTICK }, { "rstick", XHW_BTN_RSTICK },
     { "up", XHW_BTN_UP }, { "down", XHW_BTN_DOWN }, { "left", XHW_BTN_LEFT }, { "right", XHW_BTN_RIGHT },
+    /* the triggers past trigger_click (pad.c); bound to L or R they also
+     * give the game their analog value */
+    { "lt", XHW_BTN_LT }, { "rt", XHW_BTN_RT },
 };
+enum { BIND_LT = 14, BIND_RT = 15 };
 #define N_XBOX (int)(sizeof k_xbox / sizeof k_xbox[0])
 
 static const struct { const char* name; uint16_t bits; } k_gc[] = {
@@ -53,9 +57,11 @@ static const struct { const char* name; uint16_t bits; } k_gc[] = {
 #define N_GC (int)(sizeof k_gc / sizeof k_gc[0])
 
 /* the default layout: GameCube-like by position; Black is Beam Select for
- * Dual Stick aiming, the default since 2026-11-02 (White is the map) */
+ * Dual Stick aiming, the default since 2026-11-02 (White is the map). RT
+ * fires as well as A under Dual Stick (the user, 2026-11-03), and is Free
+ * Aim (R) under GameCube aiming (rt_default) */
 static const char* const k_default[N_XBOX] = {
-    "A", "X", "B", "Y", "Z", "BEAM", "START", "NONE", "NONE", "NONE", "UP", "DOWN", "LEFT", "RIGHT",
+    "A", "X", "B", "Y", "Z", "BEAM", "START", "NONE", "NONE", "NONE", "UP", "DOWN", "LEFT", "RIGHT", "L", "A",
 };
 
 static uint16_t gc_bits(const char* name) {
@@ -64,6 +70,12 @@ static uint16_t gc_bits(const char* name) {
         if (_stricmp(name, k_gc[i].name) == 0) return k_gc[i].bits;
     return 0;
 }
+
+/* RT's action when nothing says otherwise: Fire under Dual Stick, Free Aim
+ * (the GameCube's R, which that aiming needs) under GameCube aiming */
+static uint16_t rt_default(int aim) { return aim == XSDK_AIM_DUAL ? PAD_BUTTON_A : PAD_TRIGGER_R; }
+
+uint16_t xsdk_rt_default(int aim) { return rt_default(aim); }
 
 static const char* gc_name(uint16_t bits) {
     int i;
@@ -99,6 +111,7 @@ static void defaults(xsdk_settings* st) {
             ps->bind[i].xbox = k_xbox[i].bit;
             ps->bind[i].gc = gc_bits(k_default[i]);
         }
+        ps->bind[BIND_RT].gc = rt_default(st->aim);
     }
 }
 
@@ -221,6 +234,7 @@ static int is_port_section(const char* s) {
 static int parse(FILE* f, xsdk_settings* st) {
     char line[256], section[32] = "";
     int saw = 0, n = 0, p;
+    int trig_seen[4] = { 0, 0, 0, 0 };   /* bit 0 lt, bit 1 rt: the port's file names them */
     defaults(st);
     while (fgets(line, sizeof line, f)) {
         char *s = line, *eq, *key, *val, *cut;
@@ -342,13 +356,26 @@ static int parse(FILE* f, xsdk_settings* st) {
             } else {
                 for (i = 0; i < N_XBOX; i++)
                     if (_stricmp(key, k_xbox[i].name) == 0) break;
-                if (i == N_XBOX) problem(n, "%s: not an Xbox button (a b x y white black start back...)", key, "");
+                if (i == N_XBOX) problem(n, "%s: not an Xbox button (a b x y white black start back lt rt...)", key, "");
                 else if (!gc_lookup(val, &ps->bind[i].gc))
                     problem(n, "%s = %s: not an action (Fire Jump Morph Missile Map Lock Aim Pause NONE...)", key, val);
+                else if (i >= BIND_LT)
+                    trig_seen[section[4] - '1'] |= i == BIND_LT ? 1 : 2;
             }
         } else if (!section[0]) {
             problem(n, "%s: above the first [section]", key, "");
         }   /* else: the unknown section was reported once */
+    }
+    /* The triggers are bindings since 2026-11-03 (lt, rt). A file from before
+     * has none: LT locks on, RT is Fire under Dual Stick and Free Aim under
+     * GameCube aiming, and its trigger_z (GitHub #12) makes that trigger the
+     * map. trigger_z itself is no longer written. */
+    for (p = 0; p < 4; p++) {
+        xsdk_port_settings* ps = &st->port[p];
+        if (!(trig_seen[p] & 1)) ps->bind[BIND_LT].gc = ps->trigger_z == XSDK_TRIGGER_Z_LEFT ? PAD_TRIGGER_Z : PAD_TRIGGER_L;
+        if (!(trig_seen[p] & 2))
+            ps->bind[BIND_RT].gc = ps->trigger_z == XSDK_TRIGGER_Z_RIGHT ? PAD_TRIGGER_Z : rt_default(st->aim);
+        ps->trigger_z = XSDK_TRIGGER_Z_OFF;
     }
     /* Each port's buttons keep Fire (GameCube A, also confirm in the game's
      * menus) and Pause (START, the way to Options): a layout without one is
@@ -365,6 +392,7 @@ static int parse(FILE* f, xsdk_settings* st) {
             snprintf(which, sizeof which, "[port%d]", p + 1);
             problem(0, "%s: no button %s; its buttons reset", which, !fire ? "is Fire (A)" : "is Pause (START)");
             for (i = 0; i < N_XBOX; i++) ps->bind[i].gc = gc_bits(k_default[i]);
+            ps->bind[BIND_RT].gc = rt_default(st->aim);
         }
     }
     /* Dual Stick aiming with no Beam Select button (a settings.ini from
@@ -413,11 +441,12 @@ static void log_summary(const char* what) {
     const xsdk_settings* st = &g_xsdk_settings;
     const xsdk_port_settings* p1 = &st->port[0];
     xhw_logf("[SETTINGS] %s: 720p %d, progressive %d, widescreen %d, fps %d, screenshots %d, led %d, log %d, "
-             "HUD wide %d, FOV %d, rumble %d, aim %s (speed %d), port 1 dead zones %d/%d, trigger click %d, trigger Z %d",
+             "HUD wide %d, FOV %d, rumble %d, aim %s (speed %d), port 1 dead zones %d/%d, trigger click %d, LT %s, RT %s",
              what, st->video_720p, st->progressive, st->widescreen, st->fps, st->shots, st->led, st->log,
              st->hud_wide,
              st->fov, pct(st->rumble), st->aim == XSDK_AIM_DUAL ? "dual" : "gamecube", st->aim_speed,
-             pct(p1->stick_deadzone), pct(p1->cstick_deadzone), p1->trigger_click, p1->trigger_z);
+             pct(p1->stick_deadzone), pct(p1->cstick_deadzone), p1->trigger_click, gc_name(p1->bind[BIND_LT].gc),
+             gc_name(p1->bind[BIND_RT].gc));
 }
 
 static xsdk_settings s_scratch;   /* read-backs and recovery */
@@ -548,19 +577,15 @@ static void write_all(FILE* f, const xsdk_settings* st) {
             st->aim_speed == XSDK_AIM_SPEED_LOW ? "low" : st->aim_speed == XSDK_AIM_SPEED_HIGH ? "high" : "medium");
     fprintf(f, "; Each controller port. stick_deadzone, cstick_deadzone: 0 to 60 percent.\n");
     fprintf(f, "; trigger_click: 64 to 255, how far LT and RT go in before they count as pressed.\n");
-    fprintf(f, "; trigger_z = left or right: that trigger opens the map instead of locking on (left) or\n");
-    fprintf(f, "; aiming (right); off: both as on the GameCube.\n");
+    fprintf(f, "; lt and rt are the triggers: as L or R they also pass on how far they are in.\n");
     fprintf(f, "; Buttons: Xbox button = GameCube button: A (Fire) B (Jump) X (Morph Ball) Y (Missile)\n");
     fprintf(f, "; Z (Map) L (Lock On) R (Free Aim) START (Pause) UP DOWN LEFT RIGHT (the D-pad) BEAM (Beam\n");
     fprintf(f, "; Select, for aim = dual) NONE.\n");
     fprintf(f, "; Fire, Jump... work too. Some button must be A and some START, or the port is reset.\n");
     for (port = 0; port < 4; port++) {
         const xsdk_port_settings* ps = &st->port[port];
-        fprintf(f, "[port%d]\nstick_deadzone = %d\ncstick_deadzone = %d\ntrigger_click = %d\ntrigger_z = %s\n",
-                port + 1, pct(ps->stick_deadzone), pct(ps->cstick_deadzone), ps->trigger_click,
-                ps->trigger_z == XSDK_TRIGGER_Z_LEFT    ? "left"
-                : ps->trigger_z == XSDK_TRIGGER_Z_RIGHT ? "right"
-                                                        : "off");
+        fprintf(f, "[port%d]\nstick_deadzone = %d\ncstick_deadzone = %d\ntrigger_click = %d\n", port + 1,
+                pct(ps->stick_deadzone), pct(ps->cstick_deadzone), ps->trigger_click);
         for (i = 0; i < N_XBOX; i++) {
             char kv[32];
             snprintf(kv, sizeof kv, "%s = %s", k_xbox[i].name, gc_name(ps->bind[i].gc));

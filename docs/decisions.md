@@ -439,6 +439,29 @@ swaps it, as Melee-X's does.
   runs after the link: any of nxdk's "Not implemented" pdclib objects in the
   map fails the build.
 
+- **A texture on a freed EFB copy buffer draws its own texels; an emptied
+  texmap is loaded again** (2026-11-03; a tester, beta2 and beta3: black
+  chunks of a Chozo room, "only temporarily after saving or loading into a
+  save"; the 2026-11-02 static-memory change didn't fix it, and it doesn't
+  show in xemu, whose allocations land differently). Two holes in
+  `xbox/src/sdk/gx/gx_tex.c`, both black, both lasting while the texture is
+  drawn (until the room is left): (1) `find()` takes an EFB copy for any
+  texture bound at its address (a game binds a copy as another size or
+  format: thermal reads an I8 copy as C8), and copies are never
+  revalidated; once Prime freed a copy buffer (the save screen's, a world's
+  loading transition's) and a room texture (a lightmap) was read into that
+  memory, the texture drew the old capture, and each bind kept the copy "in
+  use". Now each copy keeps a sample hash of its destination as it was at
+  the copy (the copy lives on the GPU; only the CPU writes there after,
+  once the buffer is someone else's), and a bind that finds it changed
+  drops the copy and takes the memory as a texture (`efb_stale`, `[TEX]
+  EFB copy at ... overwritten by a texture`). (2) Dropping a texture empties
+  every texmap holding it, but Prime's `CTexture::Load` skips a texture it
+  believes is still in that map (as the GameCube's TMEM allows), so the
+  surfaces after it drew with nothing bound; `drop_at` now tells the game
+  (`xsdk_tex_map_cleared`, px_port.cpp: `CTexture::InvalidateTexmap`).
+  Host tests: `test_tex_cache.py` compares with the old cache under
+  `-DGX_TEX_NO_EFB_STALE` and checks the new case on its own.
 - **Disc reads cancelled and closed for real** (2026-11-02): `DVDClose`,
   `DVDCancel` and `DVDCancelAsync` (`xbox/src/sdk/dvd.c`) were no-ops, but
   the game frees a request's buffer and its `DVDFileInfo` right after them
@@ -500,7 +523,7 @@ swaps it, as Melee-X's does.
   full tilt, up and down at 3/4; a fifth linear, the rest squared, so a
   light tilt aims finely). It is MetroidPrimePort's twin stick: the game
   side (CPlayer's direct-aim path: the left stick moves and strafes, the
-  retail free look is off, RT does nothing) was already imported; the
+  retail free look is off; RT fires since 2026-11-03) was already imported; the
   Xbox's `port_debug.cpp` had it stubbed and now keeps the aim state
   (`PortMouse::AimState`, in radians) with the same presented-frame lag
   between 30 Hz ticks. The stick is read by pad.c at full precision past
@@ -517,6 +540,28 @@ swaps it, as Melee-X's does.
   default". The default layout's Black is Beam Select (White stays Map); a
   settings.ini with Dual Stick and no Beam Select gets one at load, as the
   row does.
+- **RT fires under Dual Stick; the triggers are remappable; X binds**
+  (2026-11-03, the user: "shoot is right trigger as well as A ... you
+  should be able to change the trigger ... press X to start key bind, then
+  you can press right trigger, and then it would save"; LT/RT switched the
+  popup's tab instead). LT and RT are bindings like the buttons
+  (settings.ini `lt`, `rt` in each `[portN]`; `XHW_BTN_LT/RT` are the
+  triggers past `trigger_click`). Bound to Lock On (L) or Free Aim (R) a
+  trigger also passes on how far it is in; bound to anything else it is a
+  button and gives no analog value. Defaults: LT Lock On; RT **Fire** under
+  Dual Stick (A fires too), **Free Aim** under GameCube aiming, which needs
+  it. Switching Aiming moves RT between the two while it holds the other
+  mode's default (a hand-picked RT stays). An old file has no `lt`/`rt`:
+  they come from its `aim` and its `trigger_z` (GitHub #12: that trigger is
+  Map), and `trigger_z` is no longer written. The Buttons tab: **X starts
+  bind mode** ("Press the button or trigger that should do Fire"): the next
+  button or trigger pressed (B, START, LT and RT included, so nothing closes
+  or turns the tab) takes the selected input's action; the D-pad or 5 s
+  without a press cancels. A steps the action on, as before. One rule for
+  both: an input taking an action leaves the input that had it alone,
+  except when the taker's old action would then be on no input, which goes
+  back the other way (a swap), so nothing is lost (GitHub #1) and two inputs
+  can share Fire. Before, every change swapped, so Fire couldn't be on two.
 - **Port Options look like Prime's pause Options** (2026-11-02, the user:
   "match the game vibe better and be as high performance as possible, as
   light as possible"; picked mockup A of four): an amber hologram (the

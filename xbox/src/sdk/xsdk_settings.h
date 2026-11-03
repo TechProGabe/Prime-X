@@ -20,7 +20,8 @@ typedef struct {
     float stick_deadzone;    /* radial, fraction of full tilt */
     float cstick_deadzone;
     uint8_t trigger_click;   /* analog value from which L/R also click */
-    uint8_t trigger_z;       /* XSDK_TRIGGER_Z_*: a trigger that is Z (grab) instead of L/R (GitHub #12) */
+    uint8_t trigger_z;       /* XSDK_TRIGGER_Z_*: an old file's trigger_z (GitHub #12), read into the
+                              * lt/rt bindings at load, then always off */
 } xsdk_port_settings;
 
 enum { XSDK_TRIGGER_Z_OFF = 0, XSDK_TRIGGER_Z_LEFT, XSDK_TRIGGER_Z_RIGHT };
@@ -65,6 +66,9 @@ void xsdk_settings_load(void);
 int xsdk_settings_save(void);   /* 0: failed, settings.ini left as it was */
 int xsdk_settings_equal(const xsdk_settings* a, const xsdk_settings* b);   /* as settings.ini would hold them */
 int xsdk_fusion_suit(void);     /* game code (CGameState.cpp PORT_XBOX): g_xsdk_settings.fusion_suit */
+/* RT's default action for an aiming mode (XSDK_AIM_*): Fire under Dual
+ * Stick, Free Aim (PAD_TRIGGER_R) under GameCube aiming */
+uint16_t xsdk_rt_default(int aim);
 int xsdk_cstick_1p(void);       /* game code (fighter.c, camera.c PORT): g_xsdk_settings.cstick_1p */
 
 /* pad.c, for Dual Stick aiming (CDolphinController.cpp): port 1's right

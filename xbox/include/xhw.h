@@ -240,12 +240,13 @@ void xhw_notice(const char* line1, const char* line2);
 #define XHW_MENU_ROWS 8
 #define XHW_MENU_TEXT 200
 enum { XHW_MENU_ROW_CHANGED = 1, XHW_MENU_ROW_RESTART = 2, XHW_MENU_ROW_ACTION = 4 };
-/* the controller page's inputs: the first XHW_MENU_IN_MAPPABLE can be remapped */
+/* the controller page's inputs: the first XHW_MENU_IN_MAPPABLE can be remapped
+ * (the triggers too since 2026-11-03: Dual Stick's RT fires) */
 enum {
     XHW_MENU_IN_A, XHW_MENU_IN_B, XHW_MENU_IN_X, XHW_MENU_IN_Y, XHW_MENU_IN_WHITE, XHW_MENU_IN_BLACK,
-    XHW_MENU_IN_START, XHW_MENU_IN_BACK, XHW_MENU_IN_LCLICK, XHW_MENU_IN_RCLICK,
+    XHW_MENU_IN_START, XHW_MENU_IN_BACK, XHW_MENU_IN_LCLICK, XHW_MENU_IN_RCLICK, XHW_MENU_IN_LT, XHW_MENU_IN_RT,
     XHW_MENU_IN_MAPPABLE,
-    XHW_MENU_IN_LT = XHW_MENU_IN_MAPPABLE, XHW_MENU_IN_RT, XHW_MENU_IN_DPAD, XHW_MENU_IN_LSTICK, XHW_MENU_IN_RSTICK,
+    XHW_MENU_IN_DPAD = XHW_MENU_IN_MAPPABLE, XHW_MENU_IN_LSTICK, XHW_MENU_IN_RSTICK,
     XHW_MENU_IN_COUNT
 };
 typedef struct xhw_menu_view {
@@ -332,6 +333,9 @@ enum {
     XHW_BTN_BACK = 1u << 7, XHW_BTN_LSTICK = 1u << 8, XHW_BTN_RSTICK = 1u << 9,
     XHW_BTN_UP = 1u << 10, XHW_BTN_DOWN = 1u << 11, XHW_BTN_LEFT = 1u << 12,
     XHW_BTN_RIGHT = 1u << 13,
+    /* the triggers past their click, as buttons: never set by xhw_pad_get;
+     * pad.c and the Port Options popup add them (a trigger can be bound) */
+    XHW_BTN_LT = 1u << 14, XHW_BTN_RT = 1u << 15,
 };
 void xhw_pad_poll(void);                       /* once per PADRead */
 void xhw_pad_set_shots(int on);                /* BACK screenshots (always on in test builds) */

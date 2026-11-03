@@ -3,6 +3,44 @@
 Update this at the end of every session: what was done, what's next,
 what's broken, anything the next agent would otherwise rediscover.
 
+## Session 2026-11-03 (on `dev`, after beta3): black chunks, RT fires, X binds
+
+Two requests from the user, both on `dev`, not on a console yet:
+
+- **Black chunks of a Chozo room after saving or loading** (a tester:
+  "only temporarily after saving or loading into a save"; `shot26.webp`,
+  the 2026-11-02 static-memory change didn't fix it). Not reproduced in
+  xemu (save and load scenarios, also with `PX_IMG_DELAY_MS=15`); the
+  shot's black is pure 0,0,0 in whole-model pieces, the far room fine.
+  Found two holes in the texture cache that give exactly that and last
+  while the texture is drawn (docs/decisions.md, 2026-11-03): an EFB copy
+  entry was taken for any texture later loaded into the freed copy buffer
+  (never revalidated), and a texmap the cache emptied was never loaded again
+  because `CTexture::Load` thinks it still holds the texture. Fixed both
+  (`efb_stale`, `xsdk_tex_map_cleared`). To confirm on a console: save at a
+  Chozo station and load that save a few times; boot.log (Log File on)
+  shows `[TEX] EFB copy at ... overwritten by a texture` when case 1 hits.
+  If black chunks still show, the next suspects are in this session's
+  notes below.
+- **Buttons** (the user: RT fires as well as A under Dual Stick; triggers
+  remappable; "press X to start key bind, then ... press right trigger"):
+  LT/RT are bindings (`lt`, `rt` in settings.ini; old files migrate from
+  `aim` and `trigger_z`), RT is Fire under Dual Stick and Free Aim under
+  GameCube aiming, the Buttons tab's X starts bind mode (next button or
+  trigger pressed takes the action; D-pad or 5 s cancels). xemu (`bind`
+  scenario in the session's scratch, slot 3): bind prompt, LT and B bound,
+  Y Y restore, RT fires in play. docs/ui.md, README, decisions.md updated.
+- Host tests: test_settings, test_tex_cache (old-cache comparison under
+  `-DGX_TEX_NO_EFB_STALE`, plus the stale-copy case), test_tex_convert pass.
+- Ruled out while looking (read, not fixed): world surfaces never wait on
+  `TryLockTextures`; dumped textures (pause screen's `DestroyAreaTextures`)
+  are held off screen by the pause blur until reloaded, and the save
+  screen dumps none; card reads are synchronous; display lists spilled into
+  the texture pool never sit in the overflow pool; GX's own list culling
+  isn't used by Prime. Untested: a static display list built from memory
+  that later changed (never re-checked) would also show as missing pieces
+  until the room is left.
+
 ## Where it stands (2026-11-02): v1.0-beta3
 
 **v1.0-beta3 is `main` at the merge of `dev` (2026-11-02)**, released by

@@ -35,6 +35,9 @@ enum EOption {
   kXO_OpenMenu,
   kXO_AimMode,  // GameCube / Dual Stick (GitHub #2)
   kXO_AimSpeed, // Low / Medium / High: Dual Stick's turn rate
+  // the triggers' bindings (2026-11-03), after the buttons' in settings.c
+  kXO_BindLT,
+  kXO_BindRT,
 };
 
 const wchar_t* Title(int option);
@@ -62,8 +65,15 @@ void ApplyAtBoot();
 // no input while it is up, nor the press that closes it.
 void OpenMenu();
 bool MenuOpen();
-// the GameCube action a Buttons row gives (port 1; 0 none)
+// the GameCube action a Buttons-page input gives (XHW_MENU_IN_*, port 1; 0 none)
 int BindGc(int button);
+// the option that binds a Buttons-page input (XHW_MENU_IN_A..RT); -1 none
+int BindOption(int button);
+// Bind mode (X, then the input): `to` takes `from`'s action (both XHW_MENU_IN_*).
+// Nothing is lost: `from` takes `to`'s old action when no other input has it.
+void BindPress(int from, int to);
+// what the Buttons tab shows as an input's default (RT's follows Aiming)
+int DefaultBindGc(int button);
 // settings.ini is to be written when the popup closes (a change made
 // without Set or Step: the Buttons tab's defaults)
 void MarkChanged();

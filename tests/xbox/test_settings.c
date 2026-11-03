@@ -146,11 +146,24 @@ int main(int argc, char** argv) {
     xsdk_settings_load();
     CHECK(g_notices == 0);
 
-    /* no Fire on port 2: its buttons reset, port 1 kept */
-    load("[port1]\na = B\nx = A\n[port2]\na = B\nx = B\n");
+    /* no Fire on port 2 (RT fires too under Dual Stick): its buttons reset, port 1 kept */
+    load("[port1]\na = B\nx = A\n[port2]\na = B\nx = B\nrt = NONE\n");
     CHECK(st->port[0].bind[0].gc == PAD_BUTTON_B && st->port[0].bind[2].gc == PAD_BUTTON_A);
     CHECK(st->port[1].bind[0].gc == PAD_BUTTON_A && st->port[1].bind[2].gc == PAD_BUTTON_B);
+    CHECK(st->port[1].bind[15].gc == PAD_BUTTON_A);
     CHECK(g_notices == 1 && strstr(g_notice[1], "[port2]") != NULL);
+
+    /* the triggers: defaults by Aiming, an old file's trigger_z, lt/rt by hand */
+    load("[input]\naim = dual\n");
+    CHECK(st->port[0].bind[14].gc == PAD_TRIGGER_L && st->port[0].bind[15].gc == PAD_BUTTON_A);
+    load("[port1]\nstart = START\n[input]\naim = gamecube\n");
+    CHECK(st->port[0].bind[14].gc == PAD_TRIGGER_L && st->port[0].bind[15].gc == PAD_TRIGGER_R);
+    load("[port1]\ntrigger_z = left\n[port2]\ntrigger_z = right\n");
+    CHECK(st->port[0].bind[14].gc == PAD_TRIGGER_Z && st->port[0].bind[15].gc == PAD_BUTTON_A);
+    CHECK(st->port[1].bind[14].gc == PAD_TRIGGER_L && st->port[1].bind[15].gc == PAD_TRIGGER_Z);
+    CHECK(st->port[0].trigger_z == XSDK_TRIGGER_Z_OFF && g_notices == 0);
+    load("[input]\naim = gamecube\n[port1]\nrt = Jump\nlt = free aim\n");
+    CHECK(st->port[0].bind[14].gc == PAD_TRIGGER_R && st->port[0].bind[15].gc == PAD_BUTTON_B);
 
     /* no Pause */
     load("[port3]\nstart = NONE\n");
@@ -191,7 +204,7 @@ int main(int argc, char** argv) {
         xsdk_settings_defaults(&g_xsdk_settings);
         g_xsdk_settings.fov = 75;
         g_xsdk_settings.port[3].bind[4].gc = PAD_TRIGGER_L;
-        g_xsdk_settings.port[3].trigger_z = XSDK_TRIGGER_Z_RIGHT;
+        g_xsdk_settings.port[3].bind[15].gc = PAD_TRIGGER_Z;   /* rt: the map */
         CHECK(xsdk_settings_save());
         d = g_xsdk_settings;
         g_notices = 0;

@@ -42,6 +42,7 @@ uint32_t xgx_tex_pool_overflow_kb(void) { return 0; }
 uint32_t xgx_tex_from_efb(const int32_t src[4], uint32_t w, uint32_t h, int i, uint32_t reuse) { return 0; }
 void xgx_read_efb(const int32_t src[4], uint32_t w, uint32_t h, uint8_t* rgba) {}
 void xhw_logf(const char* fmt, ...) {}
+void xsdk_tex_map_cleared(int map) { (void)map; }   /* px_port.cpp: CTexture::InvalidateTexmap */
 void xhw_log(const char* s) {}
 void gx_vtx_flush(void) {}
 

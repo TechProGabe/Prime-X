@@ -619,12 +619,13 @@ static void draw_frame(const xhw_menu_view* v) {
 footer:
     /* the footer: what the buttons do */
     if (v->page != 2 || v->rows > 0) {
-        /* the Buttons page: A and X step the action on and back (left and
-         * right move between the columns there) */
+        /* the Buttons page: A steps the action on, X binds (then press the
+         * button or trigger; port_menu.cpp), left and right move between
+         * the columns there */
         static const char* const k_rows_b[] = { "A", "B", "Y" };
         static const char* const k_rows_t[] = { "Change", "Close", "Defaults" };
         static const char* const k_pad_b[] = { "A", "X", "B", "Y" };
-        static const char* const k_pad_t[] = { "Next", "Previous", "Close", "Defaults" };
+        static const char* const k_pad_t[] = { "Next", "Bind", "Close", "Defaults" };
         static const char* const k_ask_b[] = { "A", "B" };
         static const char* const k_ask_t[] = { "OK", "Later" };
         const char* const* k_b = v->page == 2 ? k_ask_b : v->page ? k_pad_b : k_rows_b;

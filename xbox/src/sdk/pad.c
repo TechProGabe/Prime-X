@@ -6,9 +6,11 @@
  *   A -> A      X -> B      B -> X      Y -> Y      White/Black -> Z
  *   Start -> Start          D-pad -> D-pad
  *   left stick -> control stick         right stick -> C-stick
- *   L/R triggers -> analog L/R, digital L/R click near the end of travel
- *   (settings.ini trigger_z = left/right: that trigger is Z instead, GitHub
- *   #12: grabbing with White/Black was awkward)
+ *   LT -> analog L, digital L click near the end of travel
+ *   RT -> Fire (Dual Stick aiming) or analog R and its click (GameCube aiming)
+ *   The triggers are bindings like the buttons (settings.ini lt, rt; the
+ *   Port Options Buttons tab, 2026-11-03): bound to L or R they pass on
+ *   their analog value, bound to anything else they are a button.
  *
  * Sticks: a radial dead zone (worn Duke/S sticks rest well off centre;
  * OpenCrossing-Xbox measured 18-35%), then scaled so full tilt reaches the
@@ -178,6 +180,9 @@ u32 PADRead(PADStatus* status) {
             motors |= 0x80000000u >> i;
             continue;
         }
+        /* the triggers past their click are buttons the layout binds (lt, rt) */
+        if (p.lt >= ps->trigger_click) p.buttons |= XHW_BTN_LT;
+        if (p.rt >= ps->trigger_click) p.buttons |= XHW_BTN_RT;
         if (menu_up() && (p.buttons & (XHW_BTN_A | XHW_BTN_B)))
             s->button = (u16)(map_buttons(p.buttons & ~(XHW_BTN_A | XHW_BTN_B), ps) |
                               ((p.buttons & XHW_BTN_A) ? PAD_BUTTON_A : 0) | ((p.buttons & XHW_BTN_B) ? PAD_BUTTON_B : 0));
@@ -193,17 +198,22 @@ u32 PADRead(PADStatus* status) {
         }
         stick(p.lx, p.ly, ps->stick_deadzone, &s->stickX, &s->stickY);
         stick(p.rx, p.ry, ps->cstick_deadzone, &s->substickX, &s->substickY);
-        if (ps->trigger_z == XSDK_TRIGGER_Z_LEFT) {   /* a Z button: no analog L, no L click */
-            if (p.lt >= ps->trigger_click) s->button |= PAD_TRIGGER_Z;
-            p.lt = 0;
-        } else if (ps->trigger_z == XSDK_TRIGGER_Z_RIGHT) {
-            if (p.rt >= ps->trigger_click) s->button |= PAD_TRIGGER_Z;
-            p.rt = 0;
+        /* The analog L and R: how far in the trigger bound to Lock On (L) or
+         * Free Aim (R) is; a trigger bound to anything else (Dual Stick's RT
+         * fires) gives neither. Clicked by a button, the GameCube's trigger
+         * is all the way in. */
+        {
+            uint8_t al = 0, ar = 0;
+            const uint16_t gl = ps->bind[14].gc, gr = ps->bind[15].gc;   /* settings.c lt, rt */
+            if (gl == PAD_TRIGGER_L) al = p.lt;
+            if (gr == PAD_TRIGGER_L && p.rt > al) al = p.rt;
+            if (gl == PAD_TRIGGER_R) ar = p.lt;
+            if (gr == PAD_TRIGGER_R && p.rt > ar) ar = p.rt;
+            if ((s->button & PAD_TRIGGER_L) && al < ps->trigger_click) al = 0xFF;
+            if ((s->button & PAD_TRIGGER_R) && ar < ps->trigger_click) ar = 0xFF;
+            s->triggerLeft = al;
+            s->triggerRight = ar;
         }
-        s->triggerLeft = p.lt;
-        s->triggerRight = p.rt;
-        if (p.lt >= ps->trigger_click) s->button |= PAD_TRIGGER_L;
-        if (p.rt >= ps->trigger_click) s->button |= PAD_TRIGGER_R;
         s->analogA = (s->button & PAD_BUTTON_A) ? 0xFF : 0;
         s->analogB = (s->button & PAD_BUTTON_B) ? 0xFF : 0;
         if (s_motor[i] == PAD_MOTOR_RUMBLE) {
