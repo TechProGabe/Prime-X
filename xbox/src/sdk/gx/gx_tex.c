@@ -72,6 +72,13 @@ static uint32_t s_st_uploads, s_st_evicts, s_st_evicts_hot, s_st_drops, s_st_dro
 static uint32_t s_drop_logged;
 static uint32_t s_st_chg_data, s_st_chg_tlut, s_chg_logged;   /* revalidation found new texels / a new palette */
 static uint32_t s_st_efb_stale, s_efb_stale_logged;   /* EFB copies whose memory a texture took (efb_stale) */
+static uint32_t s_st_map_cleared;                      /* texmaps drop_at emptied */
+/* The two black-texture fixes of 2026-11-03 (efb_stale, xsdk_tex_map_cleared).
+ * -DXGX_TEX_STALE_FIX=0 leaves both cases as they were but still logs them:
+ * the console A/B round that checks they are the tester's black chunks. */
+#ifndef XGX_TEX_STALE_FIX
+#define XGX_TEX_STALE_FIX 1
+#endif
 
 /* port (game code): the game's CTexture believes a texmap still holds what
  * it loaded there and skips loading it again (as on the GameCube); a map
@@ -396,9 +403,10 @@ static int efb_stale(const Entry* e) {
     s_st_efb_stale++;
     if (!s_efb_stale_logged) {
         s_efb_stale_logged = 1;
-        xhw_logf("[TEX] EFB copy at %p (%ux%u) overwritten by a texture: dropped", (const void*)e->data, e->w, e->h);
+        xhw_logf("[TEX] EFB copy at %p (%ux%u) overwritten by a texture: %s", (const void*)e->data, e->w, e->h,
+                 XGX_TEX_STALE_FIX ? "dropped" : "still drawn as the copy (fix off)");
     }
-    return 1;
+    return XGX_TEX_STALE_FIX;
 }
 
 static Entry* find(const uint8_t* data, uint16_t w, uint16_t h, uint8_t fmt, uint8_t levels, const uint8_t* tlut_data) {
@@ -431,7 +439,8 @@ static void drop_at(int i) {
                 g_xgx.dirty |= XGX_DIRTY_MAPS;
                 /* the game loads it again rather than draw with the map
                  * empty (black: every surface after it with that texture) */
-                xsdk_tex_map_cleared(m);
+                s_st_map_cleared++;
+                if (XGX_TEX_STALE_FIX) xsdk_tex_map_cleared(m);
             }
         xgx_tex_destroy(e->tex);
     }
@@ -1264,9 +1273,13 @@ void gx_tex_frame_end(void) {
         s_st_uploads = s_st_evicts = s_st_evicts_hot = s_st_drops = s_st_drop_kb = s_st_fast = s_st_new_copies = 0;
         s_drop_logged = 0;
         s_st_chg_data = s_st_chg_tlut = s_chg_logged = 0;
-        if (s_st_efb_stale)
-            xhw_logf("[TEX] per %u: %u EFB copies found overwritten by a texture", XGX_STATS_EVERY, s_st_efb_stale);
-        s_st_efb_stale = s_efb_stale_logged = 0;
+#ifndef GX_TEX_NO_EFB_STALE   /* not in the reference's trace */
+        if (s_st_efb_stale || s_st_map_cleared)
+            xhw_logf("[TEX] per %u: %u binds of an EFB copy a texture overwrote, %u texmaps emptied by a drop%s",
+                     XGX_STATS_EVERY, s_st_efb_stale, s_st_map_cleared,
+                     XGX_TEX_STALE_FIX ? "" : " (fixes off: drawn black or stale)");
+#endif
+        s_st_efb_stale = s_efb_stale_logged = s_st_map_cleared = 0;
     }
     s_frame++;
     /* never one a map still holds: Prime's CTexture::Load skips the load

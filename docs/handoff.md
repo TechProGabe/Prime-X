@@ -21,7 +21,12 @@ Two requests from the user, both on `dev`, not on a console yet:
   Chozo station and load that save a few times; boot.log (Log File on)
   shows `[TEX] EFB copy at ... overwritten by a texture` when case 1 hits.
   If black chunks still show, the next suspects are in this session's
-  notes below.
+  notes below. **Console A/B staged** (the user asked to replicate it on
+  hardware): `-DXGX_TEX_STALE_FIX=0` keeps both cases but logs them (image
+  A), image B has the fixes; folders `Prime-X-{A,B}-station` (Chozo Save
+  Station 1 as card file A) and `Prime-X-{A,B}-title`, README inside;
+  `C:\xemu\hw\prime\stage-black` and `Downloads\Prime-X-blacktest.zip`
+  (ROUNDS.md "black A/B"). The consoles were off FTP when staged.
 - **Buttons** (the user: RT fires as well as A under Dual Stick; triggers
   remappable; "press X to start key bind, then ... press right trigger"):
   LT/RT are bindings (`lt`, `rt` in settings.ini; old files migrate from
