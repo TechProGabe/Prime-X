@@ -20,8 +20,8 @@ over unless a line here says otherwise.
 | Upgraded CPUs | supported: Melee-X's code repair, no timing from the TSC, plain Pentium III code |
 | Repo | `TechProGabe/Prime-X`, private for now; `main` releases, `dev` work |
 | Title ID | `50580001` ("PX"), so data lives in `E:\UDATA\50580001\` |
-| Controller layout | GameCube by position, as Melee-X: A=A, X=B, B=X, Y=Y, White/Black=Z, triggers=analog L/R, right stick=C-stick, remappable per port |
-| Players | one (port 1 plays; other ports' pads ignored unless remapped) |
+| Controller layout | two fixed layouts, no remapping (2026-11-03): **Dual Stick** (the default: right stick aims, A or RT fires, Black + right stick beams) and **GameCube** (by position, as Melee-X: A=A, X=B, B=X, Y=Y, White/Black=Z, triggers=analog L/R, right stick=C-stick) |
+| Players | one (port 1 plays) |
 
 ## Technical decisions
 
@@ -541,7 +541,7 @@ swaps it, as Melee-X's does.
   settings.ini with Dual Stick and no Beam Select gets one at load, as the
   row does.
 - **RT fires under Dual Stick; the triggers are remappable; X binds**
-  (2026-11-03, the user: "shoot is right trigger as well as A ... you
+  (superseded the same day: no remapping at all, below) (2026-11-03, the user: "shoot is right trigger as well as A ... you
   should be able to change the trigger ... press X to start key bind, then
   you can press right trigger, and then it would save"; LT/RT switched the
   popup's tab instead). LT and RT are bindings like the buttons
@@ -562,6 +562,24 @@ swaps it, as Melee-X's does.
   except when the taker's old action would then be on no input, which goes
   back the other way (a swap), so nothing is lost (GitHub #1) and two inputs
   can share Fire. Before, every change swapped, so Fire couldn't be on two.
+- **Two control layouts, no button mapping** (2026-11-03, the user: "remove
+  button mapping entirely and just do two play schemes. The GameCube and
+  dual stick mode, dual stick mode on by default. Rip out button mapping
+  entirely"; then "make sure in dual stick mode you can shoot with a or
+  right trigger"). The Controller tab's **Controls** row (was "Aiming",
+  `[input] aim`) picks the layout and the aiming together; `pad.c` maps the
+  buttons from it, nothing else. Both: A Fire, X Jump, B Morph Ball, Y
+  Missile, White Map, LT Lock On (analog L and its click), D-pad visors,
+  START pause; BACK and the stick clicks do nothing (BACK: screenshots).
+  **Dual Stick** (default): RT is Fire as well as A (no analog R), Black
+  held is Beam Select (the right stick picks beams), the right stick aims.
+  **GameCube**: RT is Free Aim (analog R and its click), Black is Map like
+  White, the right stick picks beams. In the game's menus B is back and X
+  too, as before. Gone: the Buttons tab (its drawn controller and bind
+  mode), `[portN]` button lines (`a = A` ..., `lt`, `rt`, `trigger_z`; an
+  older file's are skipped without a notice and the file rewritten without
+  them), the Fire/Pause check, Beam Select hand-out, RT following Aiming,
+  the list-row (carousel) hooks in the pause Options. ~1100 lines out.
 - **Port Options look like Prime's pause Options** (2026-11-02, the user:
   "match the game vibe better and be as high performance as possible, as
   light as possible"; picked mockup A of four): an amber hologram (the
@@ -600,6 +618,7 @@ One line per edit to `src/`, `include/`, `extern/musyx` or
 | `src/Kyoto/Graphics/CCubeMoviePlayer.cpp` | movies always take the deinterlaced (whole-frame) path | the field path draws every other line for an interlaced TV; Xbox frames are whole |
 | `extern/aurora/include/dolphin/ppc_math.h` | `_BitScanReverse64` only on x64 | nxdk's clang defines `_MSC_VER` on 32-bit |
 | `src/MetroidPrime/CPauseScreenFrame.cpp` | (rewritten 2026-11-01) every pause Options category ends with a "Port Options" row above Restore Defaults; A on it opens Prime-X's popup (`PortXboxOptions::OpenMenu`, port_menu.cpp). The Prime-X rows that were mixed into the categories, the title frame's Port Options tables, their value-cell grid and the Prime-X part of Restore Defaults are gone; the frame's get/set hooks for options past `kGO_RestoreDefaults` stay (the row's title and description) | the user: "the port options menu is just shitty ... make a clear custom menu pop up that explains everything" (docs/ui.md "Port Options") |
+| `src/MetroidPrime/CPauseScreenFrame.cpp` | the list-row hooks (a Prime-X row's three cells as previous / current / next action, left/right stepping it) are gone 2026-11-03; the triple labels still come from `PortXboxOptions::ValueLabel` | the button remap they served was removed ("Two control layouts, no button mapping") |
 | `src/MetroidPrime/CFrontEndUI.cpp` | the main menu's "Metroid Fusion Connection Bonuses" row reads "Port Options" (its front pane in gold through the game's `&main-color` text tag, 2026-11-01: "make port options stand out") and opens the popup | the user: reachable without a New Game slot; the bonuses need a GBA link an Xbox can't have |
 | `src/MetroidPrime/CFrontEndUI.cpp` | the New Game popup's third slot (Hard's, unused before Normal is beaten) shows "Port Options" and opens the popup (until 2026-11-01: the Options frame with Prime-X's tables) | the user's main-menu entry (docs/ui.md) |
 | `src/MetroidPrime/main.cpp` | `UpdateTicks` reports the updates it ran to `xhw_perf_ticks` | `[PERF]`'s "ticks per render" was always 0 (Melee-X's hook, never called): Fixed's catch-up shows now |

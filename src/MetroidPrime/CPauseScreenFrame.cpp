@@ -1088,9 +1088,7 @@ void COptionsScreen::UpdateOptionView() {
     for (int i = 0; i < 3; ++i) {
       CGuiTextPane* label =
           static_cast< CGuiTextPane* >(x194_tablegroup_triple->GetWorkerWidget(i));
-      const wchar_t* text = PortXboxOptions::IsList(static_cast< int >(opt.option))
-                                ? PortXboxOptions::ListLabel(static_cast< int >(opt.option), i - 1)
-                                : PortXboxOptions::ValueLabel(static_cast< int >(opt.option), i);
+      const wchar_t* text = PortXboxOptions::ValueLabel(static_cast< int >(opt.option), i);
       if (text != nullptr) {
         label->TextSupport().SetText(rstl::wstring_l(text));
       } else {
@@ -1118,13 +1116,7 @@ void COptionsScreen::UpdateOptionView() {
       }
     }
 #endif
-#ifdef TARGET_XBOX
-    // PORT_XBOX: a list row sits on its middle cell (the current value)
-    x194_tablegroup_triple->SetUserSelection(
-        PortXboxOptions::IsList(static_cast< int >(opt.option)) ? 1 : CGameOptions::GetOption(opt.option));
-#else
     x194_tablegroup_triple->SetUserSelection(CGameOptions::GetOption(opt.option));
-#endif
     x194_tablegroup_triple->SetIsVisible(true);
     x194_tablegroup_triple->SetIsActive(true);
     UpdateSideTable(x194_tablegroup_triple);
@@ -1152,16 +1144,6 @@ void COptionsScreen::OnEnumChanged(CGuiTableGroup* caller, int oldSel) {
         GetOptionCategory(x70_tablegroup_leftlog->GetUserSelection(), false);
     const SGameOption& option = category.options[x1c_rightSel];
     const int selection = caller->GetUserSelection();
-#ifdef TARGET_XBOX
-    // PORT_XBOX: a list row steps its value and is drawn again, centred
-    if (PortXboxOptions::IsList(static_cast< int >(option.option))) {
-      PortXboxOptions::Step(static_cast< int >(option.option), selection - 1);
-      UpdateOptionView();
-      CSfxManager::SfxStart(0x59d, 0x7f, 0x40, false, CSfxManager::kMedPriority, false,
-                            CSfxManager::kAllAreas);
-      return;
-    }
-#endif
     CGameOptions::SetOption(option.option, selection);
     if (option.option == kGO_Rumble && selection > 0) {
       x1a8_rumble.HardStopAll();

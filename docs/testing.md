@@ -39,7 +39,7 @@ checklist. Phase 1 copies its tools; this file grows with them.
 boot, correctness and Dolphin comparisons, not frame rates. Scenarios
 (`tools/xbox/scenarios/`) script the pad: per benchmark room
 (`docs/performance.md`), per visor, the boot-safety cases, and the Xbox
-Port Options popup (`menu`: every tab, a change, a remap, close, with
+Port Options popup (`menu`: every tab, a change, close, with
 `env PX_MENU_AT=<frame>` opening it; `menu_pause`: the pause screen's row,
 from Tallon). xemu runs the title at ~6 fps: script presses `for 2`
 frames, or a press auto-repeats in the popup.

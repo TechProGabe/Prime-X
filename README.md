@@ -26,8 +26,8 @@ What you get:
 - 480i, 480p or 720p, with **16:9 widescreen at both 480 and 720**, up to whatever your dashboard allows
 - The game always runs at its proper speed. When a room is too heavy, the frame rate drops but the game doesn't slow down
 - **Dual Stick aiming** by default: the left stick moves, the right stick aims, as in most modern shooters. The GameCube's controls are one setting away
-- **Xbox Port Options**, on the main menu (no save file needed) and in the pause menu's Options, styled like the game's own pause menu: every setting says what it does, and buttons are remapped on a picture of the controller
-- A few extras on top of the GameCube game, all off or retail by default: skippable cutscenes, an edge-to-edge widescreen HUD, a field-of-view setting, an FPS counter, screenshots, button remapping, and the Fusion Suit (a GBA-link bonus on the GameCube)
+- **Xbox Port Options**, on the main menu (no save file needed) and in the pause menu's Options, styled like the game's own pause menu: every setting says what it does
+- A few extras on top of the GameCube game, all off or retail by default: skippable cutscenes, an edge-to-edge widescreen HUD, a field-of-view setting, an FPS counter, screenshots, and the Fusion Suit (a GBA-link bonus on the GameCube)
 - Rumble, and saves in the GameCube `.gci` format. Moving saves to and from Dolphin should work, but it hasn't been tested yet
 - **L + R + Back + Black** on any controller quits to the dashboard
 
@@ -89,9 +89,11 @@ The same as Melee-X: grab the latest `Prime-X-<version>.zip` from Releases, put 
 | Start | Start | pause |
 | L + R + Back + Black | | quit to the dashboard |
 
-That's **Dual Stick** aiming, the default. Aim Speed (Low, Medium, High) is in Xbox Port Options > Controller, and Reverse Y-Axis in the game's own Options flips up and down. Set Aiming to **GameCube** there for the original controls: the left stick turns, holding the right trigger makes it aim instead (the right trigger is Free Aim then, not fire), and the right stick switches beams.
+That's the **Dual Stick** layout, the default. There are two layouts and no remapping: Xbox Port Options > Controller > Controls picks one. Aim Speed (Low, Medium, High) is on the same tab, and Reverse Y-Axis in the game's own Options flips up and down.
 
-The face buttons sit where they do on a GameCube pad, as on Melee-X. Every button and both triggers can be remapped in Xbox Port Options > Buttons: pick one, press X, then press the button or trigger that should do the same (or press A to step through the actions). An action that would be left on no button swaps back instead, so Fire and Pause always stay on some button. In menus, A confirms and B goes back, whatever the layout.
+**GameCube** is the original controls: A fires, the left stick turns, holding the right trigger makes it aim instead (Free Aim), the right stick switches beams, and Black opens the map like White. Everything else is as above.
+
+The face buttons sit where they do on a GameCube pad, as on Melee-X. In menus, A confirms and B goes back.
 
 ## Video
 

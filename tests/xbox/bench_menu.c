@@ -30,14 +30,13 @@ uint64_t xhw_time_ns(void) {
 static void view(xhw_menu_view* v, int sel, int page) {
     int r;
     memset(v, 0, sizeof *v);
-    v->tabs = 5;
-    v->tab = page ? 2 : 0;
+    v->tabs = 4;
+    v->tab = 0;
     v->page = page;
     strcpy(v->tab_name[0], "Video");
     strcpy(v->tab_name[1], "Controller");
-    strcpy(v->tab_name[2], "Buttons");
-    strcpy(v->tab_name[3], "Gameplay");
-    strcpy(v->tab_name[4], "System");
+    strcpy(v->tab_name[2], "Gameplay");
+    strcpy(v->tab_name[3], "System");
     strcpy(v->status, "Now: 720p 16:9");
     v->rows = 5;
     v->sel = sel;
@@ -49,8 +48,6 @@ static void view(xhw_menu_view* v, int sel, int page) {
     }
     strcpy(v->help, "The picture signal the console sends. Hold BACK while Prime-X starts to get 480i back.");
     strcpy(v->value_help, "720p: HD, always 16:9. Needs component cables and 720p on in the dashboard.");
-    v->pad_sel = sel;
-    for (r = 0; r < XHW_MENU_IN_COUNT; r++) strcpy(v->pad_map[r], "Morph Ball");
 }
 
 /* frames until the card is whole again, and the slowest frame's ms */
@@ -81,10 +78,10 @@ int main(int argc, char** argv) {
         run("open (rows)", fb, w, h, bpp, &v);
         view(&v, 1, 0);
         run("move down", fb, w, h, bpp, &v);
+        view(&v, 0, 1);
+        run("restart question", fb, w, h, bpp, &v);
         view(&v, 1, 1);
-        run("Buttons tab", fb, w, h, bpp, &v);
-        view(&v, 2, 1);
-        run("Buttons: next input", fb, w, h, bpp, &v);
+        run("restart: other choice", fb, w, h, bpp, &v);
         if (argc > 1) {   /* the frame as a PPM */
             char name[300];
             FILE* f;

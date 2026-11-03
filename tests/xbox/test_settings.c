@@ -1,8 +1,9 @@
 /* test_settings.c - settings.c's reading of a hand-edited settings.ini, on the
  * host (tools/xbox/test_settings.py builds it with settings.c included).
- * What a player's hand edit can get wrong: typos in values, unknown keys and
- * button names, out-of-range numbers, a layout with no Fire, a BOM, a file
- * saved as UTF-16; and that a save reads back as it was written. */
+ * What a player's hand edit can get wrong: typos in values, unknown keys,
+ * out-of-range numbers, a BOM, a file saved as UTF-16; an older file's
+ * button layout (gone since 2026-11-03) dropped quietly; and that a save
+ * reads back as it was written. */
 #include <assert.h>
 #include <stdint.h>
 #include <stdarg.h>
@@ -116,26 +117,26 @@ int main(int argc, char** argv) {
         xsdk_settings_load();
         CHECK(g_notices == 0);
         CHECK(xsdk_settings_equal(st, &d));
-        CHECK(file_has("settings.ini", "a = A           ; Fire"));
+        CHECK(file_has("settings.ini", "aim = dual"));
+        CHECK(!file_has("settings.ini", "\na = "));
     }
 
-    /* good hand edits: words for flags, action names, a %, # comments, a BOM */
+    /* good hand edits: words for flags, a %, # comments, a BOM */
     load("\xEF\xBB\xBF[video]\nfps = yes\nwidescreen=2 # always 16:9\n[game]\nfov = 65\n"
-         "[input]\nrumble = 40%\n[port1]\na = Jump\nb = Fire\nX = morph ball\n");
+         "[input]\nrumble = 40%\naim = GameCube\n[port1]\ncstick_deadzone = 30\n");
     CHECK(g_notices == 0);
     CHECK(st->fps == 1 && st->widescreen == 2 && st->fov == 65);
-    CHECK(pct(st->rumble) == 40);
-    CHECK(st->port[0].bind[0].gc == PAD_BUTTON_B && st->port[0].bind[1].gc == PAD_BUTTON_A);
-    CHECK(st->port[0].bind[2].gc == PAD_BUTTON_X);
+    CHECK(pct(st->rumble) == 40 && st->aim == XSDK_AIM_GAMECUBE);
+    CHECK(pct(st->port[0].cstick_deadzone) == 30);
 
     /* typos keep the default; out of range takes the nearest; all reported */
     load("[video]\nfps = maybe\n[game]\nfov = wide\n[port1]\ntrigger_click = 0\nstick_deadzone = 95\n"
-         "a = Jumpp\nzz = A\n[videos]\nfoo = 1\n[game]\nbar = 2\nno equals here\n");
+         "zz = A\n[videos]\nfoo = 1\n[game]\nbar = 2\nno equals here\n[input]\naim = triple\n");
     CHECK(st->fps == d.fps);
     CHECK(st->fov == 55);
     CHECK(st->port[0].trigger_click == 64);
     CHECK(pct(st->port[0].stick_deadzone) == 60);
-    CHECK(st->port[0].bind[0].gc == PAD_BUTTON_A);   /* "Jumpp": the default kept */
+    CHECK(st->aim == XSDK_AIM_DUAL);   /* "triple": the default kept */
     CHECK(g_notices == 1);
     if (!strstr(g_notice[0], "9 lines fixed")) printf("notice: %s | %s\n", g_notice[0], g_notice[1]);
     CHECK(strstr(g_notice[0], "9 lines fixed") != NULL);
@@ -146,29 +147,19 @@ int main(int argc, char** argv) {
     xsdk_settings_load();
     CHECK(g_notices == 0);
 
-    /* no Fire on port 2 (RT fires too under Dual Stick): its buttons reset, port 1 kept */
-    load("[port1]\na = B\nx = A\n[port2]\na = B\nx = B\nrt = NONE\n");
-    CHECK(st->port[0].bind[0].gc == PAD_BUTTON_B && st->port[0].bind[2].gc == PAD_BUTTON_A);
-    CHECK(st->port[1].bind[0].gc == PAD_BUTTON_A && st->port[1].bind[2].gc == PAD_BUTTON_B);
-    CHECK(st->port[1].bind[15].gc == PAD_BUTTON_A);
-    CHECK(g_notices == 1 && strstr(g_notice[1], "[port2]") != NULL);
-
-    /* the triggers: defaults by Aiming, an old file's trigger_z, lt/rt by hand */
-    load("[input]\naim = dual\n");
-    CHECK(st->port[0].bind[14].gc == PAD_TRIGGER_L && st->port[0].bind[15].gc == PAD_BUTTON_A);
-    load("[port1]\nstart = START\n[input]\naim = gamecube\n");
-    CHECK(st->port[0].bind[14].gc == PAD_TRIGGER_L && st->port[0].bind[15].gc == PAD_TRIGGER_R);
-    load("[port1]\ntrigger_z = left\n[port2]\ntrigger_z = right\n");
-    CHECK(st->port[0].bind[14].gc == PAD_TRIGGER_Z && st->port[0].bind[15].gc == PAD_BUTTON_A);
-    CHECK(st->port[1].bind[14].gc == PAD_TRIGGER_L && st->port[1].bind[15].gc == PAD_TRIGGER_Z);
-    CHECK(st->port[0].trigger_z == XSDK_TRIGGER_Z_OFF && g_notices == 0);
-    load("[input]\naim = gamecube\n[port1]\nrt = Jump\nlt = free aim\n");
-    CHECK(st->port[0].bind[14].gc == PAD_TRIGGER_R && st->port[0].bind[15].gc == PAD_BUTTON_B);
-
-    /* no Pause */
-    load("[port3]\nstart = NONE\n");
-    CHECK(st->port[2].bind[6].gc == PAD_BUTTON_START);
-    CHECK(g_notices == 1);
+    /* a file from before 2026-11-03: its button layout (a = ..., lt, rt,
+     * trigger_z) is skipped without a word and the file written again
+     * without it; the layout comes from aim (pad.c) */
+    load("[input]\naim = gamecube\n[port1]\ntrigger_click = 200\na = Jump\nb = Fire\nlt = Z\nrt = NONE\n"
+         "trigger_z = left\nblack = BEAM   ; Beam Select\n[port2]\nstart = NONE\n");
+    CHECK(g_notices == 0);
+    CHECK(st->aim == XSDK_AIM_GAMECUBE && st->port[0].trigger_click == 200);
+    CHECK(!file_has("settings.ini", "\na = ") && !file_has("settings.ini", "trigger_z") &&
+          !file_has("settings.ini", "\nrt = ") && !file_has("settings.bad.ini", "a = Jump"));
+    CHECK(file_has("settings.ini", "trigger_click = 200"));
+    g_notices = 0;
+    xsdk_settings_load();
+    CHECK(g_notices == 0 && st->aim == XSDK_AIM_GAMECUBE);
 
     /* Notepad's "Unicode": defaults, reported */
     {
@@ -203,8 +194,10 @@ int main(int argc, char** argv) {
     {
         xsdk_settings_defaults(&g_xsdk_settings);
         g_xsdk_settings.fov = 75;
-        g_xsdk_settings.port[3].bind[4].gc = PAD_TRIGGER_L;
-        g_xsdk_settings.port[3].bind[15].gc = PAD_TRIGGER_Z;   /* rt: the map */
+        g_xsdk_settings.aim = XSDK_AIM_GAMECUBE;
+        g_xsdk_settings.aim_speed = XSDK_AIM_SPEED_HIGH;
+        g_xsdk_settings.port[3].trigger_click = 180;
+        g_xsdk_settings.port[3].stick_deadzone = 0.35f;
         CHECK(xsdk_settings_save());
         d = g_xsdk_settings;
         g_notices = 0;

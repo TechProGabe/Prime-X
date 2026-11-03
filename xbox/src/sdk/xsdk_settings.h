@@ -4,27 +4,14 @@
 #define XSDK_SETTINGS_H
 #include <stdint.h>
 
-#define XSDK_BIND_COUNT 16
-/* A binding that isn't a GameCube button: Beam Select (Dual Stick aiming,
- * GitHub #2): held, the right stick is the GameCube's C-stick again and
- * picks beams. pad.c takes it out before the game sees the buttons. */
-#define XSDK_PAD_BEAM 0x2000
-
+/* Each controller port. The buttons are fixed by Aiming (pad.c): there is
+ * no remapping since 2026-11-03 (the user: "remove button mapping entirely
+ * and just do two play schemes"). */
 typedef struct {
-    uint32_t xbox;   /* XHW_BTN_* (one bit) */
-    uint16_t gc;     /* PAD_BUTTON_* / PAD_TRIGGER_* (0 = unbound) */
-} xsdk_bind;
-
-typedef struct {
-    xsdk_bind bind[XSDK_BIND_COUNT];
     float stick_deadzone;    /* radial, fraction of full tilt */
     float cstick_deadzone;
-    uint8_t trigger_click;   /* analog value from which L/R also click */
-    uint8_t trigger_z;       /* XSDK_TRIGGER_Z_*: an old file's trigger_z (GitHub #12), read into the
-                              * lt/rt bindings at load, then always off */
+    uint8_t trigger_click;   /* analog value from which LT and RT count as pressed */
 } xsdk_port_settings;
-
-enum { XSDK_TRIGGER_Z_OFF = 0, XSDK_TRIGGER_Z_LEFT, XSDK_TRIGGER_Z_RIGHT };
 
 /* Game Timing, in the Port Options row's order. Auto: 60 game updates a
  * second while the frame fits, 30 (drawn at 60, blended between updates)
@@ -32,9 +19,10 @@ enum { XSDK_TRIGGER_Z_OFF = 0, XSDK_TRIGGER_Z_LEFT, XSDK_TRIGGER_Z_RIGHT };
  * more updates). Flex: one update a frame, dt = the frame's time. */
 enum { XSDK_SIM_AUTO = 0, XSDK_SIM_FIXED, XSDK_SIM_FLEX };
 
-/* Aiming (GitHub #2): GameCube (RT and the left stick aim, the right stick
- * picks beams) or Dual Stick (the right stick aims, the left one moves and
- * strafes, as the Remastered edition) */
+/* Aiming (GitHub #2), which is also the button layout (pad.c): GameCube
+ * (RT and the left stick aim, the right stick picks beams) or Dual Stick
+ * (the right stick aims, the left one moves and strafes, as the Remastered
+ * edition; A or RT fires, Black held makes the right stick pick beams) */
 enum { XSDK_AIM_GAMECUBE = 0, XSDK_AIM_DUAL };
 enum { XSDK_AIM_SPEED_LOW = 0, XSDK_AIM_SPEED_MEDIUM, XSDK_AIM_SPEED_HIGH };
 
@@ -66,9 +54,6 @@ void xsdk_settings_load(void);
 int xsdk_settings_save(void);   /* 0: failed, settings.ini left as it was */
 int xsdk_settings_equal(const xsdk_settings* a, const xsdk_settings* b);   /* as settings.ini would hold them */
 int xsdk_fusion_suit(void);     /* game code (CGameState.cpp PORT_XBOX): g_xsdk_settings.fusion_suit */
-/* RT's default action for an aiming mode (XSDK_AIM_*): Fire under Dual
- * Stick, Free Aim (PAD_TRIGGER_R) under GameCube aiming */
-uint16_t xsdk_rt_default(int aim);
 int xsdk_cstick_1p(void);       /* game code (fighter.c, camera.c PORT): g_xsdk_settings.cstick_1p */
 
 /* pad.c, for Dual Stick aiming (CDolphinController.cpp): port 1's right

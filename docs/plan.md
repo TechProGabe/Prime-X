@@ -219,7 +219,8 @@ console.
     callbacks on the game thread (MetroidPrimePort's rule). ARAM sample groups.
 4.2 PAD: Melee-X's pad layer, Prime's mapping (README table), analog
     triggers with a click threshold (lock-on is the L click, free aim the
-    R click), rumble, per-port remapping in `settings.ini`.
+    R click), rumble; two fixed layouts by `aim` (per-port remapping in
+    `settings.ini` until 2026-11-03).
 4.3 CARD: `.gci` in `E:\UDATA\50580001\card_a\`, written to a temp file and
     swapped; Prime's save stays big-endian on the card (MetroidPrimePort
     already writes the retail CRC and MSB-first bit fields); Dolphin and real

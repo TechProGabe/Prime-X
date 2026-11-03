@@ -11,8 +11,6 @@
 #include "MetroidPrime/Player/CPlayerState.hpp"
 #include "MetroidPrime/Player/CSystemState.hpp"
 
-#include <dolphin/pad.h>
-
 #include <stdlib.h>
 
 #include "xgx.h"
@@ -27,74 +25,6 @@ namespace PortXboxOptions {
 namespace {
 bool sDirty = false;
 
-// The actions a button can do: a GameCube button, named by what it does in
-// Prime with the default controls (Swap Beam Controls aside), short enough
-// for the value widget's cells
-struct SAction {
-  const wchar_t* name;
-  uint16_t gc;
-};
-const SAction kActions[] = {
-    {L"None", 0},
-    {L"Fire", PAD_BUTTON_A},
-    {L"Jump", PAD_BUTTON_B},
-    {L"Morph", PAD_BUTTON_X},
-    {L"Missile", PAD_BUTTON_Y},
-    {L"Map", PAD_TRIGGER_Z},
-    {L"Lock", PAD_TRIGGER_L},
-    {L"Aim", PAD_TRIGGER_R},
-    {L"Pause", PAD_BUTTON_START},
-    {L"Up", PAD_BUTTON_UP}, // the D-pad: the visors
-    {L"Down", PAD_BUTTON_DOWN},
-    {L"Left", PAD_BUTTON_LEFT},
-    {L"Right", PAD_BUTTON_RIGHT},
-    {L"Beams", XSDK_PAD_BEAM}, // Beam Select: Dual Stick's beam chooser (pad.c)
-};
-const int kActionCount = static_cast< int >(sizeof kActions / sizeof kActions[0]);
-
-// the Buttons rows, in settings.c's binding order (k_xbox there)
-const wchar_t* const kButtonNames[] = {L"A Button",     L"B Button",     L"X Button",
-                                       L"Y Button",     L"White Button", L"Black Button",
-                                       L"Start Button", L"Back Button",  L"Left Stick Click",
-                                       L"Right Stick Click"};
-
-// settings.c's binding slots: the buttons 0-9, the D-pad 10-13 (not on the
-// Buttons page), then LT 14 and RT 15
-const int kSlotLT = 14, kSlotRT = 15;
-
-bool IsBind(int option) {
-  return (option >= kXO_BindFirst && option <= kXO_BindLast) || option == kXO_BindLT || option == kXO_BindRT;
-}
-
-// an option's slot in g_xsdk_settings.port[].bind; -1 none
-int SlotOf(int option) {
-  if (option >= kXO_BindFirst && option <= kXO_BindLast) {
-    return option - kXO_BindFirst;
-  }
-  return option == kXO_BindLT ? kSlotLT : option == kXO_BindRT ? kSlotRT : -1;
-}
-
-// a Buttons-page input's slot (xhw.h XHW_MENU_IN_*); -1 a fixed input
-int SlotOfInput(int in) {
-  if (in >= XHW_MENU_IN_A && in <= XHW_MENU_IN_RCLICK) {
-    return in;
-  }
-  return in == XHW_MENU_IN_LT ? kSlotLT : in == XHW_MENU_IN_RT ? kSlotRT : -1;
-}
-
-const wchar_t* BindTitle(int option) {
-  const int s = SlotOf(option);
-  return s == kSlotLT ? L"Left Trigger" : s == kSlotRT ? L"Right Trigger" : s >= 0 ? kButtonNames[s] : L"";
-}
-
-int ActionIndex(uint16_t gc) {
-  for (int i = 0; i < kActionCount; ++i) {
-    if (kActions[i].gc == gc) {
-      return i;
-    }
-  }
-  return 0;
-}
 int sDiscPending = -1; // Check Disc: -1 not looked up yet
 
 int Percent(float f) { return static_cast< int >(f * 100.f + 0.5f); }
@@ -153,14 +83,11 @@ const wchar_t* Title(int option) {
   case kXO_OpenMenu:
     return L"Xbox Port Options";
   default:
-    return BindTitle(option);
+    return L"";
   }
 }
 
 const wchar_t* Description(int option) {
-  if (IsBind(option)) {
-    return L"What this button does. Taking another button's action swaps the two.";
-  }
   switch (option) {
   case kXO_Widescreen:
     return L"Auto follows the dashboard. 720p is always 16:9.";
@@ -189,80 +116,9 @@ const wchar_t* Description(int option) {
   case kXO_LogFile:
     return L"Writes boot.log to the save folder, for bug reports.";
   case kXO_OpenMenu:
-    return L"Prime-X's settings: video, controller, buttons and more. Press A.";
+    return L"Prime-X's settings: video, controls and more. Press A.";
   default:
     return nullptr;
-  }
-}
-
-bool IsList(int option) { return IsBind(option); }
-
-const wchar_t* ListLabel(int option, int offset) {
-  if (!IsBind(option)) {
-    return L"";
-  }
-  const int i = ActionIndex(g_xsdk_settings.port[0].bind[SlotOf(option)].gc);
-  return kActions[((i + offset) % kActionCount + kActionCount) % kActionCount].name;
-}
-
-// the first remappable input's slot other than b that has the action gc
-// (the buttons and the triggers, not the D-pad); -1 if none
-static int RowWith(uint16_t gc, int b) {
-  if (gc == 0) {
-    return -1;
-  }
-  const int kSlots[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, kSlotLT, kSlotRT};
-  for (int j : kSlots) {
-    if (j != b && g_xsdk_settings.port[0].bind[j].gc == gc) {
-      return j;
-    }
-  }
-  return -1;
-}
-
-// Slot b takes the action gc. The input that had gc takes b's old action
-// only when nothing else has it, so no action is lost (GitHub #1: A set to
-// Jump left nothing on Fire, which is also what confirms in every menu, so
-// Options couldn't be left); an action two inputs share (Dual Stick's Fire
-// on A and RT) or None isn't handed on. Every port the same: Prime is one
-// player.
-static void Give(int b, uint16_t gc) {
-  const uint16_t old = g_xsdk_settings.port[0].bind[b].gc;
-  if (gc == old) {
-    return;
-  }
-  const int other = RowWith(gc, b);
-  const bool swap = other >= 0 && old != 0 && RowWith(old, b) < 0;
-  for (int p = 0; p < 4; ++p) {
-    g_xsdk_settings.port[p].bind[b].gc = gc;
-    if (swap) {
-      g_xsdk_settings.port[p].bind[other].gc = old;
-    }
-  }
-  sDirty = true;
-}
-
-// A row takes the next action in the list (Give). Fire and Pause stay on
-// some input: an action no other input has (None, Lock, Aim, a visor) is
-// skipped while this one is the last with Fire or with Pause (START cycled
-// onto a visor left nothing to pause with: the popup's xemu run,
-// 2026-11-01; settings.ini's check resets such a layout too).
-void Step(int option, int delta) {
-  if (!IsBind(option)) {
-    return;
-  }
-  const int b = SlotOf(option);
-  const uint16_t old = g_xsdk_settings.port[0].bind[b].gc;
-  int i = ActionIndex(old);
-  for (int tries = 1; tries < kActionCount; ++tries) {
-    i = ((i + delta) % kActionCount + kActionCount) % kActionCount;
-    const uint16_t gc = kActions[i].gc;
-    const int other = RowWith(gc, b);
-    if ((old == PAD_BUTTON_A || old == PAD_BUTTON_START) && gc != old && other < 0 && RowWith(old, b) < 0) {
-      continue;
-    }
-    Give(b, gc);
-    return;
   }
 }
 
@@ -383,57 +239,6 @@ int Get(int option) {
   }
 }
 
-namespace {
-// Dual Stick needs a Beam Select button: if none has it, Black takes it when
-// Black only duplicates Map (the default layout has Map on White and Black)
-// or does nothing, else the first of the right stick click, the left stick
-// click and BACK that does nothing. Returns the button, -1 if none was free.
-int GiveBeamSelect() {
-  xsdk_settings& st = g_xsdk_settings;
-  const int kBlack = 5, kWhite = 4;
-  const int beam = RowWith(XSDK_PAD_BEAM, -1);
-  if (beam >= 0) {
-    return beam;
-  }
-  int pick = -1;
-  const uint16_t black = st.port[0].bind[kBlack].gc;
-  if (black == 0 || (black == PAD_TRIGGER_Z && st.port[0].bind[kWhite].gc == PAD_TRIGGER_Z)) {
-    pick = kBlack;
-  } else {
-    const int kFree[] = {9, 8, 7}; // right stick click, left stick click, BACK
-    for (int b : kFree) {
-      if (st.port[0].bind[b].gc == 0) {
-        pick = b;
-        break;
-      }
-    }
-  }
-  if (pick >= 0) {
-    for (int p = 0; p < 4; ++p) {
-      st.port[p].bind[pick].gc = XSDK_PAD_BEAM;
-    }
-  }
-  return pick;
-}
-
-// RT follows Aiming while it holds the other mode's default: Fire under Dual
-// Stick (the user, 2026-11-03: "shoot is right trigger as well as A"), Free
-// Aim under GameCube aiming, which needs it. A layout RT was given by hand
-// keeps it, and Fire stays on A when RT leaves it.
-void FollowAimWithRT(int aim) {
-  xsdk_settings& st = g_xsdk_settings;
-  const uint16_t was = xsdk_rt_default(aim == XSDK_AIM_DUAL ? XSDK_AIM_GAMECUBE : XSDK_AIM_DUAL);
-  const uint16_t now = xsdk_rt_default(aim);
-  const uint16_t rt = st.port[0].bind[kSlotRT].gc;
-  if (rt != was || (was == PAD_BUTTON_A && RowWith(PAD_BUTTON_A, kSlotRT) < 0)) {
-    return;
-  }
-  for (int p = 0; p < 4; ++p) {
-    st.port[p].bind[kSlotRT].gc = now;
-  }
-}
-} // namespace
-
 void Set(int option, int value) {
   xsdk_settings& st = g_xsdk_settings;
   const xsdk_settings before = st;
@@ -506,14 +311,7 @@ void Set(int option, int value) {
   case kXO_AimMode:
     st.aim = value > 0 ? XSDK_AIM_DUAL : XSDK_AIM_GAMECUBE;
     PortDebug::ResetMouseAim(); // the aim starts from the view as it is
-    FollowAimWithRT(st.aim);
-    if (st.aim == XSDK_AIM_DUAL) {
-      const int b = GiveBeamSelect();
-      xhw_logf("[OPTIONS] Dual Stick aiming; Beam Select on %s", b < 0 ? "no button (none free)" : b == 5 ? "Black"
-                                                                         : b == 9 ? "the right stick click"
-                                                                         : b == 8 ? "the left stick click"
-                                                                         : b == 7 ? "BACK" : "its button");
-    }
+    xhw_logf("[OPTIONS] %s controls", st.aim == XSDK_AIM_DUAL ? "Dual Stick" : "GameCube");
     break;
   case kXO_AimSpeed:
     st.aim_speed = value < 0 ? 0 : value > 2 ? 2 : value;
@@ -560,49 +358,6 @@ void ApplyAtBoot() {
   ApplyFov();
   xhw_logf("[OPTIONS] at boot: aspect %s, HUD %s, FOV %d", PortDebug::AspectMode() == PortDebug::kAspect_16_9 ? "16:9" : "4:3",
            g_xsdk_settings.hud_wide ? "edge to edge" : "centred", g_xsdk_settings.fov);
-}
-
-void MarkChanged() { sDirty = true; }
-
-int BindGc(int button) {
-  const int s = SlotOfInput(button);
-  return s >= 0 ? g_xsdk_settings.port[0].bind[s].gc : 0;
-}
-
-int BindOption(int button) {
-  const int s = SlotOfInput(button);
-  return s < 0 ? -1 : s == kSlotLT ? kXO_BindLT : s == kSlotRT ? kXO_BindRT : kXO_BindFirst + s;
-}
-
-void BindPress(int from, int to) {
-  const int a = SlotOfInput(from), b = SlotOfInput(to);
-  if (a < 0 || b < 0 || a == b) {
-    return;
-  }
-  const uint16_t gc = g_xsdk_settings.port[0].bind[a].gc, old = g_xsdk_settings.port[0].bind[b].gc;
-  if (gc == old) {
-    return;
-  }
-  // `to`'s old action goes to `from` when no other input has it (Fire and
-  // Pause can't be lost this way either)
-  const bool swap = old != 0 && RowWith(old, b) < 0;
-  for (int p = 0; p < 4; ++p) {
-    g_xsdk_settings.port[p].bind[b].gc = gc;
-    if (swap) {
-      g_xsdk_settings.port[p].bind[a].gc = old;
-    }
-  }
-  sDirty = true;
-}
-
-int DefaultBindGc(int button) {
-  const int s = SlotOfInput(button);
-  if (s == kSlotRT) {
-    return xsdk_rt_default(g_xsdk_settings.aim);
-  }
-  xsdk_settings d;
-  xsdk_settings_defaults(&d);
-  return s >= 0 ? d.port[0].bind[s].gc : 0;
 }
 
 void Save() {

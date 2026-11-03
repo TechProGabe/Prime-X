@@ -97,8 +97,9 @@ test (phase 7) watches it.
 ## Input
 
 Four ports read, port 1 plays (Prime is single-player). GameCube layout by
-position (README table), triggers analog with a click point, rumble, per-port
-remapping in `settings.ini`. Melee-X's `pad.c`/`xhw_pad.c`.
+position (README table), triggers analog with a click point, rumble. Two
+fixed layouts picked by `aim` (GameCube, Dual Stick), no remapping since
+2026-11-03. Melee-X's `pad.c`/`xhw_pad.c`.
 
 ## Audio
 

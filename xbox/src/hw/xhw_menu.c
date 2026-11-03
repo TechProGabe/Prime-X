@@ -23,10 +23,7 @@
  * read once when the popup opens, xhw_menu_capture, and shows through the
  * glass at a fifth), angular frames, and the game's Deface lettering
  * (xhw_menu_set_font) with its outline; unscii-16 if the font can't be had.
- *
- * The Buttons page is N64Recomp-X's Controls page (xhw_panel_pad.c there):
- * the controller's shape (a rounded box and two grips) as a flat amber
- * hologram, the same spots and callouts, re-laid for Prime's inputs. */
+ */
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -80,8 +77,6 @@ static uint32_t rgb(int r, int g, int b) {
 #define G_(c) ((int)(((c) >> 8) & 0xFF))
 #define B_(c) ((int)((c) & 0xFF))
 #define DIV255(x) ((((x) + 128) + (((x) + 128) >> 8)) >> 8)
-
-static uint32_t shade(uint32_t c, int k) { return rgb(R_(c) * k >> 8, G_(c) * k >> 8, B_(c) * k >> 8); }
 
 static int isqrt(int v) { return v <= 0 ? 0 : (int)__builtin_sqrtf((float)v); }
 
@@ -146,33 +141,8 @@ static void rbox(int x, int y, int w, int h, int r, uint32_t col, int alpha) {
     }
 }
 
-/* a disc and a ring, centre and radius in L16 */
-static void disc(int cx, int cy, int r, uint32_t col, int alpha) {
-    Box b;
-    int px, py;
-    if (!clip(&b, cx - r - 16, cy - r - 16, cx + r + 16, cy + r + 16)) return;
-    for (py = b.y0; py < b.y1; py++)
-        for (px = b.x0; px < b.x1; px++) {
-            int dx = lx16(px) - cx, dy = ly16(py) - cy, c = cover(isqrt(dx * dx + dy * dy) - r);
-            if (c) mix(PX(px, py), col, alpha * c >> 8);
-        }
-}
-
-static void ring(int cx, int cy, int r, int w, uint32_t col, int alpha) {
-    Box b;
-    int px, py, ro = r + w / 2;
-    if (!clip(&b, cx - ro - 16, cy - ro - 16, cx + ro + 16, cy + ro + 16)) return;
-    for (py = b.y0; py < b.y1; py++)
-        for (px = b.x0; px < b.x1; px++) {
-            int dx = lx16(px) - cx, dy = ly16(py) - cy, d = isqrt(dx * dx + dy * dy) - r, c;
-            if (d < 0) d = -d;
-            c = cover(d - w / 2);
-            if (c) mix(PX(px, py), col, alpha * c >> 8);
-        }
-}
-
 /* a line, ends round, w16 wide; points in L16 (floats: a 64-bit divide a
- * pixel was the Buttons page's slowest part) */
+ * pixel was the old controller page's slowest part) */
 static void line(int x0, int y0, int x1, int y1, int w16, uint32_t col, int alpha) {
     Box b;
     int px, py, pad = w16 / 2 + 16;
@@ -598,7 +568,7 @@ static void draw_frame(const xhw_menu_view* v) {
         text(v->status, CW - 26 - tw(v->status, 1), 36, 1, C_DIM);
     }
 
-    if (v->page == 2) goto footer;   /* the restart question: no tabs */
+    if (v->page == 1) goto footer;   /* the restart question: no tabs */
     /* the tabs between LT and RT */
     badge("LT", 20, 62);
     badge("RT", CW - 20 - (tw("RT", 1) + 10), 62);
@@ -618,19 +588,14 @@ static void draw_frame(const xhw_menu_view* v) {
 
 footer:
     /* the footer: what the buttons do */
-    if (v->page != 2 || v->rows > 0) {
-        /* the Buttons page: A steps the action on, X binds (then press the
-         * button or trigger; port_menu.cpp), left and right move between
-         * the columns there */
+    if (v->page != 1 || v->rows > 0) {
         static const char* const k_rows_b[] = { "A", "B", "Y" };
         static const char* const k_rows_t[] = { "Change", "Close", "Defaults" };
-        static const char* const k_pad_b[] = { "A", "X", "B", "Y" };
-        static const char* const k_pad_t[] = { "Next", "Bind", "Close", "Defaults" };
         static const char* const k_ask_b[] = { "A", "B" };
         static const char* const k_ask_t[] = { "OK", "Later" };
-        const char* const* k_b = v->page == 2 ? k_ask_b : v->page ? k_pad_b : k_rows_b;
-        const char* const* k_t = v->page == 2 ? k_ask_t : v->page ? k_pad_t : k_rows_t;
-        const int n = v->page == 2 ? 2 : v->page ? 4 : 3, fy = CH - 30, ty = fy + (17 - line_h(1)) / 2;
+        const char* const* k_b = v->page == 1 ? k_ask_b : k_rows_b;
+        const char* const* k_t = v->page == 1 ? k_ask_t : k_rows_t;
+        const int n = v->page == 1 ? 2 : 3, fy = CH - 30, ty = fy + (17 - line_h(1)) / 2;
         int x = 28;
         for (i = 0; i < n; i++) {
             x += badge(k_b[i], x, fy) + 6;
@@ -688,118 +653,8 @@ static void draw_rows(const xhw_menu_view* v) {
     }
 }
 
-/* ------------------------------------------------------- the Buttons page */
-#define CX 288   /* the controller's centre on the card */
-#define CY 190
-#define BOX_W 140   /* "Morph Ball" in Deface and the changed mark */
-#define BOX_H 18
-#define COL_L 22
-#define COL_R (CW - 22 - BOX_W)
-
-typedef struct { int x, y, r; } Spot;
-/* N64Recomp-X's spots, in this page's input order (xhw.h XHW_MENU_IN_*) */
-static const Spot k_spot[XHW_MENU_IN_COUNT] = {
-    /* A B X Y */ { 70, -2, 9 }, { 88, -20, 9 }, { 52, -20, 9 }, { 70, -38, 9 },
-    /* WHITE BLACK */ { 50, 12, 7 }, { 70, 20, 7 },
-    /* START BACK */ { 12, -8, 0 }, { -12, -8, 0 },
-    /* L click, R click: on the sticks */ { -64, -18, 0 }, { 30, 32, 0 },
-    /* LT RT */ { -70, -64, 0 }, { 70, -64, 0 },
-    /* D-pad, left stick, right stick */ { -34, 32, 19 }, { -64, -18, 21 }, { 30, 32, 19 },
-};
-static const char* const k_badge[XHW_MENU_IN_COUNT] = { "A", "B", "X", "Y", "WH", "BK", "ST", "BA",
-                                                        "L3", "R3", "LT", "RT", "+", "LS", "RS" };
-/* the callouts: column and top */
-static const struct { int8_t col; int16_t y; } k_call[XHW_MENU_IN_COUNT] = {
-    /* A */ { 1, 180 }, /* B */ { 1, 158 }, /* X */ { 1, 136 }, /* Y */ { 1, 114 },
-    /* WHITE */ { 1, 202 }, /* BLACK */ { 1, 224 }, /* START */ { 0, 220 }, /* BACK */ { 0, 188 },
-    /* L click */ { 0, 156 }, /* R click */ { 1, 268 }, /* LT */ { 0, 92 }, /* RT */ { 1, 92 },
-    /* D-pad */ { 0, 252 }, /* left stick */ { 0, 124 }, /* right stick */ { 1, 246 },
-};
-
-/* The controller: a flat black silhouette with an amber rim (N64Recomp-X's
- * shape: a rounded box and two grips), solid so it stands out from the glass
- * (the user, 2026-11-02: "make the controller black ... easier to see"),
- * drawn from a few shapes each time, no shading and no cache */
-static void hologram(void) {
-    const uint32_t rim = C_AMBER, body = rgb(14, 14, 16);
-    int pass;
-    for (pass = 0; pass < 2; pass++) {   /* the rims, then the bodies over them */
-        int g = pass ? 0 : 2;
-        uint32_t c = pass ? body : rim;
-        rbox(CX - 98 - g, CY - 72 - g, 56 + 2 * g, 24 + 2 * g, 9 + g, c, 255);   /* the triggers */
-        rbox(CX + 42 - g, CY - 72 - g, 56 + 2 * g, 24 + 2 * g, 9 + g, c, 255);
-    }
-    for (pass = 0; pass < 2; pass++) {
-        int g = pass ? 0 : 2;
-        uint32_t c = pass ? body : rim;
-        /* down to 60 below the centre: the D-pad and the right stick (32
-         * below) sit on the body, as on the controller (the user: "the
-         * joystick and d pad are not on the pad") */
-        rbox(CX - 92 - g, CY - 60 - g, 184 + 2 * g, 120 + 2 * g, 40 + g, c, 255);
-        line((CX - 74) * 16, (CY - 6) * 16, (CX - 96) * 16, (CY + 68) * 16, (60 + 2 * g) * 16, c, 255);
-        line((CX + 74) * 16, (CY - 6) * 16, (CX + 96) * 16, (CY + 68) * 16, (60 + 2 * g) * 16, c, 255);
-    }
-}
-
-static void face(int x, int y, int r, uint32_t c) {
-    disc(x * 16, y * 16, r * 16, shade(c, 210), 255);
-    ring(x * 16, y * 16, r * 16 - 6, 12, shade(c, 330), 220);
-}
-
-static void stick(int x, int y, int r) {
-    disc(x * 16, y * 16, r * 16, rgb(4, 4, 6), 255);
-    ring(x * 16, y * 16, r * 16 - 8, 16, rgb(110, 110, 118), 230);
-    disc(x * 16, y * 16, (r - 8) * 16, rgb(64, 64, 70), 255);
-}
-
-static void dpad(int x, int y) {
-    fill(x - 5, y - 13, 10, 26, rgb(96, 96, 104), 255);
-    fill(x - 13, y - 5, 26, 10, rgb(96, 96, 104), 255);
-}
-
-static void callout(const xhw_menu_view* v, int in) {
-    int col = k_call[in].col, bx = col ? COL_R : COL_L, by = k_call[in].y, sel = in == v->pad_sel;
-    int fixed = in >= XHW_MENU_IN_MAPPABLE, bw = tw(k_badge[in], 1) + 10;
-    uint32_t tc;
-    cbox(bx, by, BOX_W, BOX_H, 4, sel ? C_SEL_FILL : C_BOX_FILL, sel ? 230 : 190, C_AMBER, sel ? 255 : 100, 16);
-    badge(k_badge[in], bx + 3, by);
-    tc = sel ? C_TEXT : fixed ? C_DIM : v->pad_changed[in] ? C_MARK : C_VALUE;
-    text(v->pad_map[in], bx + bw + 8, by + (BOX_H - line_h(1)) / 2, 1, tc);
-    if (v->pad_changed[in] && !fixed) fill(bx + BOX_W - 10, by + 7, 4, 4, C_MARK, 255);
-}
-
-static void draw_pad(const xhw_menu_view* v) {
-    int in;
-    hologram();
-    /* the leader lines */
-    for (in = 0; in < XHW_MENU_IN_COUNT; in++) {
-        int col = k_call[in].col, ax = CX + k_spot[in].x, ay = CY + k_spot[in].y + (in == XHW_MENU_IN_LT || in == XHW_MENU_IN_RT ? -4 : 0);
-        int by = k_call[in].y + BOX_H / 2, bx = col ? COL_R : COL_L + BOX_W, ex = col ? bx - 12 : bx + 12;
-        int sel = in == v->pad_sel;
-        uint32_t lc = sel ? rgb(255, 230, 160) : C_AMBER;
-        int la = sel ? 255 : 110;
-        line(bx * 16, by * 16, ex * 16, by * 16, 20, lc, la);
-        line(ex * 16, by * 16, ax * 16, ay * 16, 20, lc, la);
-        disc(ax * 16, ay * 16, sel ? 40 : 26, lc, 255);
-    }
-    dpad(CX + k_spot[XHW_MENU_IN_DPAD].x, CY + k_spot[XHW_MENU_IN_DPAD].y);
-    stick(CX + k_spot[XHW_MENU_IN_LSTICK].x, CY + k_spot[XHW_MENU_IN_LSTICK].y, k_spot[XHW_MENU_IN_LSTICK].r);
-    stick(CX + k_spot[XHW_MENU_IN_RSTICK].x, CY + k_spot[XHW_MENU_IN_RSTICK].y, k_spot[XHW_MENU_IN_RSTICK].r);
-    for (in = XHW_MENU_IN_A; in <= XHW_MENU_IN_BLACK; in++)
-        face(CX + k_spot[in].x, CY + k_spot[in].y, k_spot[in].r, badge_col(k_badge[in]));
-    fill(CX + k_spot[XHW_MENU_IN_BACK].x - 6, CY + k_spot[XHW_MENU_IN_BACK].y - 3, 12, 6, rgb(150, 150, 158), 255);
-    fill(CX + k_spot[XHW_MENU_IN_START].x - 6, CY + k_spot[XHW_MENU_IN_START].y - 3, 12, 6, rgb(150, 150, 158), 255);
-    /* the selected input: a ring around it */
-    if (v->pad_sel >= 0 && v->pad_sel < XHW_MENU_IN_COUNT) {
-        const Spot* s = &k_spot[v->pad_sel];
-        int r = s->r ? s->r + 5 : 10, sx = CX + s->x, sy = CY + s->y;
-        ring(sx * 16, sy * 16, r * 16, 36, rgb(255, 230, 160), 240);
-    }
-    for (in = 0; in < XHW_MENU_IN_COUNT; in++) callout(v, in);
-}
-
 /* ------------------------------------------------- the restart question */
-/* Page 2: the question in a box, the two choices side by side under it
+/* Page 1: the question in a box, the two choices side by side under it
  * (label[0], label[1]; sel lit), what the lit one does below. No choices
  * (rows 0): the question box alone ("Restarting ..."). */
 #define ASK_Y 96
@@ -832,11 +687,8 @@ static void draw_ask(const xhw_menu_view* v) {
 /* ------------------------------------------------------------ one band */
 static void draw_band(const xhw_menu_view* v) {
     draw_frame(v);
-    if (v->page == 2) {
+    if (v->page == 1) {
         draw_ask(v);
-    } else if (v->page == 1) {
-        draw_pad(v);
-        draw_help(v, 296, CH - 38 - 296);
     } else {
         draw_rows(v);
         draw_help(v, ROW_Y + ROWS_FIT * ROW_H + 2, CH - 38 - (ROW_Y + ROWS_FIT * ROW_H + 2));
@@ -927,33 +779,11 @@ static void dirty_diff(const xhw_menu_view* o, const xhw_menu_view* v) {
         dirty(0, CH);
         return;
     }
-    if (v->page == 2) {   /* the restart question: everything under the title */
+    if (v->page == 1) {   /* the restart question: everything under the title */
         if (o->rows != v->rows || o->sel != v->sel || DIFF(label) || DIFF(help) || DIFF(value_help)) dirty(ASK_Y - 4, CH);
         return;
     }
-    if (DIFF(help) || DIFF(value_help) || DIFF(note)) dirty(v->page ? 296 : ROW_Y + ROWS_FIT * ROW_H, CH - 34);
-    if (v->page == 1) {
-        int in;
-        if (o->pad_ok != v->pad_ok) {
-            dirty(84, 296);
-            return;
-        }
-        /* a move or a change: the two callouts' rows and the two spots on
-         * the controller, not the whole page (the body is drawn from shapes) */
-        for (in = 0; in < XHW_MENU_IN_COUNT; in++) {
-            if ((in == o->pad_sel) != (in == v->pad_sel) || DIFF(pad_map[in]) ||
-                o->pad_changed[in] != v->pad_changed[in]) {
-                const Spot* sp = &k_spot[in];
-                int r = (sp->r ? sp->r + 5 : 10) + 4;
-                dirty(k_call[in].y - 2, k_call[in].y + BOX_H + 2);
-                dirty(CY + sp->y - r, CY + sp->y + r);
-                /* its leader line runs between the two */
-                dirty(k_call[in].y < CY + sp->y ? k_call[in].y : CY + sp->y,
-                      (k_call[in].y > CY + sp->y ? k_call[in].y : CY + sp->y) + BOX_H);
-            }
-        }
-        return;
-    }
+    if (DIFF(help) || DIFF(value_help) || DIFF(note)) dirty(ROW_Y + ROWS_FIT * ROW_H, CH - 34);
     for (r = 0; r < ROWS_FIT; r++)
         if (o->rows != v->rows || (r == o->sel) != (r == v->sel) || DIFF(label[r]) || DIFF(value[r]) ||
             o->choices[r] != v->choices[r] || o->choice[r] != v->choice[r] || o->flags[r] != v->flags[r])

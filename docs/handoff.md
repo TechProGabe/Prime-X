@@ -3,7 +3,7 @@
 Update this at the end of every session: what was done, what's next,
 what's broken, anything the next agent would otherwise rediscover.
 
-## Session 2026-11-03 (on `dev`, after beta3): black chunks, RT fires, X binds
+## Session 2026-11-03 (on `dev`, after beta3): black chunks; two fixed control layouts
 
 Two requests from the user, both on `dev`, not on a console yet:
 
@@ -26,17 +26,36 @@ Two requests from the user, both on `dev`, not on a console yet:
   A), image B has the fixes; folders `Prime-X-{A,B}-station` (Chozo Save
   Station 1 as card file A) and `Prime-X-{A,B}-title`, README inside;
   `C:\xemu\hw\prime\stage-black` and `Downloads\Prime-X-blacktest.zip`
-  (ROUNDS.md "black A/B"). The consoles were off FTP when staged.
-- **Buttons** (the user: RT fires as well as A under Dual Stick; triggers
-  remappable; "press X to start key bind, then ... press right trigger"):
-  LT/RT are bindings (`lt`, `rt` in settings.ini; old files migrate from
-  `aim` and `trigger_z`), RT is Fire under Dual Stick and Free Aim under
-  GameCube aiming, the Buttons tab's X starts bind mode (next button or
-  trigger pressed takes the action; D-pad or 5 s cancels). xemu (`bind`
-  scenario in the session's scratch, slot 3): bind prompt, LT and B bound,
-  Y Y restore, RT fires in play. docs/ui.md, README, decisions.md updated.
-- Host tests: test_settings, test_tex_cache (old-cache comparison under
-  `-DGX_TEX_NO_EFB_STALE`, plus the stale-copy case), test_tex_convert pass.
+  (ROUNDS.md "black A/B"). **Uploaded to gold** (`E:\Applications`,
+  UDATA backed up to `C:\xemu\hw\prime\backup-udata-gold-black-20261103-1155`,
+  `card_a\` included). A booted-in game (`MP_BOOT_WORLD`) has no items, not
+  even the Power Beam (the user: "I can't shoot"): the station folders'
+  autopad.txt has `env PX_ALL_ITEMS=1` since, re-uploaded. Waiting on the
+  user's run; then pull `boot_Prime-X-{A,B}-{station,title}.log` and the
+  shots (named per folder) to `logs-blackgold`.
+- **Buttons**: first made the triggers remappable with an X-to-bind mode
+  (commit d5c688b), then, the same day, the user: "remove button mapping
+  entirely and just do two play schemes ... dual stick mode on by default"
+  and "make sure in dual stick mode you can shoot with a or right trigger".
+  So: no remapping at all. Controller > **Controls** (was Aiming, `[input]
+  aim`) is GameCube or Dual Stick, and `pad.c` maps the buttons from it
+  (decisions.md "Two control layouts"): Dual Stick A or RT fires, Black +
+  right stick beams; GameCube RT Free Aim, Black map. The Buttons tab, its
+  controller drawing, bind mode, the `[portN]` button lines (old files'
+  are skipped and rewritten away), the Fire/Pause check and the pause
+  Options' list-row hooks are gone (~1100 lines). The beta3 images on the
+  consoles and the black A/B images still have remapping.
+- Host tests: new test_pad (pad.c's two layouts: Dual Stick A or RT fires
+  and Black is Beam Select, GameCube RT is Free Aim and Black the map, B/X
+  back in menus), test_settings (rewritten for the fixed layouts: an old
+  file's button lines dropped quietly), test_tex_cache (old-cache comparison
+  under `-DGX_TEX_NO_EFB_STALE`, plus the stale-copy case),
+  test_tex_convert pass; bench_menu builds (Buttons page cases replaced by
+  the restart question). xemu: `menu` (four tabs, the Controls row's text
+  fits, an old settings.ini's button lines dropped) and `dual_stick` (aims;
+  xemu is too slow to catch a bolt or the charge glow in a shot, hence
+  test_pad). `C:\xemu\xemu.toml` (shared) was found cut to two lines at
+  12:36, not by this session; slot 2 was used instead, the file left alone.
 - Ruled out while looking (read, not fixed): world surfaces never wait on
   `TryLockTextures`; dumped textures (pause screen's `DestroyAreaTextures`)
   are held off screen by the pause blur until reloaded, and the save

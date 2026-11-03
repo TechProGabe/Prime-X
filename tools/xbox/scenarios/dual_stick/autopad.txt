@@ -1,15 +1,12 @@
-# dual_stick: GitHub #2 (2026-11-02). Tallon's Landing Site; the popup's
-# Controller tab, Aiming to Dual Stick (Black takes Beam Select), close; then
-# the right stick turns right, looks up, looks down; Black + right stick
-# (Beam Select: the C-stick, the view must hold still). Presses 2 frames
+# dual_stick: GitHub #2 (2026-11-02). Tallon's Landing Site with the
+# Dual Stick controls (the default since 2026-11-02): the right stick turns
+# right, looks up, looks down; Black + right stick (Beam Select: the
+# C-stick, the view must hold still); RT held charges the beam, then A
+# (the glow shows in the shot; a bolt is gone before xemu's shot lands). Presses 2 frames
 # (xemu's ~6 fps repeats longer).
 env PX_DISC_CHECK=quick
 env MP_BOOT_WORLD=39F2DE28
-env PX_MENU_AT=1900
-1960 R for 2
-2020 RIGHT for 2
-2060 SHOT
-2100 B for 2
+env PX_ALL_ITEMS=1
 2300 SHOT
 2340 CR for 40
 2400 SHOT
@@ -19,3 +16,7 @@ env PX_MENU_AT=1900
 2580 SHOT
 2620 BLACK CR for 20
 2660 SHOT
+2700 R for 40
+2730 SHOT
+2800 A for 40
+2830 SHOT
