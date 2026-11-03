@@ -3,6 +3,96 @@
 Update this at the end of every session: what was done, what's next,
 what's broken, anything the next agent would otherwise rediscover.
 
+## Session 2026-11-03 (on `dev`, after beta3): black chunks; two fixed control layouts; Phazon Suit save screen
+
+**Results first.** Both fixes below are confirmed on gold and merged to
+`main` and released as **v1.0-beta4** (2026-11-03, tag on the merge; notes in `.github/release-notes.md`). Gold has two folders: `Prime-X`, the ship
+build of 115f933 (ThinLTO + PGO + log always, MD5
+81a4a53cf33756b42319f5da040a93d8: copy-clear fix, layouts, texture fixes),
+and `Prime-X-savecheck` (a plain autopad build at 115f933, Save Station 1
+with every item and `PX_FUSION=0`); every other test folder was removed.
+
+- **Black chunks: fixed, confirmed on gold.** The tester saw them in
+  image A (fixes off) only; A logged 872 and 1163 binds per 600 frames of
+  an overwritten copy, B dropped one once and drew none. Logs:
+  `C:\xemu\hw\prime\logs-blackgold` (`run1b\boot_prev.log` A,
+  `run1b\boot.log` B).
+- **Samus missing during the save sequence, black behind the pause
+  menu: fixed** (decisions.md "An EFB copy's clear writes only what the
+  updates let through"). The Phazon Suit's glow copies the alpha with
+  colour updates off; our copy clear wiped the colour too, so the scene
+  went but what came after (the station's light). It looked
+  console-only because the console folders give every item (Phazon
+  Suit) and xemu's settings.ini has the Fusion Suit; `env PX_FUSION=0`
+  + `PX_ALL_ITEMS=1` shows it in xemu, `env PX_COPY_CLEAR_ALL=1` brings
+  the old clear back for an A/B (xemu: before flat brown and black, after
+  the blurred room and Samus). Found with the gold round "held copy"
+  (`-DXGX_DEBUG_HELD`, kept: `[HELD]` lines on big EFB copies, binds and
+  drops; a BACK screenshot also writes the bound copy's texels,
+  swizzled, as the next shotNN.bmp). Confirmed on gold by the tester in
+  `Prime-X-savecheck` (logs `C:\xemu\hw\prime\logs-savecheck`: Phazon
+  Suit, no crash, one `[MEM] low` reclaimed).
+
+The requests, in order:
+
+- **Black chunks of a Chozo room after saving or loading** (a tester:
+  "only temporarily after saving or loading into a save"; `shot26.webp`,
+  the 2026-11-02 static-memory change didn't fix it). Not reproduced in
+  xemu (save and load scenarios, also with `PX_IMG_DELAY_MS=15`); the
+  shot's black is pure 0,0,0 in whole-model pieces, the far room fine.
+  Found two holes in the texture cache that give exactly that and last
+  while the texture is drawn (docs/decisions.md, 2026-11-03): an EFB copy
+  entry was taken for any texture later loaded into the freed copy buffer
+  (never revalidated), and a texmap the cache emptied was never loaded again
+  because `CTexture::Load` thinks it still holds the texture. Fixed both
+  (`efb_stale`, `xsdk_tex_map_cleared`). To confirm on a console: save at a
+  Chozo station and load that save a few times; boot.log (Log File on)
+  shows `[TEX] EFB copy at ... overwritten by a texture` when case 1 hits.
+  If black chunks still show, the next suspects are in this session's
+  notes below. **Console A/B staged** (the user asked to replicate it on
+  hardware): `-DXGX_TEX_STALE_FIX=0` keeps both cases but logs them (image
+  A), image B has the fixes; folders `Prime-X-{A,B}-station` (Chozo Save
+  Station 1 as card file A) and `Prime-X-{A,B}-title`, README inside;
+  `C:\xemu\hw\prime\stage-black` and `Downloads\Prime-X-blacktest.zip`
+  (ROUNDS.md "black A/B"). **Uploaded to gold** (`E:\Applications`,
+  UDATA backed up to `C:\xemu\hw\prime\backup-udata-gold-black-20261103-1155`,
+  `card_a\` included). A booted-in game (`MP_BOOT_WORLD`) has no items, not
+  even the Power Beam (the user: "I can't shoot"): the station folders'
+  autopad.txt has `env PX_ALL_ITEMS=1` since, re-uploaded. Waiting on the
+  user's run; then pull `boot_Prime-X-{A,B}-{station,title}.log` and the
+  shots (named per folder) to `logs-blackgold`.
+- **Buttons**: first made the triggers remappable with an X-to-bind mode
+  (commit d5c688b), then, the same day, the user: "remove button mapping
+  entirely and just do two play schemes ... dual stick mode on by default"
+  and "make sure in dual stick mode you can shoot with a or right trigger".
+  So: no remapping at all. Controller > **Controls** (was Aiming, `[input]
+  aim`) is GameCube or Dual Stick, and `pad.c` maps the buttons from it
+  (decisions.md "Two control layouts"): Dual Stick A or RT fires, Black +
+  right stick beams; GameCube RT Free Aim, Black map. The Buttons tab, its
+  controller drawing, bind mode, the `[portN]` button lines (old files'
+  are skipped and rewritten away), the Fire/Pause check and the pause
+  Options' list-row hooks are gone (~1100 lines). The beta3 images on the
+  consoles and the black A/B images still have remapping.
+- Host tests: new test_pad (pad.c's two layouts: Dual Stick A or RT fires
+  and Black is Beam Select, GameCube RT is Free Aim and Black the map, B/X
+  back in menus), test_settings (rewritten for the fixed layouts: an old
+  file's button lines dropped quietly), test_tex_cache (old-cache comparison
+  under `-DGX_TEX_NO_EFB_STALE`, plus the stale-copy case),
+  test_tex_convert pass; bench_menu builds (Buttons page cases replaced by
+  the restart question). xemu: `menu` (four tabs, the Controls row's text
+  fits, an old settings.ini's button lines dropped) and `dual_stick` (aims;
+  xemu is too slow to catch a bolt or the charge glow in a shot, hence
+  test_pad). `C:\xemu\xemu.toml` (shared) was found cut to two lines at
+  12:36, not by this session; slot 2 was used instead, the file left alone.
+- Ruled out while looking (read, not fixed): world surfaces never wait on
+  `TryLockTextures`; dumped textures (pause screen's `DestroyAreaTextures`)
+  are held off screen by the pause blur until reloaded, and the save
+  screen dumps none; card reads are synchronous; display lists spilled into
+  the texture pool never sit in the overflow pool; GX's own list culling
+  isn't used by Prime. Untested: a static display list built from memory
+  that later changed (never re-checked) would also show as missing pieces
+  until the room is left.
+
 ## Where it stands (2026-11-02): v1.0-beta3
 
 **v1.0-beta3 is `main` at the merge of `dev` (2026-11-02)**, released by

@@ -71,6 +71,64 @@ static uint32_t s_scratch_texels;   /* in 32-bit words */
 static uint32_t s_st_uploads, s_st_evicts, s_st_evicts_hot, s_st_drops, s_st_drop_kb, s_st_fast, s_st_new_copies;
 static uint32_t s_drop_logged;
 static uint32_t s_st_chg_data, s_st_chg_tlut, s_chg_logged;   /* revalidation found new texels / a new palette */
+static uint32_t s_st_efb_stale, s_efb_stale_logged;   /* EFB copies whose memory a texture took (efb_stale) */
+static uint32_t s_st_map_cleared;                      /* texmaps drop_at emptied */
+/* The two black-texture fixes of 2026-11-03 (efb_stale, xsdk_tex_map_cleared).
+ * -DXGX_TEX_STALE_FIX=0 leaves both cases as they were but still logs them:
+ * the console A/B round that checks they are the tester's black chunks. */
+#ifndef XGX_TEX_STALE_FIX
+#define XGX_TEX_STALE_FIX 1
+#endif
+
+#ifdef XGX_DEBUG_HELD
+/* The pause blur's held copy (CCameraBlurPass, 320x240 at 480p) reads as a
+ * flat colour on the gold console, not in xemu (2026-11-03): [HELD] lines
+ * on big EFB copies, their binds and their drops (xgx.h xgx_tex_debug). */
+#define HELD_MIN 20000u   /* w*h of a copy or bind worth following */
+static uint32_t s_held_logs;
+#define HELD_LOG(...)                                       \
+    do {                                                    \
+        if (s_held_logs < 600) {                            \
+            s_held_logs++;                                  \
+            xhw_logf(__VA_ARGS__);                          \
+        }                                                   \
+    } while (0)
+/* one line per address when what it holds changes, or every 300 frames */
+typedef struct {
+    const void* addr;
+    uint32_t tex, state, when;
+} HeldSeen;
+static int held_new(HeldSeen* t, const void* addr, uint32_t tex, uint32_t state, uint32_t now) {
+    int i, old = 0;
+    for (i = 0; i < 4; i++)
+        if (t[i].addr == addr) {
+            if (t[i].tex == tex && t[i].state == state && now - t[i].when < 300) return 0;
+            break;
+        }
+    if (i == 4)
+        for (i = 1; i < 4; i++)
+            if (t[i].when < t[old].when) old = i;
+    if (i == 4) i = old;
+    t[i].addr = addr;
+    t[i].tex = tex;
+    t[i].state = state;
+    t[i].when = now;
+    return 1;
+}
+/* the destinations big copies went to: only binds there are followed */
+static const void* s_held_dest[8];
+static int held_dest(const void* p) {
+    int i;
+    for (i = 0; i < 8; i++)
+        if (s_held_dest[i] == p) return 1;
+    return 0;
+}
+#endif
+
+/* port (game code): the game's CTexture believes a texmap still holds what
+ * it loaded there and skips loading it again (as on the GameCube); a map
+ * this cache empties must be loaded again (CTexture::InvalidateTexmap) */
+void xsdk_tex_map_cleared(int map);
 
 /* The last object bound to each texture map this frame: binding it again
  * (HSD loads the same texture for every pobj of a material) skips the
@@ -360,6 +418,42 @@ static uint32_t quick_hash(const uint8_t* p, uint32_t n) {
     return (h ^ *(const uint32_t*)(p + n - 4)) * 16777619u;
 }
 
+/* An EFB copy's destination as it was in memory when the copy was made: the
+ * copy lives on the GPU, so nothing writes there after it but the CPU,
+ * which only does once the game has freed the buffer and something else
+ * (a texture loaded from the disc or ARAM) took the memory. A sample of
+ * the first w*h/16 bytes, which any copy fills (GXSetTexCopyDst's size is
+ * the source's: 4-bit texels, halved by the box filter, take w*h/8). */
+static uint32_t efb_hash(const uint8_t* data, uint32_t w, uint32_t h) {
+    uint32_t n = w * h / 16;
+#ifdef GX_TEX_NO_EFB_STALE   /* tests/xbox/test_tex_cache.c's comparison with the cache before it */
+    return 0;
+#endif
+    return quick_hash(data, n < 64 ? 64 : n & ~3u);
+}
+
+/* find() takes an EFB copy for any texture at its address (the games bind a
+ * copy as another size or format: Prime's thermal reads an I8 copy as C8)
+ * and copies are never revalidated as texels: a texture that later lands
+ * where a freed copy buffer was drew the old copy, dark or black, for as
+ * long as it was drawn (each bind kept the copy "in use"). Prime frees its
+ * copy buffers after the save screen and a world's loading transition;
+ * room textures (lightmaps) then took that memory: black chunks of a Chozo
+ * room until it was left (a tester, v1.0-beta2 and beta3, 2026-11-03). */
+static int efb_stale(const Entry* e) {
+#ifdef GX_TEX_NO_EFB_STALE   /* tests/xbox/test_tex_cache.c's comparison with the cache before it */
+    return 0;
+#endif
+    if (!e->efb || cold_of(e)->qhash == efb_hash(e->data, e->w, e->h)) return 0;
+    s_st_efb_stale++;
+    if (!s_efb_stale_logged) {
+        s_efb_stale_logged = 1;
+        xhw_logf("[TEX] EFB copy at %p (%ux%u) overwritten by a texture: %s", (const void*)e->data, e->w, e->h,
+                 XGX_TEX_STALE_FIX ? "dropped" : "still drawn as the copy (fix off)");
+    }
+    return XGX_TEX_STALE_FIX;
+}
+
 static Entry* find(const uint8_t* data, uint16_t w, uint16_t h, uint8_t fmt, uint8_t levels, const uint8_t* tlut_data) {
     int i;
     chain_init();
@@ -383,11 +477,21 @@ static int is_bound(uint32_t tex) {
 static void drop_at(int i) {
     Entry* e = &s_cache[i];
     int m, last = s_count - 1;
+#ifdef XGX_DEBUG_HELD
+    if (e->efb && (uint32_t)e->w * e->h >= HELD_MIN)
+        HELD_LOG("[HELD] drop copy at %p %ux%u tex %u (efb %u), idle %u frames, frame %u, from %p",
+                 (const void*)e->data, e->w, e->h, e->tex, e->efb, s_frame - e->last_used, s_frame,
+                 __builtin_return_address(0));
+#endif
     if (e->tex) {
         for (m = 0; m < XGX_MAX_MAPS; m++)
             if (g_xgx.map[m].tex == e->tex) {
                 g_xgx.map[m].tex = 0;
                 g_xgx.dirty |= XGX_DIRTY_MAPS;
+                /* the game loads it again rather than draw with the map
+                 * empty (black: every surface after it with that texture) */
+                s_st_map_cleared++;
+                if (XGX_TEX_STALE_FIX) xsdk_tex_map_cleared(m);
             }
         xgx_tex_destroy(e->tex);
     }
@@ -1012,10 +1116,29 @@ static void bind_new(uint32_t map, const TexObj* o, const TlutObj* tl) {
      * uploaded, not for a lookup that finds a texture already checked */
     e = find(o->data, o->w, o->h, key_fmt(o), (uint8_t)levels, tl && !sep ? tl->data : NULL);
 found:
+    if (e && efb_stale(e)) {   /* a texture took a freed copy buffer's memory */
+        drop(e);
+        e = find(o->data, o->w, o->h, key_fmt(o), (uint8_t)levels, tl && !sep ? tl->data : NULL);
+    }
     if (e && e->efb && s_frame - e->last_used > TEX_IDLE_FRAMES && (e->w != o->w || e->h != o->h)) {
         drop(e);   /* an idle copy's memory, now a texture of another size */
         e = NULL;
     }
+#ifdef XGX_DEBUG_HELD
+    if ((uint32_t)o->w * o->h >= HELD_MIN && ((e && e->efb) || held_dest(o->data))) {
+        static HeldSeen s_seen[4];
+        const uint32_t state = !e ? 0 : e->efb ? 1 : 2;
+        if (held_new(s_seen, o->data, e ? e->tex : 0, state, s_frame)) {
+            HELD_LOG("[HELD] bind %ux%u fmt %u at %p, frame %u: %s", o->w, o->h, o->fmt, (const void*)o->data,
+                     s_frame,
+                     state == 1   ? "the EFB copy"
+                     : state == 2 ? "a texture from memory"
+                                  : "nothing cached, uploads from memory");
+            if (e) xgx_tex_debug("  bound", e->tex);
+        }
+        if (e) xgx_tex_debug_dump(e->tex);
+    }
+#endif
     if (e && !e->efb && tex_due(e)) {
         EntryCold* c = cold_of(e);
         int quick = c->stable >= TEX_STABLE, texels;
@@ -1144,6 +1267,17 @@ uint32_t gx_tex_efb_texture(const void* dest) {
 /* EFB copy: remember which texture now holds the pixels at `dest` */
 void gx_tex_note_efb_copy(const void* dest, uint32_t tex, uint32_t w, uint32_t h, uint32_t fmt) {
     chain_init();
+#ifdef XGX_DEBUG_HELD
+    if (w * h >= HELD_MIN) {
+        static HeldSeen s_seen[4];
+        static int s_next;
+        if (!held_dest(dest)) s_held_dest[s_next++ & 7] = dest;
+        if (held_new(s_seen, dest, tex, 0, s_frame) || !tex) {
+            HELD_LOG("[HELD] copy %ux%u fmt %u to %p, frame %u: tex %u", w, h, fmt, dest, s_frame, tex);
+            if (tex) xgx_tex_debug("  made", tex);
+        }
+    }
+#endif
     for (;;) {
         int i, hit = -1;
         for (i = s_bucket[bucket_of((const uint8_t*)dest)]; i >= 0; i = s_cache[i].next)
@@ -1158,6 +1292,7 @@ void gx_tex_note_efb_copy(const void* dest, uint32_t tex, uint32_t w, uint32_t h
             s_cache[hit].fmt = (uint8_t)fmt;
             s_cache[hit].last_used = s_frame;
             s_cache[hit].efb = 2;   /* copied to again (lru_victim) */
+            s_cold[hit].qhash = efb_hash((const uint8_t*)dest, w, h);
             return;
         }
         drop_at(hit);
@@ -1174,6 +1309,7 @@ void gx_tex_note_efb_copy(const void* dest, uint32_t tex, uint32_t w, uint32_t h
         e->efb = 1;
         e->tex = tex;
         e->last_used = s_frame;
+        cold_of(e)->qhash = efb_hash((const uint8_t*)dest, w, h);   /* efb_stale */
     }
 }
 
@@ -1214,6 +1350,13 @@ void gx_tex_frame_end(void) {
         s_st_uploads = s_st_evicts = s_st_evicts_hot = s_st_drops = s_st_drop_kb = s_st_fast = s_st_new_copies = 0;
         s_drop_logged = 0;
         s_st_chg_data = s_st_chg_tlut = s_chg_logged = 0;
+#ifndef GX_TEX_NO_EFB_STALE   /* not in the reference's trace */
+        if (s_st_efb_stale || s_st_map_cleared)
+            xhw_logf("[TEX] per %u: %u binds of an EFB copy a texture overwrote, %u texmaps emptied by a drop%s",
+                     XGX_STATS_EVERY, s_st_efb_stale, s_st_map_cleared,
+                     XGX_TEX_STALE_FIX ? "" : " (fixes off: drawn black or stale)");
+#endif
+        s_st_efb_stale = s_efb_stale_logged = s_st_map_cleared = 0;
     }
     s_frame++;
     /* never one a map still holds: Prime's CTexture::Load skips the load

@@ -27,13 +27,9 @@ enum EOption {
   kXO_SkipCutscenes,             // Off / On: every cutscene skippable (from the next room)
   kXO_GameTiming,                // removed 2026-10-30: Game Timing is always Auto (port_debug.cpp)
   kXO_LogFile,                   // Off / On: boot.log in the save folder (release builds; test builds always)
-  // Buttons: what each Xbox button does, a carousel of the game's actions
-  // (IsList): A, B, X, Y, White, Black, Start, Back, the stick clicks
-  kXO_BindFirst,
-  kXO_BindLast = kXO_BindFirst + 9,
   // the pause screen's "Port Options" row: A opens the popup (port_menu.cpp)
   kXO_OpenMenu,
-  kXO_AimMode,  // GameCube / Dual Stick (GitHub #2)
+  kXO_AimMode,  // GameCube / Dual Stick (GitHub #2): also the button layout (pad.c)
   kXO_AimSpeed, // Low / Medium / High: Dual Stick's turn rate
 };
 
@@ -43,12 +39,6 @@ const wchar_t* Title(int option);
 const wchar_t* Description(int option);
 // a TripleEnum row's three cell labels; nullptr: the retail labels
 const wchar_t* ValueLabel(int option, int cell);
-// A list row: shown in the three-cell widget as previous | current | next,
-// the middle one selected; moving left or right steps the value (Step) and
-// the row is drawn again, centred
-bool IsList(int option);
-const wchar_t* ListLabel(int option, int offset); // offset -1, 0, +1 from the value
-void Step(int option, int delta);
 int Get(int option);
 void Set(int option, int value);
 // the screen closes: settings.ini is written if anything changed
@@ -62,10 +52,5 @@ void ApplyAtBoot();
 // no input while it is up, nor the press that closes it.
 void OpenMenu();
 bool MenuOpen();
-// the GameCube action a Buttons row gives (port 1; 0 none)
-int BindGc(int button);
-// settings.ini is to be written when the popup closes (a change made
-// without Set or Step: the Buttons tab's defaults)
-void MarkChanged();
 
 } // namespace PortXboxOptions

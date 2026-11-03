@@ -5,8 +5,7 @@
  * Written with the defaults on first boot so it is there to edit, and by the
  * Port Options popup (xbox/src/port/port_menu.cpp). A hand edit is checked
  * line by line (parse): a value it can't read keeps the default, a number
- * out of range takes the nearest, a layout with no Fire or no Pause goes
- * back to the default, and anything wrong is reported on screen, at the top
+ * out of range takes the nearest, and anything wrong is reported on screen, at the top
  * of the settings.ini written back, and in boot.log, with the file as it was
  * kept as settings.bad.ini. A save writes settings.tmp, ending in an
  * END_MARK line, and reads it back; only a copy that is complete and parses
@@ -16,7 +15,6 @@
  * after settings.ini had been deleted. The writer regenerates the whole
  * file: comments and keys it doesn't know are not kept (Melee-X's
  * led_effects and cstick_1p, v52's ram128). */
-#include <dolphin/pad.h>
 #include <ctype.h>
 #include <errno.h>
 #include <stdio.h>
@@ -36,44 +34,21 @@
 xsdk_settings g_xsdk_settings;
 xsdk_settings g_xsdk_settings_boot;
 
-static const struct { const char* name; uint32_t bit; } k_xbox[] = {
-    { "a", XHW_BTN_A }, { "b", XHW_BTN_B }, { "x", XHW_BTN_X }, { "y", XHW_BTN_Y },
-    { "white", XHW_BTN_WHITE }, { "black", XHW_BTN_BLACK }, { "start", XHW_BTN_START },
-    { "back", XHW_BTN_BACK }, { "lstick", XHW_BTN_LSTICK }, { "rstick", XHW_BTN_RSTICK },
-    { "up", XHW_BTN_UP }, { "down", XHW_BTN_DOWN }, { "left", XHW_BTN_LEFT }, { "right", XHW_BTN_RIGHT },
-};
-#define N_XBOX (int)(sizeof k_xbox / sizeof k_xbox[0])
-
-static const struct { const char* name; uint16_t bits; } k_gc[] = {
-    { "NONE", 0 }, { "A", PAD_BUTTON_A }, { "B", PAD_BUTTON_B }, { "X", PAD_BUTTON_X },
-    { "Y", PAD_BUTTON_Y }, { "Z", PAD_TRIGGER_Z }, { "L", PAD_TRIGGER_L }, { "R", PAD_TRIGGER_R },
-    { "START", PAD_BUTTON_START }, { "UP", PAD_BUTTON_UP }, { "DOWN", PAD_BUTTON_DOWN },
-    { "LEFT", PAD_BUTTON_LEFT }, { "RIGHT", PAD_BUTTON_RIGHT }, { "BEAM", XSDK_PAD_BEAM },
-};
-#define N_GC (int)(sizeof k_gc / sizeof k_gc[0])
-
-/* the default layout: GameCube-like by position; Black is Beam Select for
- * Dual Stick aiming, the default since 2026-11-02 (White is the map) */
-static const char* const k_default[N_XBOX] = {
-    "A", "X", "B", "Y", "Z", "BEAM", "START", "NONE", "NONE", "NONE", "UP", "DOWN", "LEFT", "RIGHT",
-};
-
-static uint16_t gc_bits(const char* name) {
+/* [portN] keys of the button layouts that could be remapped until
+ * 2026-11-03 (a = A, ..., lt, rt, and GitHub #12's trigger_z): the layout is
+ * fixed by aim now (pad.c), so an older file's lines are skipped and the
+ * file is written again without them */
+static int old_layout_key(const char* key) {
+    static const char* const k_old[] = { "a", "b", "x", "y", "white", "black", "start", "back", "lstick",
+                                         "rstick", "up", "down", "left", "right", "lt", "rt", "trigger_z" };
     int i;
-    for (i = 0; i < N_GC; i++)
-        if (_stricmp(name, k_gc[i].name) == 0) return k_gc[i].bits;
+    for (i = 0; i < (int)(sizeof k_old / sizeof k_old[0]); i++)
+        if (_stricmp(key, k_old[i]) == 0) return 1;
     return 0;
 }
 
-static const char* gc_name(uint16_t bits) {
-    int i;
-    for (i = 0; i < N_GC; i++)
-        if (k_gc[i].bits == bits) return k_gc[i].name;
-    return "NONE";
-}
-
 static void defaults(xsdk_settings* st) {
-    int p, i;
+    int p;
     memset(st, 0, sizeof *st);
     st->video_720p = 1;   /* only where the dashboard allows 720p (xhw_video.c); BACK at boot: 480i */
     st->progressive = 1;
@@ -95,10 +70,6 @@ static void defaults(xsdk_settings* st) {
         ps->stick_deadzone = 0.20f;
         ps->cstick_deadzone = 0.25f;
         ps->trigger_click = 230;
-        for (i = 0; i < N_XBOX; i++) {
-            ps->bind[i].xbox = k_xbox[i].bit;
-            ps->bind[i].gc = gc_bits(k_default[i]);
-        }
     }
 }
 
@@ -118,8 +89,9 @@ static char* trim(char* s) {
 static int clampi(int v, int lo, int hi) { return v < lo ? lo : v > hi ? hi : v; }
 static int pct(float f) { return (int)(f * 100.0f + 0.5f); }
 
-/* SAW_RAM128: an old file's ram128 = 1, only logged (the key is gone) */
-enum { SAW_FPS = 1, SAW_PROGRESSIVE = 2, SAW_RAM128 = 4, SAW_END = 8, SAW_UNICODE = 16 };
+/* SAW_RAM128: an old file's ram128 = 1, only logged (the key is gone);
+ * SAW_OLD_LAYOUT: a button layout from before 2026-11-03 (old_layout_key) */
+enum { SAW_FPS = 1, SAW_PROGRESSIVE = 2, SAW_RAM128 = 4, SAW_END = 8, SAW_UNICODE = 16, SAW_OLD_LAYOUT = 32 };
 #define SAW_KEYS (SAW_FPS | SAW_PROGRESSIVE)   /* a file without one of these is rewritten */
 #define END_MARK "; end of settings"   /* the writer's last line: the file is whole */
 
@@ -194,25 +166,6 @@ static void set_num(int line, const char* key, const char* val, int lo, int hi, 
     *dst = v;
 }
 
-/* a button's action: settings.ini's GameCube names, or the Port Options
- * popup's (Fire, Jump...), which a hand edit is as likely to use */
-static int gc_lookup(const char* name, uint16_t* out) {
-    static const struct { const char* name; uint16_t bits; } k_alias[] = {
-        { "fire", PAD_BUTTON_A }, { "jump", PAD_BUTTON_B }, { "morph", PAD_BUTTON_X },
-        { "morph ball", PAD_BUTTON_X }, { "missile", PAD_BUTTON_Y }, { "map", PAD_TRIGGER_Z },
-        { "lock", PAD_TRIGGER_L }, { "lock on", PAD_TRIGGER_L }, { "aim", PAD_TRIGGER_R },
-        { "free aim", PAD_TRIGGER_R }, { "pause", PAD_BUTTON_START }, { "d-up", PAD_BUTTON_UP },
-        { "d-down", PAD_BUTTON_DOWN }, { "d-left", PAD_BUTTON_LEFT }, { "d-right", PAD_BUTTON_RIGHT },
-        { "beam select", XSDK_PAD_BEAM }, { "beams", XSDK_PAD_BEAM },
-    };
-    int i;
-    for (i = 0; i < N_GC; i++)
-        if (_stricmp(name, k_gc[i].name) == 0) return *out = k_gc[i].bits, 1;
-    for (i = 0; i < (int)(sizeof k_alias / sizeof k_alias[0]); i++)
-        if (_stricmp(name, k_alias[i].name) == 0) return *out = k_alias[i].bits, 1;
-    return 0;
-}
-
 static int is_port_section(const char* s) {
     return _strnicmp(s, "port", 4) == 0 && s[4] >= '1' && s[4] <= '4' && !s[5];
 }
@@ -220,11 +173,10 @@ static int is_port_section(const char* s) {
 /* the file's keys over the defaults into *st; returns the SAW_* found */
 static int parse(FILE* f, xsdk_settings* st) {
     char line[256], section[32] = "";
-    int saw = 0, n = 0, p;
+    int saw = 0, n = 0;
     defaults(st);
     while (fgets(line, sizeof line, f)) {
         char *s = line, *eq, *key, *val, *cut;
-        int i;
         n++;
         if (n == 1) {
             /* Notepad's UTF-8 mark; UTF-16 ("Unicode") is bytes with NULs between */
@@ -333,62 +285,21 @@ static int parse(FILE* f, xsdk_settings* st) {
                 v = ps->trigger_click;
                 set_num(n, key, val, 64, 255, &v);
                 ps->trigger_click = (uint8_t)v;
-            } else if (_stricmp(key, "trigger_z") == 0) {
-                if (_stricmp(val, "left") == 0) ps->trigger_z = XSDK_TRIGGER_Z_LEFT;
-                else if (_stricmp(val, "right") == 0) ps->trigger_z = XSDK_TRIGGER_Z_RIGHT;
-                else if (_stricmp(val, "off") == 0 || _stricmp(val, "0") == 0 || _stricmp(val, "none") == 0)
-                    ps->trigger_z = XSDK_TRIGGER_Z_OFF;
-                else problem(n, "trigger_z = %s: use off, left or right", val, "");
+            } else if (old_layout_key(key)) {
+                saw |= SAW_OLD_LAYOUT;
             } else {
-                for (i = 0; i < N_XBOX; i++)
-                    if (_stricmp(key, k_xbox[i].name) == 0) break;
-                if (i == N_XBOX) problem(n, "%s: not an Xbox button (a b x y white black start back...)", key, "");
-                else if (!gc_lookup(val, &ps->bind[i].gc))
-                    problem(n, "%s = %s: not an action (Fire Jump Morph Missile Map Lock Aim Pause NONE...)", key, val);
+                problem(n, "%s: no such setting in [portN]", key, "");
             }
         } else if (!section[0]) {
             problem(n, "%s: above the first [section]", key, "");
         }   /* else: the unknown section was reported once */
-    }
-    /* Each port's buttons keep Fire (GameCube A, also confirm in the game's
-     * menus) and Pause (START, the way to Options): a layout without one is
-     * reset, else a hand edit could leave no way to play or to fix it */
-    for (p = 0; p < 4; p++) {
-        xsdk_port_settings* ps = &st->port[p];
-        int i, fire = 0, pause = 0;
-        for (i = 0; i < N_XBOX; i++) {
-            if (ps->bind[i].gc == PAD_BUTTON_A) fire = 1;
-            if (ps->bind[i].gc == PAD_BUTTON_START) pause = 1;
-        }
-        if (!fire || !pause) {
-            char which[16];
-            snprintf(which, sizeof which, "[port%d]", p + 1);
-            problem(0, "%s: no button %s; its buttons reset", which, !fire ? "is Fire (A)" : "is Pause (START)");
-            for (i = 0; i < N_XBOX; i++) ps->bind[i].gc = gc_bits(k_default[i]);
-        }
-    }
-    /* Dual Stick aiming with no Beam Select button (a settings.ini from
-     * before it, whose Black is the map): Black takes it if it only doubles
-     * White's map or does nothing, else the first free stick click or BACK */
-    if (st->aim == XSDK_AIM_DUAL) {
-        for (p = 0; p < 4; p++) {
-            xsdk_port_settings* ps = &st->port[p];
-            int i, have = 0, pick = -1;
-            for (i = 0; i < N_XBOX; i++) have |= ps->bind[i].gc == XSDK_PAD_BEAM;
-            if (have) continue;
-            if (ps->bind[5].gc == 0 || (ps->bind[5].gc == PAD_TRIGGER_Z && ps->bind[4].gc == PAD_TRIGGER_Z)) pick = 5;
-            else if (ps->bind[9].gc == 0) pick = 9;
-            else if (ps->bind[8].gc == 0) pick = 8;
-            else if (ps->bind[7].gc == 0) pick = 7;
-            if (pick >= 0) ps->bind[pick].gc = XSDK_PAD_BEAM;
-        }
     }
     return saw;
 }
 
 /* equal as the file holds them (percentages rounded) */
 int xsdk_settings_equal(const xsdk_settings* a, const xsdk_settings* b) {
-    int p, i;
+    int p;
     if (a->video_720p != b->video_720p || a->progressive != b->progressive || a->widescreen != b->widescreen ||
         a->fps != b->fps || a->shots != b->shots || a->led != b->led || a->log != b->log ||
         pct(a->rumble) != pct(b->rumble) || a->cstick_1p != b->cstick_1p || a->hud_wide != b->hud_wide ||
@@ -398,10 +309,8 @@ int xsdk_settings_equal(const xsdk_settings* a, const xsdk_settings* b) {
     for (p = 0; p < 4; p++) {
         const xsdk_port_settings *x = &a->port[p], *y = &b->port[p];
         if (pct(x->stick_deadzone) != pct(y->stick_deadzone) || pct(x->cstick_deadzone) != pct(y->cstick_deadzone) ||
-            x->trigger_click != y->trigger_click || x->trigger_z != y->trigger_z)
+            x->trigger_click != y->trigger_click)
             return 0;
-        for (i = 0; i < N_XBOX; i++)
-            if (x->bind[i].gc != y->bind[i].gc) return 0;
     }
     return 1;
 }
@@ -413,11 +322,11 @@ static void log_summary(const char* what) {
     const xsdk_settings* st = &g_xsdk_settings;
     const xsdk_port_settings* p1 = &st->port[0];
     xhw_logf("[SETTINGS] %s: 720p %d, progressive %d, widescreen %d, fps %d, screenshots %d, led %d, log %d, "
-             "HUD wide %d, FOV %d, rumble %d, aim %s (speed %d), port 1 dead zones %d/%d, trigger click %d, trigger Z %d",
+             "HUD wide %d, FOV %d, rumble %d, aim %s (speed %d), port 1 dead zones %d/%d, trigger click %d",
              what, st->video_720p, st->progressive, st->widescreen, st->fps, st->shots, st->led, st->log,
              st->hud_wide,
              st->fov, pct(st->rumble), st->aim == XSDK_AIM_DUAL ? "dual" : "gamecube", st->aim_speed,
-             pct(p1->stick_deadzone), pct(p1->cstick_deadzone), p1->trigger_click, p1->trigger_z);
+             pct(p1->stick_deadzone), pct(p1->cstick_deadzone), p1->trigger_click);
 }
 
 static xsdk_settings s_scratch;   /* read-backs and recovery */
@@ -468,6 +377,15 @@ void xsdk_settings_load(void) {
     xhw_logf("[SETTINGS] loaded %s", p);
     /* the line stays until the next save, which doesn't write it */
     if (saw & SAW_RAM128) xhw_logf("[SETTINGS] ram128 = 1 ignored: 128 MB consoles run in 64 MB");
+#if XHW_TEST_BUILD
+    {   /* test builds: "env PX_FUSION=0|1" (autopad.txt) over settings.ini */
+        const char* fu = getenv("PX_FUSION");
+        if (fu) {
+            g_xsdk_settings.fusion_suit = atoi(fu) != 0;
+            xhw_logf("[SETTINGS] PX_FUSION: fusion_suit = %d", g_xsdk_settings.fusion_suit);
+        }
+    }
+#endif
     log_summary("in use");
     if (s_problems) {
         /* a hand edit Prime-X couldn't follow: what it used instead goes
@@ -486,32 +404,16 @@ void xsdk_settings_load(void) {
                  s_problems + s_problems_more == 1 ? "" : "s");
         snprintf(l2, sizeof l2, "%.51s", s_problem[0]);
         xhw_notice(l1, l2);
-    } else if ((saw & SAW_KEYS) != SAW_KEYS) {
-        xsdk_settings_save();   /* add the missing lines */
+    } else if ((saw & SAW_KEYS) != SAW_KEYS || (saw & SAW_OLD_LAYOUT)) {
+        /* add the missing lines; an old file's button layout taken out */
+        if (saw & SAW_OLD_LAYOUT) xhw_logf("[SETTINGS] button layout lines dropped (fixed by aim since 2026-11-03)");
+        xsdk_settings_save();
     }
     g_xsdk_settings_boot = g_xsdk_settings;
     xgx_set_fps_overlay(g_xsdk_settings.fps);
     xhw_pad_set_shots(g_xsdk_settings.shots);
     xhw_led_enable(g_xsdk_settings.led);
     xhw_log_set_file(g_xsdk_settings.log);
-}
-
-/* the action a GameCube button is in Prime (default controls), for the
- * comment after each button line */
-static const char* action_name(uint16_t gc) {
-    switch (gc) {
-    case PAD_BUTTON_A: return "Fire";
-    case PAD_BUTTON_B: return "Jump";
-    case PAD_BUTTON_X: return "Morph Ball";
-    case PAD_BUTTON_Y: return "Missile";
-    case PAD_TRIGGER_Z: return "Map";
-    case PAD_TRIGGER_L: return "Lock On";
-    case PAD_TRIGGER_R: return "Free Aim";
-    case PAD_BUTTON_START: return "Pause";
-    case PAD_BUTTON_UP: case PAD_BUTTON_DOWN: case PAD_BUTTON_LEFT: case PAD_BUTTON_RIGHT: return "D-pad (visors)";
-    case XSDK_PAD_BEAM: return "Beam Select (Dual Stick: held, the right stick picks beams)";
-    default: return "nothing";
-    }
 }
 
 static void write_all(FILE* f, const xsdk_settings* st) {
@@ -540,33 +442,22 @@ static void write_all(FILE* f, const xsdk_settings* st) {
     fprintf(f, "[game]\nhud_wide = %d\nfov = %d\nskip_cutscenes = %d\nfusion_suit = %d\n\n", st->hud_wide,
             st->fov, st->skip_cutscenes, st->fusion_suit);
     fprintf(f, "; rumble: 0 to 100 percent (rumble on or off is in the game's own Options).\n");
-    fprintf(f, "; aim = gamecube: RT and the left stick aim, the right stick picks beams. aim = dual: the right\n");
-    fprintf(f, "; stick aims and the left one moves and strafes; hold Beam Select (BEAM below) and tilt the\n");
-    fprintf(f, "; right stick to pick a beam. aim_speed (dual): low, medium or high.\n");
+    fprintf(f, "; aim: the controls, one of two layouts (the buttons can't be remapped).\n");
+    fprintf(f, ";   dual (the default): the right stick aims and looks, the left one moves and strafes. A or RT\n");
+    fprintf(f, ";     fires, LT locks on, X jumps, B morphs, Y missile, White map, hold Black and tilt the right\n");
+    fprintf(f, ";     stick for beams, D-pad visors, START pause.\n");
+    fprintf(f, ";   gamecube: the GameCube's controls. A fires, hold RT and tilt the left stick to aim, LT locks\n");
+    fprintf(f, ";     on, X jumps, B morphs, Y missile, White or Black map, right stick beams, D-pad visors.\n");
+    fprintf(f, "; aim_speed (dual): low, medium or high.\n");
     fprintf(f, "[input]\nrumble = %d\naim = %s\naim_speed = %s\n\n", pct(st->rumble),
             st->aim == XSDK_AIM_DUAL ? "dual" : "gamecube",
             st->aim_speed == XSDK_AIM_SPEED_LOW ? "low" : st->aim_speed == XSDK_AIM_SPEED_HIGH ? "high" : "medium");
     fprintf(f, "; Each controller port. stick_deadzone, cstick_deadzone: 0 to 60 percent.\n");
     fprintf(f, "; trigger_click: 64 to 255, how far LT and RT go in before they count as pressed.\n");
-    fprintf(f, "; trigger_z = left or right: that trigger opens the map instead of locking on (left) or\n");
-    fprintf(f, "; aiming (right); off: both as on the GameCube.\n");
-    fprintf(f, "; Buttons: Xbox button = GameCube button: A (Fire) B (Jump) X (Morph Ball) Y (Missile)\n");
-    fprintf(f, "; Z (Map) L (Lock On) R (Free Aim) START (Pause) UP DOWN LEFT RIGHT (the D-pad) BEAM (Beam\n");
-    fprintf(f, "; Select, for aim = dual) NONE.\n");
-    fprintf(f, "; Fire, Jump... work too. Some button must be A and some START, or the port is reset.\n");
     for (port = 0; port < 4; port++) {
         const xsdk_port_settings* ps = &st->port[port];
-        fprintf(f, "[port%d]\nstick_deadzone = %d\ncstick_deadzone = %d\ntrigger_click = %d\ntrigger_z = %s\n",
-                port + 1, pct(ps->stick_deadzone), pct(ps->cstick_deadzone), ps->trigger_click,
-                ps->trigger_z == XSDK_TRIGGER_Z_LEFT    ? "left"
-                : ps->trigger_z == XSDK_TRIGGER_Z_RIGHT ? "right"
-                                                        : "off");
-        for (i = 0; i < N_XBOX; i++) {
-            char kv[32];
-            snprintf(kv, sizeof kv, "%s = %s", k_xbox[i].name, gc_name(ps->bind[i].gc));
-            fprintf(f, "%-16s; %s\n", kv, action_name(ps->bind[i].gc));
-        }
-        fprintf(f, "\n");
+        fprintf(f, "[port%d]\nstick_deadzone = %d\ncstick_deadzone = %d\ntrigger_click = %d\n\n", port + 1,
+                pct(ps->stick_deadzone), pct(ps->cstick_deadzone), ps->trigger_click);
     }
     fprintf(f, END_MARK "\n");
 }

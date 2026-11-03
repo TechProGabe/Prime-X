@@ -20,8 +20,8 @@ over unless a line here says otherwise.
 | Upgraded CPUs | supported: Melee-X's code repair, no timing from the TSC, plain Pentium III code |
 | Repo | `TechProGabe/Prime-X`, private for now; `main` releases, `dev` work |
 | Title ID | `50580001` ("PX"), so data lives in `E:\UDATA\50580001\` |
-| Controller layout | GameCube by position, as Melee-X: A=A, X=B, B=X, Y=Y, White/Black=Z, triggers=analog L/R, right stick=C-stick, remappable per port |
-| Players | one (port 1 plays; other ports' pads ignored unless remapped) |
+| Controller layout | two fixed layouts, no remapping (2026-11-03): **Dual Stick** (the default: right stick aims, A or RT fires, Black + right stick beams) and **GameCube** (by position, as Melee-X: A=A, X=B, B=X, Y=Y, White/Black=Z, triggers=analog L/R, right stick=C-stick) |
+| Players | one (port 1 plays) |
 
 ## Technical decisions
 
@@ -439,6 +439,54 @@ swaps it, as Melee-X's does.
   runs after the link: any of nxdk's "Not implemented" pdclib objects in the
   map fails the build.
 
+- **A texture on a freed EFB copy buffer draws its own texels; an emptied
+  texmap is loaded again** (2026-11-03; a tester, beta2 and beta3: black
+  chunks of a Chozo room, "only temporarily after saving or loading into a
+  save"; the 2026-11-02 static-memory change didn't fix it, and it doesn't
+  show in xemu, whose allocations land differently). Two holes in
+  `xbox/src/sdk/gx/gx_tex.c`, both black, both lasting while the texture is
+  drawn (until the room is left): (1) `find()` takes an EFB copy for any
+  texture bound at its address (a game binds a copy as another size or
+  format: thermal reads an I8 copy as C8), and copies are never
+  revalidated; once Prime freed a copy buffer (the save screen's, a world's
+  loading transition's) and a room texture (a lightmap) was read into that
+  memory, the texture drew the old capture, and each bind kept the copy "in
+  use". Now each copy keeps a sample hash of its destination as it was at
+  the copy (the copy lives on the GPU; only the CPU writes there after,
+  once the buffer is someone else's), and a bind that finds it changed
+  drops the copy and takes the memory as a texture (`efb_stale`, `[TEX]
+  EFB copy at ... overwritten by a texture`). (2) Dropping a texture empties
+  every texmap holding it, but Prime's `CTexture::Load` skips a texture it
+  believes is still in that map (as the GameCube's TMEM allows), so the
+  surfaces after it drew with nothing bound; `drop_at` now tells the game
+  (`xsdk_tex_map_cleared`, px_port.cpp: `CTexture::InvalidateTexmap`).
+  Host tests: `test_tex_cache.py` compares with the old cache under
+  `-DGX_TEX_NO_EFB_STALE` and checks the new case on its own. Confirmed
+  on gold (2026-11-03, `-DXGX_TEX_STALE_FIX=0` image A against B, booted
+  onto Save Station 1): the tester saw the chunks in A only; A logged up
+  to 1163 binds per 600 frames of an overwritten copy, B dropped it once
+  and drew none.
+- **An EFB copy's clear writes only what the updates let through**
+  (2026-11-03; the tester on gold: "Samus is not visible on the save
+  station", "missing during the save sequence"). `GXCopyTex(dest, GX_TRUE)`
+  cleared colour, alpha and depth whatever `GXSetColorUpdate`,
+  `GXSetAlphaUpdate` and `GXSetZMode`'s update said; the GameCube's pixel
+  engine (and Dolphin, and aurora, which MetroidPrimePort's own copies
+  rely on: they turn the depth update on before a clearing copy) clears
+  only those. Prime's Phazon Suit glow (`CCubeRenderer::CopyTex`, from
+  `CScriptPlayerActor`, `CSamusDoll`, `CPhazonBeam`) copies the alpha
+  with colour updates off to clear just the alpha: the whole scene went
+  but what was drawn after it, so behind the save prompt and the pause
+  menu (the pause blur's held copy) only the station's light was left,
+  or black. Not a console difference: the console round's folders give
+  every item (the Phazon Suit), xemu's settings.ini had the Fusion Suit
+  (another model, no glow); `env PX_FUSION=0` shows it in xemu. Found
+  with `-DXGX_DEBUG_HELD` (gold round "held copy": `[HELD]` lines on big
+  copies, their binds and drops, and the bound copy's texels written at
+  a BACK screenshot). `clear_fb` (nv2a.c) clears RGB or alpha alone with
+  `NV097_CLEAR_SURFACE`'s channel bits; a 16-bit surface (no alpha) only
+  ever the RGB. `GXCopyDisp`'s clear is unchanged (all of it). Test
+  builds: `env PX_COPY_CLEAR_ALL=1` brings back the old clear.
 - **Disc reads cancelled and closed for real** (2026-11-02): `DVDClose`,
   `DVDCancel` and `DVDCancelAsync` (`xbox/src/sdk/dvd.c`) were no-ops, but
   the game frees a request's buffer and its `DVDFileInfo` right after them
@@ -500,7 +548,7 @@ swaps it, as Melee-X's does.
   full tilt, up and down at 3/4; a fifth linear, the rest squared, so a
   light tilt aims finely). It is MetroidPrimePort's twin stick: the game
   side (CPlayer's direct-aim path: the left stick moves and strafes, the
-  retail free look is off, RT does nothing) was already imported; the
+  retail free look is off; RT fires since 2026-11-03) was already imported; the
   Xbox's `port_debug.cpp` had it stubbed and now keeps the aim state
   (`PortMouse::AimState`, in radians) with the same presented-frame lag
   between 30 Hz ticks. The stick is read by pad.c at full precision past
@@ -517,6 +565,46 @@ swaps it, as Melee-X's does.
   default". The default layout's Black is Beam Select (White stays Map); a
   settings.ini with Dual Stick and no Beam Select gets one at load, as the
   row does.
+- **RT fires under Dual Stick; the triggers are remappable; X binds**
+  (superseded the same day: no remapping at all, below) (2026-11-03, the user: "shoot is right trigger as well as A ... you
+  should be able to change the trigger ... press X to start key bind, then
+  you can press right trigger, and then it would save"; LT/RT switched the
+  popup's tab instead). LT and RT are bindings like the buttons
+  (settings.ini `lt`, `rt` in each `[portN]`; `XHW_BTN_LT/RT` are the
+  triggers past `trigger_click`). Bound to Lock On (L) or Free Aim (R) a
+  trigger also passes on how far it is in; bound to anything else it is a
+  button and gives no analog value. Defaults: LT Lock On; RT **Fire** under
+  Dual Stick (A fires too), **Free Aim** under GameCube aiming, which needs
+  it. Switching Aiming moves RT between the two while it holds the other
+  mode's default (a hand-picked RT stays). An old file has no `lt`/`rt`:
+  they come from its `aim` and its `trigger_z` (GitHub #12: that trigger is
+  Map), and `trigger_z` is no longer written. The Buttons tab: **X starts
+  bind mode** ("Press the button or trigger that should do Fire"): the next
+  button or trigger pressed (B, START, LT and RT included, so nothing closes
+  or turns the tab) takes the selected input's action; the D-pad or 5 s
+  without a press cancels. A steps the action on, as before. One rule for
+  both: an input taking an action leaves the input that had it alone,
+  except when the taker's old action would then be on no input, which goes
+  back the other way (a swap), so nothing is lost (GitHub #1) and two inputs
+  can share Fire. Before, every change swapped, so Fire couldn't be on two.
+- **Two control layouts, no button mapping** (2026-11-03, the user: "remove
+  button mapping entirely and just do two play schemes. The GameCube and
+  dual stick mode, dual stick mode on by default. Rip out button mapping
+  entirely"; then "make sure in dual stick mode you can shoot with a or
+  right trigger"). The Controller tab's **Controls** row (was "Aiming",
+  `[input] aim`) picks the layout and the aiming together; `pad.c` maps the
+  buttons from it, nothing else. Both: A Fire, X Jump, B Morph Ball, Y
+  Missile, White Map, LT Lock On (analog L and its click), D-pad visors,
+  START pause; BACK and the stick clicks do nothing (BACK: screenshots).
+  **Dual Stick** (default): RT is Fire as well as A (no analog R), Black
+  held is Beam Select (the right stick picks beams), the right stick aims.
+  **GameCube**: RT is Free Aim (analog R and its click), Black is Map like
+  White, the right stick picks beams. In the game's menus B is back and X
+  too, as before. Gone: the Buttons tab (its drawn controller and bind
+  mode), `[portN]` button lines (`a = A` ..., `lt`, `rt`, `trigger_z`; an
+  older file's are skipped without a notice and the file rewritten without
+  them), the Fire/Pause check, Beam Select hand-out, RT following Aiming,
+  the list-row (carousel) hooks in the pause Options. ~1100 lines out.
 - **Port Options look like Prime's pause Options** (2026-11-02, the user:
   "match the game vibe better and be as high performance as possible, as
   light as possible"; picked mockup A of four): an amber hologram (the
@@ -555,6 +643,7 @@ One line per edit to `src/`, `include/`, `extern/musyx` or
 | `src/Kyoto/Graphics/CCubeMoviePlayer.cpp` | movies always take the deinterlaced (whole-frame) path | the field path draws every other line for an interlaced TV; Xbox frames are whole |
 | `extern/aurora/include/dolphin/ppc_math.h` | `_BitScanReverse64` only on x64 | nxdk's clang defines `_MSC_VER` on 32-bit |
 | `src/MetroidPrime/CPauseScreenFrame.cpp` | (rewritten 2026-11-01) every pause Options category ends with a "Port Options" row above Restore Defaults; A on it opens Prime-X's popup (`PortXboxOptions::OpenMenu`, port_menu.cpp). The Prime-X rows that were mixed into the categories, the title frame's Port Options tables, their value-cell grid and the Prime-X part of Restore Defaults are gone; the frame's get/set hooks for options past `kGO_RestoreDefaults` stay (the row's title and description) | the user: "the port options menu is just shitty ... make a clear custom menu pop up that explains everything" (docs/ui.md "Port Options") |
+| `src/MetroidPrime/CPauseScreenFrame.cpp` | the list-row hooks (a Prime-X row's three cells as previous / current / next action, left/right stepping it) are gone 2026-11-03; the triple labels still come from `PortXboxOptions::ValueLabel` | the button remap they served was removed ("Two control layouts, no button mapping") |
 | `src/MetroidPrime/CFrontEndUI.cpp` | the main menu's "Metroid Fusion Connection Bonuses" row reads "Port Options" (its front pane in gold through the game's `&main-color` text tag, 2026-11-01: "make port options stand out") and opens the popup | the user: reachable without a New Game slot; the bonuses need a GBA link an Xbox can't have |
 | `src/MetroidPrime/CFrontEndUI.cpp` | the New Game popup's third slot (Hard's, unused before Normal is beaten) shows "Port Options" and opens the popup (until 2026-11-01: the Options frame with Prime-X's tables) | the user's main-menu entry (docs/ui.md) |
 | `src/MetroidPrime/main.cpp` | `UpdateTicks` reports the updates it ran to `xhw_perf_ticks` | `[PERF]`'s "ticks per render" was always 0 (Melee-X's hook, never called): Fixed's catch-up shows now |

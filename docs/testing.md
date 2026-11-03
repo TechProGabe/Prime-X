@@ -39,7 +39,7 @@ checklist. Phase 1 copies its tools; this file grows with them.
 boot, correctness and Dolphin comparisons, not frame rates. Scenarios
 (`tools/xbox/scenarios/`) script the pad: per benchmark room
 (`docs/performance.md`), per visor, the boot-safety cases, and the Xbox
-Port Options popup (`menu`: every tab, a change, a remap, close, with
+Port Options popup (`menu`: every tab, a change, close, with
 `env PX_MENU_AT=<frame>` opening it; `menu_pause`: the pause screen's row,
 from Tallon). xemu runs the title at ~6 fps: script presses `for 2`
 frames, or a press auto-repeats in the popup.
@@ -60,6 +60,8 @@ console put it next to `default.xbe`. Its `env` lines set what the game's
 | `env PX_ALL_ITEMS=1` | with `MP_BOOT_WORLD`: every item (visors, beams, suits, 250 missiles, 14 tanks) |
 | `env PX_CARD_FILE=<0-2>` | with `MP_BOOT_WORLD`: the game is that memory-card file, so a save station offers to save (`MP_BOOT_WORLD=83F6FF6F:1D5E482C` is Chozo's Save Station 1, where Samus starts on the pad: step off and back on) |
 | `env PX_SKIPPABLE=1` | Xbox Port Options' Skip Cutscenes on, over settings.ini |
+| `env PX_FUSION=0`, `=1` | test builds: the Fusion Suit off or on, over settings.ini (with `PX_ALL_ITEMS`, 0 shows the Phazon Suit and its glow) |
+| `env PX_COPY_CLEAR_ALL=1` | test builds: an EFB copy's clear takes colour, alpha and depth whatever the updates say (as before 2026-11-03), for an A/B of the Phazon Suit's save screen |
 | `env PX_WIDESCREEN=0`, `=1`, `=2` | Xbox Port Options' Widescreen: 4:3, as the dashboard, 16:9 (over settings.ini) |
 | `env PX_MENU_AT=<frame>` | test builds: open the Xbox Port Options popup at that frame, wherever the game is |
 | `env MP_INVULNERABLE=1` | no damage |

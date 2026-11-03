@@ -9,6 +9,7 @@
 #include <dolphin/gx/GXAurora.h>
 #include <dolphin/vi.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "gx_internal.h"
@@ -38,9 +39,9 @@ void GXSetDispCopyDst(u16 wd, u16 ht) { (void)wd; (void)ht; }
 u32 GXSetDispCopyYScale(f32 vscale) { (void)vscale; return XGX_EFB_H; }
 void GXSetDispCopyGamma(GXGamma gamma) { (void)gamma; }
 
-static void clear_rect(const int32_t r[4], int color, int depth) {
+static void clear_rect(const int32_t r[4], int color, int alpha, int depth) {
     uint8_t c[4] = { g_gx.clear_color.r, g_gx.clear_color.g, g_gx.clear_color.b, g_gx.clear_color.a };
-    xgx_clear(r, c, g_gx.clear_z, color, color, depth);
+    xgx_clear(r, c, g_gx.clear_z, color, alpha, depth);
 }
 
 void GXCopyDisp(void* dest, GXBool clear) {
@@ -55,7 +56,7 @@ void GXCopyDisp(void* dest, GXBool clear) {
         gx_vtx_cache_flush();
         xhw_log("[DEBUG] texture and display-list caches flushed (BACK+Y)");
     }
-    if (clear) clear_rect(full, 1, 1);
+    if (clear) clear_rect(full, 1, 1, 1);
 }
 
 void xsdk_gx_present(int black) {
@@ -131,7 +132,22 @@ void GXCopyTex(void* dest, GXBool clear) {
         }
     }
     gx_tex_note_efb_copy(dest, tex, g_gx.tex_copy_w, g_gx.tex_copy_h, g_gx.tex_copy_fmt);
-    if (clear) clear_rect(g_gx.tex_copy_src, 1, 1);
+    /* as the GameCube's pixel engine (and Dolphin): the clear writes only
+     * what the colour, alpha and depth updates let through. Prime turns
+     * colour off to clear just the alpha (CCubeRenderer::CopyTex, the
+     * Phazon Suit glow); clearing it all wiped the scene. */
+    if (clear) {
+        int all = 0;
+#if XHW_TEST_BUILD
+        {   /* test builds: "env PX_COPY_CLEAR_ALL=1" (autopad.txt) clears it all, as before 2026-11-03 */
+            static int s_all = -1;
+            if (s_all < 0) s_all = getenv("PX_COPY_CLEAR_ALL") != NULL;
+            all = s_all;
+        }
+#endif
+        if (all) clear_rect(g_gx.tex_copy_src, 1, 1, 1);
+        else clear_rect(g_gx.tex_copy_src, (int)g_xgx.color_update, (int)g_xgx.alpha_update, (int)g_xgx.z_update);
+    }
 }
 
 /* ---- output geometry for src/pc/widescreen.c ---- */

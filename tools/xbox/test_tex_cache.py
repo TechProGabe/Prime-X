@@ -49,7 +49,14 @@ def build_and_run(tmp, name, source, defines):
 def main():
     with tempfile.TemporaryDirectory() as tmp:
         ref = build_and_run(tmp, "tex_cache_ref", "tests/xbox/gx_tex_ref.c", ["-DTEX_REF=1"])
-        new = build_and_run(tmp, "tex_cache_new", "xbox/src/sdk/gx/gx_tex.c", [])
+        # GX_TEX_NO_EFB_STALE: the reference takes an EFB copy for whatever
+        # texture lands on its buffer later (gx_tex.c efb_stale); checked on
+        # its own below
+        new = build_and_run(tmp, "tex_cache_new", "xbox/src/sdk/gx/gx_tex.c", ["-DGX_TEX_NO_EFB_STALE"])
+        stale = build_and_run(tmp, "tex_cache_stale", "xbox/src/sdk/gx/gx_tex.c", ["-DEFB_STALE_CHECK"])
+    if stale[-1:] != ["efb stale: ok"]:
+        print("FAIL: " + (stale[-1] if stale else "no output from the EFB copy check"))
+        return 1
     for a, b in zip(ref, new):
         if a != b:
             print(f"FAIL: reference {a!r}, now {b!r}")

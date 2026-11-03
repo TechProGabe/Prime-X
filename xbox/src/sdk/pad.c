@@ -1,20 +1,26 @@
 /* pad.c - GameCube PAD on the four Xbox controller ports.
  *
- * Player N is physical port N (xbox/src/hw/xhw_pad.c). Default layout,
- * GameCube-like by position (docs/architecture.md):
+ * Player N is physical port N (xbox/src/hw/xhw_pad.c). Two fixed layouts,
+ * picked by Aiming (settings.ini aim); GameCube-like by position
+ * (docs/architecture.md). Nothing can be remapped since 2026-11-03 (the
+ * user: "remove button mapping entirely and just do two play schemes").
  *
- *   A -> A      X -> B      B -> X      Y -> Y      White/Black -> Z
- *   Start -> Start          D-pad -> D-pad
- *   left stick -> control stick         right stick -> C-stick
- *   L/R triggers -> analog L/R, digital L/R click near the end of travel
- *   (settings.ini trigger_z = left/right: that trigger is Z instead, GitHub
- *   #12: grabbing with White/Black was awkward)
+ *   both:      A -> A (Fire)   X -> B (Jump)   B -> X (Morph Ball)
+ *              Y -> Y (Missile)   White -> Z (Map)   Start -> Start
+ *              D-pad -> D-pad (visors)   left stick -> control stick
+ *              right stick -> C-stick   LT -> analog L (Lock On) and its
+ *              click near the end of travel
+ *   GameCube:  RT -> analog R (Free Aim) and its click   Black -> Z
+ *   Dual Stick: RT -> A (Fire, as A: the user, 2026-11-03)   Black ->
+ *              Beam Select (held, the right stick is the C-stick and picks
+ *              beams; otherwise it aims, CDolphinController.cpp)
+ *   BACK and the stick clicks do nothing (BACK: screenshots, xhw_pad.c).
  *
  * Sticks: a radial dead zone (worn Duke/S sticks rest well off centre;
  * OpenCrossing-Xbox measured 18-35%), then scaled so full tilt reaches the
  * GameCube's raw rim (~±104). HSD clamps to the game's 80-unit circle on its
- * own (controller.c), like a real controller. Per-port remapping and the
- * dead zone come from settings.ini (settings.c). */
+ * own (controller.c), like a real controller. The dead zones and the
+ * triggers' click point come from settings.ini (settings.c). */
 #include <dolphin/pad.h>
 #include <math.h>
 #include <string.h>
@@ -60,20 +66,30 @@ static void stick(int16_t x, int16_t y, float deadzone, s8* ox, s8* oy) {
 
 /* A menu is on screen: the game's menus call PortPointerMenu::Begin each
  * frame (port_overrides.cpp), which lands here. Then the Xbox B button is
- * the GameCube's B, back, whatever it does in play (the default layout puts
- * GameCube B on Xbox X, by position; the user, round hw4: "use B in menus"),
- * and the Xbox A button the GameCube's A, confirm, whatever it does in play
- * (GitHub #1: A on Jump left no way to select in Options). Their own
- * bindings don't apply in a menu (A on Jump would back and confirm at once). */
+ * the GameCube's B, back (the layouts put GameCube B on Xbox X, by
+ * position; the user, round hw4: "use B in menus"); X is B there too. */
 static unsigned s_menu_frame = 0x80000000u;
 void xsdk_pad_menu_seen(void) { s_menu_frame = xsdk_frame_count(); }
 static int menu_up(void) { return xsdk_frame_count() - s_menu_frame <= 2; }
 
-static u16 map_buttons(uint32_t b, const xsdk_port_settings* ps) {
+/* Beam Select (Dual Stick's Black): not a GameCube button, taken out
+ * before the game sees the buttons */
+#define PAD_BEAM_SELECT 0x2000
+
+/* the GameCube buttons of the Xbox buttons in `b` (the triggers apart) */
+static u16 map_buttons(uint32_t b, int dual, int menu) {
     u16 out = 0;
-    int i;
-    for (i = 0; i < XSDK_BIND_COUNT; i++)
-        if (b & ps->bind[i].xbox) out |= ps->bind[i].gc;
+    if (b & XHW_BTN_A) out |= PAD_BUTTON_A;
+    if (b & XHW_BTN_X) out |= PAD_BUTTON_B;
+    if (b & XHW_BTN_B) out |= menu ? PAD_BUTTON_B : PAD_BUTTON_X;
+    if (b & XHW_BTN_Y) out |= PAD_BUTTON_Y;
+    if (b & XHW_BTN_WHITE) out |= PAD_TRIGGER_Z;
+    if (b & XHW_BTN_BLACK) out |= dual ? PAD_BEAM_SELECT : PAD_TRIGGER_Z;
+    if (b & XHW_BTN_START) out |= PAD_BUTTON_START;
+    if (b & XHW_BTN_UP) out |= PAD_BUTTON_UP;
+    if (b & XHW_BTN_DOWN) out |= PAD_BUTTON_DOWN;
+    if (b & XHW_BTN_LEFT) out |= PAD_BUTTON_LEFT;
+    if (b & XHW_BTN_RIGHT) out |= PAD_BUTTON_RIGHT;
     return out;
 }
 
@@ -178,32 +194,31 @@ u32 PADRead(PADStatus* status) {
             motors |= 0x80000000u >> i;
             continue;
         }
-        if (menu_up() && (p.buttons & (XHW_BTN_A | XHW_BTN_B)))
-            s->button = (u16)(map_buttons(p.buttons & ~(XHW_BTN_A | XHW_BTN_B), ps) |
-                              ((p.buttons & XHW_BTN_A) ? PAD_BUTTON_A : 0) | ((p.buttons & XHW_BTN_B) ? PAD_BUTTON_B : 0));
-        else
-            s->button = map_buttons(p.buttons, ps);
-        if (s->button & XSDK_PAD_BEAM) {   /* not a GameCube button */
-            s->button &= (u16)~XSDK_PAD_BEAM;
-            if (i == 0) s_beam_held = 1;
-        }
-        if (i == 0 && g_xsdk_settings.aim == XSDK_AIM_DUAL && !menu_up()) {
-            aim_stick(p.rx, p.ry, ps->cstick_deadzone);
-            s_aim_ok = 1;
+        {
+            const int dual = g_xsdk_settings.aim == XSDK_AIM_DUAL;
+            s->button = map_buttons(p.buttons, dual, menu_up());
+            if (s->button & PAD_BEAM_SELECT) {   /* not a GameCube button */
+                s->button &= (u16)~PAD_BEAM_SELECT;
+                if (i == 0) s_beam_held = 1;
+            }
+            /* LT is the GameCube's L: how far in, and its click past
+             * trigger_click. RT is R the same way under GameCube aiming, and
+             * Fire (A) past its click under Dual Stick. */
+            s->triggerLeft = p.lt;
+            if (p.lt >= ps->trigger_click) s->button |= PAD_TRIGGER_L;
+            if (dual) {
+                if (p.rt >= ps->trigger_click) s->button |= PAD_BUTTON_A;
+            } else {
+                s->triggerRight = p.rt;
+                if (p.rt >= ps->trigger_click) s->button |= PAD_TRIGGER_R;
+            }
+            if (i == 0 && dual && !menu_up()) {
+                aim_stick(p.rx, p.ry, ps->cstick_deadzone);
+                s_aim_ok = 1;
+            }
         }
         stick(p.lx, p.ly, ps->stick_deadzone, &s->stickX, &s->stickY);
         stick(p.rx, p.ry, ps->cstick_deadzone, &s->substickX, &s->substickY);
-        if (ps->trigger_z == XSDK_TRIGGER_Z_LEFT) {   /* a Z button: no analog L, no L click */
-            if (p.lt >= ps->trigger_click) s->button |= PAD_TRIGGER_Z;
-            p.lt = 0;
-        } else if (ps->trigger_z == XSDK_TRIGGER_Z_RIGHT) {
-            if (p.rt >= ps->trigger_click) s->button |= PAD_TRIGGER_Z;
-            p.rt = 0;
-        }
-        s->triggerLeft = p.lt;
-        s->triggerRight = p.rt;
-        if (p.lt >= ps->trigger_click) s->button |= PAD_TRIGGER_L;
-        if (p.rt >= ps->trigger_click) s->button |= PAD_TRIGGER_R;
         s->analogA = (s->button & PAD_BUTTON_A) ? 0xFF : 0;
         s->analogB = (s->button & PAD_BUTTON_B) ? 0xFF : 0;
         if (s_motor[i] == PAD_MOTOR_RUMBLE) {

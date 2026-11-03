@@ -33,8 +33,9 @@ line under it says how far it got.
         not made yet
 - [ ] Phase 4: audio, input, saves (Frigate to the landing site, save,
       reload; Dolphin `.gci` both ways)
-      - MusyX sound and music, streamed music, rumble, pads and the button
-        remap work on red. The save round trip works in xemu (2026-10-29:
+      - MusyX sound and music, streamed music, rumble and pads work on red
+        (the button remap that worked there is gone since 2026-11-03: two
+        fixed layouts). The save round trip works in xemu (2026-10-29:
         Chozo's Save Station 1 saves to file A, a new boot's main menu
         lists it, Continue loads Samus back on the pad; `PX_CARD_FILE`,
         docs/testing.md); not yet on red, and Dolphin `.gci` isn't tested
@@ -43,7 +44,7 @@ line under it says how far it got.
       - the splash with its music, the icon, Port Options on the main menu
         and the pause screen (video, widescreen HUD, FOV, FPS counter,
         rumble, dead zones, trigger click, screenshots, Skip Cutscenes,
-        Fusion Suit, button remap); each row's effect on the console is
+        Fusion Suit, Controls); each row's effect on the console is
         still to be walked through
 - [ ] Phase 6: 60 fps at 480, 30+ at 720p on both consoles; ThinLTO + PGO
       - ThinLTO + PGO + profile-ordered link, -O3, Game Timing: Auto (30

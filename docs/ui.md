@@ -88,8 +88,7 @@ box, the title "[ Xbox Port Options ]" in the game's Deface Large and
 everything else in Deface 14B with its outline (lifted from the disc
 through the game's font loader; unscii-16 without it). Rows: the selected
 one filled brighter; a value not the default in pale yellow with a mark.
-The Buttons page draws the controller black with an amber rim (the user: "make the controller black ... easier to see"). The table
-below is the 2026-11-01 layout; the parts are the same.
+The table below is the 2026-11-01 layout; the parts are the same.
 
 576 x 416 in 480-line pixels, centred, drawn at the output's scale: 1x at
 480, 3/4 as wide at 480 when the dashboard says 16:9 (the TV stretches it
@@ -100,11 +99,10 @@ is unscii-16 supersampled to the scale.
 |---|---|
 | glass | a cyan border, a navy gradient, scanlines, the scan visor's corner brackets |
 | header | "[ Xbox Port Options ]" in Deface Large, centred; the mode now at the right under it ("720p 16:9") |
-| tabs | Video, Controller, Buttons, Gameplay, System between LT and RT badges; the current one lit |
+| tabs | Video, Controller, Gameplay, System between LT and RT badges; the current one lit (a Buttons tab, remapping on a drawn controller, was there 2026-11-01 to 2026-11-03) |
 | rows | the label left; the value right between two arrows, with pips under it (how many choices, which one); a value that isn't the default is orange with a dot; a row that applies at the next start has a `*` |
 | help box | what the selected row does (white), what the shown value does (cyan), a note (orange: "* Video Mode changes the next time Prime-X starts", "The dashboard doesn't allow 720p: the next start uses 480p", "Press Y again ...") |
 | footer | A Change, B Close, Y Defaults, the D-pad Select |
-| Buttons tab | N64Recomp-X's Controls page: an Xbox controller (its body from a distance field, shaded once and cached when memory allows), every input with a leader line and a callout naming its action; the remappable ones (A B X Y White Black START BACK and the stick clicks) bright, the fixed ones (LT Lock On, RT Free Aim, D-pad Visors, left stick Move, right stick Beams; D-pad and right stick swap with Swap Beam Controls) dim; what port 1 holds lights up; the selected input has a ring |
 
 **The game is held while the popup is up** (2026-11-02; beta2's testers:
 "quite laggy", the user: "heavy and laggy, streamline the whole thing for
@@ -142,51 +140,41 @@ were the user's first suspect).
 | Video | Widescreen HUD | Inner / Edges | where the visor's readouts sit at 16:9 |
 | Video | Field of View | 55 / 65 / 75 | the GameCube's / wider / widest |
 | Video | Frame Rate | Hide / Show | the counter top left |
-| Controller | Aiming | GameCube / Dual Stick (the default) | hold RT and the left stick aims, the right stick picks beams / the right stick aims and looks, the left one moves and strafes, hold Beam Select and tilt the right stick for a beam (GitHub #2, 2026-11-02) |
+| Controller | Controls | GameCube / Dual Stick (the default) | the button layout and aiming, the only control choice (no remapping since 2026-11-03). Both: X jump, B Morph Ball, Y missile, LT lock on, White map, D-pad visors, START pause. GameCube: A fires, hold RT and tilt the left stick to aim, the right stick picks beams, Black is the map too. Dual Stick: the right stick aims, the left one moves and strafes, **A or RT fires**, hold Black and tilt the right stick for a beam (GitHub #2, 2026-11-02; the row was "Aiming") |
 | Controller | Aim Speed | Low / Medium / High | Dual Stick's turn at full tilt: 120 / 180 / 250 degrees a second |
 | Controller | Rumble Strength | Low / Medium / Full | 40 / 70 / 100% (On/Off is the game's own row) |
 | Controller | Stick Dead Zone | Low / Medium / High | 10 / 20 / 30% |
 | Controller | C-Stick Dead Zone | Low / Medium / High | 15 / 25 / 35% |
 | Controller | Trigger Click | Light / Medium / Firm | how far LT/RT go in |
-| Buttons | each remappable input | None, Fire, Jump, Morph Ball, Missile, Map, Lock On, Free Aim, Pause, D-Up/Down/Left/Right, Beams (Beam Select) | what the action does in Prime; Beam Select only matters with Dual Stick, which gives it to Black (or a free stick click or BACK) when turned on |
-| Buttons | LT, RT, D-pad, the sticks | fixed | what they do and why they stay (the GameCube's analog L/R, D-pad, sticks) |
 | Gameplay | Skip Cutscenes | Off / On | START skips any cutscene, from the next room |
 | Gameplay | Fusion Suit | Off / On | the GBA-link bonus, kept in settings.ini (`[game] fusion_suit`; the save doesn't hold it) |
-| System | Screen Capture | Off / On | BACK saves shotNN.bmp |
+| System | Screen Capture | Off / On | BACK saves shotNN.bmp (otherwise BACK does nothing) |
 | System | Log File | Off / On | boot.log for bug reports |
-| System | Restore All Defaults | A, then A again | every Port Options setting, buttons included |
+| System | Restore All Defaults | A, then A again | every Port Options setting |
 
-The rows call the same `PortXboxOptions::Get/Set/Step` the old in-game rows
+The rows call the same `PortXboxOptions::Get/Set` the old in-game rows
 did, so each applies at once (Video Mode at the next start) and settings.ini
-is written once, when the popup closes. Buttons: taking an action another
-button has swaps the two, and Fire always stays on some button (GitHub #1).
+is written once, when the popup closes.
 
 ### Controls in the popup
 
-The Xbox controllers as they are, not the remapped GameCube pad, so no
-layout can lock a player out: up/down (D-pad or left stick; held, it repeats
-after 300 ms every 85 ms) pick, left/right change, A changes too (or acts on
-Restore All Defaults), LT/RT switch tabs, Y twice within 3 s restores the
-tab's defaults, B or START close. On the Buttons tab the D-pad moves over
-the callouts as they stand (up/down in a column, left/right to the other
-column's nearest), A and X step the action on and back, and every input
-can be selected (the fixed ones say why); nothing lights up as it is held
-(each press redrew the controller). Before 2026-11-02 up/down stepped A, B,
-X, Y, White, Black, START, BACK, the clicks, jumping up and across the
-card (a tester: "navigating the control settings is a nightmare"). No sounds (the user, after the first
-console build: the music skipped; the cause was the redraw, above, but the
-sounds stay out).
+The Xbox controllers as they are: up/down (D-pad or left stick; held, it
+repeats after 300 ms every 85 ms) pick, left/right change, A changes too (or
+acts on Restore All Defaults), LT/RT switch tabs, Y twice within 3 s
+restores the tab's defaults, B or START close. No sounds (the user, after
+the first console build: the music skipped; the cause was the redraw,
+above, but the sounds stay out).
 
 ### settings.ini by hand
 
 settings.c checks a hand-edited file line by line (docs/decisions.md): a
 value it can't read keeps the default, a number out of range takes the
-nearest, buttons take GameCube names or the popup's (Fire, Jump...), and a
-port with no Fire or no Pause is reset. What was wrong shows as a notice at
-the top of the screen for 10 s, is written at the top of the corrected
-settings.ini and in boot.log, and the file as it was is kept as
-settings.bad.ini. The written file explains every key, with each button's
-action beside it.
+nearest. What was wrong shows as a notice at the top of the screen for 10
+s, is written at the top of the corrected settings.ini and in boot.log, and
+the file as it was is kept as settings.bad.ini. The written file explains
+every key, and both button layouts under `aim`. An older file's button
+lines (`a = A` ..., `lt`, `rt`, `trigger_z`) are skipped without a notice
+and the file is written again without them.
 
 ### Before (2026-10-27 to 2026-10-31)
 

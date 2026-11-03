@@ -4,6 +4,7 @@
 #include "port_debug.h"
 #include "port_xbox_options.h"
 
+#include "Kyoto/Graphics/CTexture.hpp"
 #include "MetroidPrime/CGameCollision.hpp"
 
 #include <filesystem>
@@ -18,6 +19,12 @@ void px_port_boot() { PortXboxOptions::ApplyAtBoot(); }
 // vi.c, every frame boundary: main.cpp's ApplyAspectMode already follows
 // PortDebug::AspectMode() each frame
 void xsdk_widescreen_update() {}
+
+// gx_tex.c: the texture cache emptied texmap `map` (it dropped what was
+// bound there). CTexture::Load skips a texture it believes that map still
+// holds, as on the GameCube, so without this every later surface with that
+// texture drew with the map empty: black.
+void xsdk_tex_map_cleared(int map) { CTexture::InvalidateTexmap(static_cast< GXTexMapID >(map)); }
 }
 
 // Remastered's movement (PortDebug::RemasteredMovement(), always off here)
