@@ -5,11 +5,12 @@ what's broken, anything the next agent would otherwise rediscover.
 
 ## Session 2026-11-03 (on `dev`, after beta3): black chunks; two fixed control layouts; Phazon Suit save screen
 
-**Results first.** Both fixes below were confirmed on gold's console
-or in xemu; `dev` has them, `main` doesn't. Gold's `Prime-X` folder has the
-ship build of 72e329f (layouts + texture fixes, not the clear fix);
-`Prime-X-{A,B}-{station,title}` and `Prime-X-held` are debug folders
-that can go.
+**Results first.** Both fixes below are confirmed on gold and merged to
+`main` (not tagged or released). Gold has two folders: `Prime-X`, the ship
+build of 115f933 (ThinLTO + PGO + log always, MD5
+81a4a53cf33756b42319f5da040a93d8: copy-clear fix, layouts, texture fixes),
+and `Prime-X-savecheck` (a plain autopad build at 115f933, Save Station 1
+with every item and `PX_FUSION=0`); every other test folder was removed.
 
 - **Black chunks: fixed, confirmed on gold.** The tester saw them in
   image A (fixes off) only; A logged 872 and 1163 binds per 600 frames of
@@ -28,8 +29,9 @@ that can go.
   the blurred room and Samus). Found with the gold round "held copy"
   (`-DXGX_DEBUG_HELD`, kept: `[HELD]` lines on big EFB copies, binds and
   drops; a BACK screenshot also writes the bound copy's texels,
-  swizzled, as the next shotNN.bmp). Not yet on a console: next ship
-  build for gold should carry it.
+  swizzled, as the next shotNN.bmp). Confirmed on gold by the tester in
+  `Prime-X-savecheck` (logs `C:\xemu\hw\prime\logs-savecheck`: Phazon
+  Suit, no crash, one `[MEM] low` reclaimed).
 
 The requests, in order:
 
